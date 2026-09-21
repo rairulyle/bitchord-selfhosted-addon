@@ -3,6 +3,7 @@ package plex_test
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -175,5 +176,42 @@ func TestArtPathEscapesTheThumb(t *testing.T) {
 	want := "/photo/:/transcode?width=600&height=600&minSize=1&upscale=1&url=%2Flibrary%2Fmetadata%2F1%2Fthumb%2F2%3Fx%3D1"
 	if got != want {
 		t.Fatalf("ArtPath = %s", got)
+	}
+}
+
+func TestOpenStreamsAFileWithRangeAndIdentityEncoding(t *testing.T) {
+	fake := plextest.New(t)
+	c := client(fake, 1000)
+	res, err := c.Open(context.Background(), http.MethodGet, "/library/parts/101/1/file.flac", http.Header{"Range": {"bytes=10-19"}})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusPartialContent {
+		t.Fatalf("StatusCode = %d, want %d", res.StatusCode, http.StatusPartialContent)
+	}
+	body, _ := io.ReadAll(res.Body)
+	if got := string(body); got != "abcdefghij" {
+		t.Fatalf("body = %q, want %q", got, "abcdefghij")
+	}
+	if got := res.Header.Get("Content-Range"); got != "bytes 10-19/36" {
+		t.Fatalf("Content-Range = %q, want %q", got, "bytes 10-19/36")
+	}
+	reqs := fake.Requests()
+	req := reqs[len(reqs)-1]
+	if req.Header.Get("Accept-Encoding") != "identity" {
+		t.Errorf("Accept-Encoding = %q, want %q", req.Header.Get("Accept-Encoding"), "identity")
+	}
+	if req.Header.Get("X-Plex-Token") != plextest.Token {
+		t.Errorf("X-Plex-Token = %q, want %q", req.Header.Get("X-Plex-Token"), plextest.Token)
+	}
+	if req.Header.Get("Range") != "bytes=10-19" {
+		t.Errorf("Range = %q, want %q", req.Header.Get("Range"), "bytes=10-19")
+	}
+	if strings.Contains(req.Path, plextest.Token) {
+		t.Errorf("token leaked into Path: %s", req.Path)
+	}
+	if strings.Contains(req.Query, plextest.Token) {
+		t.Errorf("token leaked into Query: %s", req.Query)
 	}
 }
