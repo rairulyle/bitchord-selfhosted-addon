@@ -1,0 +1,12 @@
+services:
+  bitchord-selfhosted-addon:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true
+    name: replace-with-your-reverse-proxy-network
