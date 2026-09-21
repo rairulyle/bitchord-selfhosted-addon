@@ -73,6 +73,7 @@ track also exists in your Plex library, the Plex copy plays instead.
 | `ADDON_NAME` | no | `Plex` | Display name in the client's source list |
 | `PORT` | no | `8080` | Listen port |
 | `LOG_LEVEL` | no | `info` | `debug`, `info`, `warn` or `error` |
+| `LOG_FORMAT` | no | `text` | `text` for reading in `docker logs`, `json` for a log shipper |
 
 A bad configuration prints every problem at once and exits.
 
@@ -124,6 +125,38 @@ should reach it.
 The whole index lives in memory. Expect roughly 30 to 50 MB for a library of
 100,000 tracks.
 
+## Logs
+
+At the default `info` level the addon logs what a client asked for and what
+came of it:
+
+```
+msg=search q="timebomb all time low" strict=1 fallback=0 returned=1 top="Time‐Bomb — All Time Low"
+msg="search miss" q="some song that is not there" strict=0 fallback=0 returned=0
+msg=stream id=5820 track="Time‐Bomb — All Time Low" quality="lossless 16-bit 44.1kHz" format=flac
+msg=play id=5820 track="Time‐Bomb — All Time Low" range="bytes=0-" status=206 bytes=26779352 ended=complete
+msg="library indexed" tracks=8697 added=12 removed=0 skipped=0
+```
+
+- `search` shows how many tracks matched every word (`strict`), how many
+  matched on the title alone (`fallback`), and the first row returned.
+- `stream` means the client accepted one of those rows and is about to play
+  it. A `search` that returned rows with no `stream` after it means the
+  client turned them down. BitChord does that when the title, the version
+  (live, acoustic, remix), the artist or the runtime disagree with the track
+  it wanted.
+- `play` is one line per file request. `ended` is `complete`, `client left`
+  (a skip, or the player closing the connection) or `upstream error`.
+- `search miss` is a query that returned nothing.
+
+Search text is written to the log, so the log records what was listened to.
+It stays on your server. The secret and the Plex token are never logged.
+`LOG_LEVEL=debug` adds one line per HTTP request and per `HEAD` probe.
+
+BitChord cannot match a track whose title has no Latin letters or digits at
+all, such as `夜に駆ける`. It builds no search for those, so they never reach
+the addon and leave no `search miss` behind.
+
 ## Troubleshooting
 
 | Symptom | Cause |
@@ -132,6 +165,7 @@ The whole index lives in memory. Expect roughly 30 to 50 MB for a library of
 | Log says `plex rejected the token` | `PLEX_TOKEN` is wrong or has been revoked |
 | Log says `no music section matches` | `PLEX_SECTION` does not name a music library. Use its exact title or its numeric id |
 | Search works but playback fails | The reverse proxy buffers or times out long responses. See the notes above |
+| A track in Plex plays from another source | Look for its `search` line. With rows returned and no `stream` after it, the client turned them down: compare the title, version words and runtime in Plex with the service's. With no `search` line at all, the client never asked, which is what BitChord does for titles with no Latin letters |
 | A new album does not show up | The index refreshes every `REFRESH_INTERVAL`. Restart the container to refresh now |
 | Playback stops when the container is redeployed | A restart lets active streams run for 10 seconds, then closes them. The player resumes with a Range request once the addon is back |
 

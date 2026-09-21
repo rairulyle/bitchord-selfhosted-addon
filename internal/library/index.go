@@ -72,6 +72,19 @@ func NewIndex(tracks []Track) *Index {
 
 func (ix *Index) Len() int { return len(ix.tracks) }
 
+func (ix *Index) missingFrom(other *Index) int {
+	if other == nil {
+		return len(ix.tracks)
+	}
+	missing := 0
+	for id := range ix.byID {
+		if _, ok := other.byID[id]; !ok {
+			missing++
+		}
+	}
+	return missing
+}
+
 func (ix *Index) Get(id string) (Track, bool) {
 	i, ok := ix.byID[id]
 	if !ok {
@@ -80,10 +93,18 @@ func (ix *Index) Get(id string) (Track, bool) {
 	return ix.tracks[i], true
 }
 
-func (ix *Index) Search(query string, limit int) []Track {
+type Result struct {
+	Tracks   []Track
+	Strict   int
+	Fallback int
+}
+
+func (ix *Index) Search(query string, limit int) []Track { return ix.Find(query, limit).Tracks }
+
+func (ix *Index) Find(query string, limit int) Result {
 	q := unique(Tokens(query))
 	if len(q) == 0 || limit <= 0 {
-		return nil
+		return Result{}
 	}
 	strict := ix.strict(q)
 	seen := make(map[int]struct{}, len(strict))
@@ -98,6 +119,7 @@ func (ix *Index) Search(query string, limit int) []Track {
 	}
 	ix.rank(strict, q)
 	ix.rank(loose, q)
+	result := Result{Strict: len(strict), Fallback: len(loose)}
 	ordered := append(strict, loose...)
 	if len(ordered) > limit {
 		ordered = ordered[:limit]
@@ -106,7 +128,8 @@ func (ix *Index) Search(query string, limit int) []Track {
 	for n, i := range ordered {
 		out[n] = ix.tracks[i]
 	}
-	return out
+	result.Tracks = out
+	return result
 }
 
 func (ix *Index) strict(q []string) []int {

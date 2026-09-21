@@ -6,6 +6,22 @@ Entries are written **one line per paragraph and bullet** (no hard-wrapping) so 
 
 ## [Unreleased]
 
+### Added
+
+- `search`, `search miss`, `stream` and `play` log lines at `info`, showing each query with its strict and fallback counts and top row, the track a client went on to play, and how each file transfer ended (`complete`, `client left` or `upstream error`). Search text is now written to the log; the secret and the Plex token still never are.
+- `LOG_FORMAT` setting: `text` (the new default, readable in `docker logs`) or `json`.
+- A `starting` line with the version and the non-secret settings, and `added` / `removed` counts on every library refresh.
+- A "Logs" section in the README explaining how to read a miss, and a Roadmap section announcing Jellyfin support.
+
+### Changed
+
+- Logs are plain text by default. Set `LOG_FORMAT=json` to keep the previous format.
+- The per-request `request` line moved from `info` to `debug`.
+
+### Fixed
+
+- Tracks whose titles have punctuation inside a word, accented letters, or mixed scripts are now found by BitChord. BitChord joins `Time‐Bomb` into `timebomb`, reads `11:11 PM` as `1111 pm`, deletes accented letters so `Naïve` becomes `nave`, and keeps only the Latin words of a title such as `ワンテンポ遅れたMonster ain't dead`. Those spellings are now indexed alongside the normal ones. Replaying BitChord's queries for an 8,697-track library took unreturned tracks from 175 to 0.
+
 ### Changed
 
 - Renamed the project to `bitchord-selfhosted-addon`. The image is now `ghcr.io/rairulyle/bitchord-selfhosted-addon`; the old image name gets no further updates, so change the `image:` line in `compose.yml` and point your reverse proxy at the new container name `bitchord-selfhosted-addon`.

@@ -103,3 +103,12 @@ func TestStreamAnswers502WhenPlexFails(t *testing.T) {
 		}
 	})
 }
+
+func TestStreamLogsTheTrackBitChordChose(t *testing.T) {
+	h := newHarness(t)
+	h.get("/" + testSecret + "/stream/101")
+	want := `"msg":"stream","id":"101","track":"New Religion — All Time Low feat. Teddy Swims","quality":"lossless 24-bit 48kHz"`
+	if logs := h.logs.String(); !strings.Contains(logs, want) {
+		t.Fatalf("logs lack %s:\n%s", want, logs)
+	}
+}

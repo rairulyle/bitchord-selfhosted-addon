@@ -267,3 +267,50 @@ func TestArtFallbacksAndMisses(t *testing.T) {
 		t.Errorf("HEAD: status %d, body %q", head.Code, head.Body.String())
 	}
 }
+
+func TestPlaysAreLogged(t *testing.T) {
+	h := newHarness(t)
+	h.get(filePath("101"))
+	h.do(http.MethodGet, filePath("101"), http.Header{"Range": {"bytes=10-19"}})
+	h.do(http.MethodHead, filePath("101"), nil)
+	logs := h.logs.String()
+	for _, want := range []string{
+		`"level":"INFO","msg":"play","id":"101","track":"New Religion — All Time Low feat. Teddy Swims","range":"","status":200,"bytes":36,"ended":"complete"`,
+		`"msg":"play","id":"101","track":"New Religion — All Time Low feat. Teddy Swims","range":"bytes=10-19","status":206,"bytes":10,"ended":"complete"`,
+		`"level":"DEBUG","msg":"probe","id":"101"`,
+	} {
+		if !strings.Contains(logs, want) {
+			t.Errorf("logs lack %s:\n%s", want, logs)
+		}
+	}
+}
+
+func TestAPlayTheClientAbandonsIsLoggedAsSuch(t *testing.T) {
+	h := newHarness(t)
+	h.fake.Extra["/library/parts/102/1/file.mp3"] = func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		for r.Context().Err() == nil {
+			w.Write([]byte("chunk"))
+			w.(http.Flusher).Flush()
+			time.Sleep(time.Millisecond)
+		}
+	}
+	front := httptest.NewServer(h.handler)
+	defer front.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, front.URL+filePath("102"), nil)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.ReadFull(res.Body, make([]byte, 10))
+	cancel()
+	res.Body.Close()
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(h.logs.String(), `"ended":"client left"`) {
+		if time.Now().After(deadline) {
+			t.Fatalf("no abandoned play in the logs:\n%s", h.logs.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
