@@ -9,6 +9,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE: ghcr.io/${{ github.repository }}
+  TAG: ${{ github.event.release.tag_name || github.ref_name }}
 
 concurrency:
   group: docker-publish-${{ github.event.release.tag_name || github.ref_name }}
@@ -29,6 +30,9 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+
+      - name: Check CHANGELOG.md has an entry for this version
+        run: scripts/release-notes.sh "$TAG"
 
       - name: gofmt
         run: test -z "$(gofmt -l .)"
@@ -84,3 +88,25 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  release:
+    name: Publish release notes from CHANGELOG.md
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Create or update the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          scripts/release-notes.sh "$TAG" > notes.md
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file notes.md
+          else
+            gh release create "$TAG" --title "$TAG" --notes-file notes.md --verify-tag
+          fi
