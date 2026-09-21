@@ -125,15 +125,22 @@ func (c *Client) AllTracks(ctx context.Context, filter string) ([]Track, error) 
 	}
 	var out []Track
 	for _, section := range sections {
+		var previousFirst string
+		havePrevious := false
 		for start := 0; ; start += c.pageSize {
 			page, err := c.trackPage(ctx, section.Key, start)
 			if err != nil {
 				return nil, err
 			}
-			out = append(out, page...)
-			if len(page) < c.pageSize {
+			if havePrevious && len(page) > 0 && page[0].RatingKey == previousFirst {
 				break
 			}
+			out = append(out, page...)
+			if len(page) != c.pageSize {
+				break
+			}
+			previousFirst = page[0].RatingKey
+			havePrevious = true
 		}
 	}
 	return out, nil

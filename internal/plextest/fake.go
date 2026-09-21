@@ -24,11 +24,12 @@ type Request struct {
 }
 
 type Fake struct {
-	URL      string
-	Sections []plex.Section
-	Tracks   map[string][]plex.Track
-	Files    map[string][]byte
-	Extra    map[string]http.HandlerFunc
+	URL          string
+	Sections     []plex.Section
+	Tracks       map[string][]plex.Track
+	Files        map[string][]byte
+	Extra        map[string]http.HandlerFunc
+	IgnorePaging bool
 
 	mu       sync.Mutex
 	status   int
@@ -108,6 +109,14 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 
 func (f *Fake) servePage(w http.ResponseWriter, r *http.Request, key string) {
 	all := f.Tracks[key]
+	if f.IgnorePaging {
+		writeJSON(w, map[string]any{"MediaContainer": map[string]any{
+			"totalSize": len(all),
+			"offset":    0,
+			"Metadata":  all,
+		}})
+		return
+	}
 	start, _ := strconv.Atoi(r.Header.Get("X-Plex-Container-Start"))
 	size, err := strconv.Atoi(r.Header.Get("X-Plex-Container-Size"))
 	if err != nil {
