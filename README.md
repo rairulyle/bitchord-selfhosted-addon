@@ -140,14 +140,24 @@ The whole index lives in memory. Expect roughly 30 to 50 MB for a library of
 
 ## Releasing
 
-Publishing a GitHub release, or pushing a tag that starts with `v`, runs the
-tests and then pushes a multi-arch image to GHCR tagged `latest`, `X.Y.Z` and
-`X.Y`. The tag's version is stamped into the binary and shows in the manifest.
+`CHANGELOG.md` is the source of truth for release notes.
 
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
+1. Move the entries under `## [Unreleased]` into a new `## [X.Y.Z] - YYYY-MM-DD`
+   section and commit.
+2. Tag and push:
+
+   ```bash
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
+   ```
+
+The workflow checks that the changelog has a section for that version, runs
+the tests, pushes a multi-arch image to GHCR tagged `latest`, `X.Y.Z` and
+`X.Y`, then creates the GitHub release with that section as its notes. The
+version is stamped into the binary and shows in the manifest. Publishing a
+release from the GitHub UI triggers the same workflow, and its notes are
+replaced by the changelog section. Preview the notes locally with
+`scripts/release-notes.sh vX.Y.Z`.
 
 ## Development
 
