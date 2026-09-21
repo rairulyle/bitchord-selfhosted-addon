@@ -19,7 +19,7 @@ const searchLimit = 50
 
 type Library interface {
 	Ready() bool
-	Search(query string, limit int) []library.Track
+	Find(query string, limit int) library.Result
 	Get(id string) (library.Track, bool)
 }
 
@@ -125,13 +125,35 @@ func (s *server) manifest(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *server) search(w http.ResponseWriter, r *http.Request) {
-	found := s.Library.Search(r.URL.Query().Get("q"), searchLimit)
-	tracks := make([]trackJSON, len(found))
-	for i, track := range found {
+	started := time.Now()
+	query := r.URL.Query().Get("q")
+	found := s.Library.Find(query, searchLimit)
+	tracks := make([]trackJSON, len(found.Tracks))
+	for i, track := range found.Tracks {
 		tracks[i] = toTrackJSON(s.base(), track)
 	}
+	s.logSearch(query, found, time.Since(started))
 	writeJSON(w, searchJSON{Tracks: tracks, Albums: []any{}, Artists: []any{}, Playlists: []any{}})
 }
+
+const loggedQueryRunes = 200
+
+func (s *server) logSearch(query string, found library.Result, took time.Duration) {
+	if strings.TrimSpace(query) == "" {
+		return
+	}
+	if runes := []rune(query); len(runes) > loggedQueryRunes {
+		query = string(runes[:loggedQueryRunes]) + "…"
+	}
+	attrs := []any{"q", query, "strict", found.Strict, "fallback", found.Fallback, "returned", len(found.Tracks)}
+	if len(found.Tracks) == 0 {
+		s.Log.Info("search miss", append(attrs, "took", took.String())...)
+		return
+	}
+	s.Log.Info("search", append(attrs, "top", label(found.Tracks[0]), "took", took.String())...)
+}
+
+func label(track library.Track) string { return track.Title + " — " + track.Artist }
 
 func writeJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -167,11 +189,7 @@ func (s *server) logged(next http.Handler) http.Handler {
 		started := time.Now()
 		rec := &recorder{ResponseWriter: w}
 		next.ServeHTTP(rec, r)
-		level := slog.LevelInfo
-		if r.URL.Path == "/healthz" {
-			level = slog.LevelDebug
-		}
-		s.Log.Log(r.Context(), level, "request",
+		s.Log.Debug("request",
 			"method", r.Method, "path", redact(r.URL.Path), "status", rec.status,
 			"bytes", rec.bytes, "took", time.Since(started).String())
 	})
