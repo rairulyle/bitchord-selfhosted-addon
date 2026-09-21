@@ -27,7 +27,7 @@ func (s *server) file(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	started := time.Now()
-	sent := s.pipe(w, r, r.Method, track.partKey, header, "")
+	sent := s.pipe(w, r, r.Method, track.partKey, header, "", track.partKey+"?download=1")
 	switch {
 	case sent.ended == "":
 	case r.Method == http.MethodHead:
@@ -47,7 +47,7 @@ func (s *server) art(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(status)
 		return
 	}
-	s.pipe(w, r, http.MethodGet, plex.ArtPath(track.thumb), nil, "public, max-age=86400")
+	s.pipe(w, r, http.MethodGet, plex.ArtPath(track.thumb), nil, "public, max-age=86400", "")
 }
 
 type resolved struct{ partKey, thumb, label string }
@@ -98,8 +98,15 @@ func (s *server) resolve(r *http.Request) (resolved, int) {
 	return resolved{part.Key, thumb, name}, http.StatusOK
 }
 
-func (s *server) pipe(w http.ResponseWriter, r *http.Request, method, path string, header http.Header, cacheControl string) sent {
+// Plex answers 500 to a direct-play request for a track it never finished
+// analysing (no media bitrate), yet serves the same part as a download.
+func (s *server) pipe(w http.ResponseWriter, r *http.Request, method, path string, header http.Header, cacheControl, retryPath string) sent {
 	upstream, err := s.Plex.Open(r.Context(), method, path, header)
+	if err == nil && upstream.StatusCode == http.StatusInternalServerError && retryPath != "" {
+		upstream.Body.Close()
+		s.Log.Debug("plex refused direct play, retrying as a download", "id", r.PathValue("id"))
+		upstream, err = s.Plex.Open(r.Context(), method, retryPath, header)
+	}
 	if err != nil {
 		s.logPlexFailure(r, err)
 		w.WriteHeader(http.StatusBadGateway)
