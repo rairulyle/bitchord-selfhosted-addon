@@ -1,4 +1,14 @@
-# bitchord-selfhosted-addon
+<h1 align="center">bitchord-selfhosted-addon</h1>
+
+<p align="center">
+  Play your own Plex music library inside BitChord.
+</p>
+
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/54e40931-afd8-49c3-ab2f-c6598f182081" width="320" controls></video>
+</div>
+
+## 🎵 What it is
 
 A small self-hosted server that makes your Plex music library a source in
 BitChord (Android). BitChord searches your library through the addon and
@@ -7,60 +17,72 @@ streams the original files from it.
 BitChord ranks user-added addons above its built-in sources, so when a queued
 track also exists in your Plex library, the Plex copy plays instead.
 
-## How it works
+## ✨ How it works
 
-- The addon keeps an in-memory index of every track in your Plex music
-  sections and refreshes it on a timer.
-- Search answers come from that index. Audio and artwork bytes are proxied
-  from Plex, with `Range` support for seeking.
-- Your Plex token never leaves the server. Clients only ever see the addon's
-  own URLs.
-- Every route sits under a secret path segment. A wrong secret gets an empty
-  `404`, the same answer as a server that does not exist.
-- The original file is always served. Quality tiers are ignored.
+- **Fast search.** The addon keeps an in-memory index of every track in your
+  Plex music sections and refreshes it on a timer. Expect roughly 30 to 50 MB
+  of memory for a library of 100,000 tracks.
+- **Original quality.** Audio and artwork bytes are proxied from Plex, with
+  `Range` support for seeking. The original file is always served. Quality
+  tiers are ignored.
+- **Your token stays home.** Your Plex token never leaves the server. Clients
+  only ever see the addon's own URLs.
+- **Secret URL.** Every route sits under a secret path segment. A wrong secret
+  gets an empty `404`, the same answer as a server that does not exist.
 
-## Requirements
+## 📋 Requirements
 
 - Docker.
+- A Plex server the addon container can reach over the network.
 - A reverse proxy that terminates HTTPS, such as Caddy, Traefik or nginx. The
-  addon itself listens on plain HTTP. BitChord requires HTTPS.
-- Network access from the addon container to your Plex server.
+  addon itself listens on plain HTTP. BitChord requires HTTPS. A
+  [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
+  pointed at `bitchord-selfhosted-addon:8080` works too, and reaches the addon
+  from outside your network without opening router ports.
 
-## Setup
+## 🚀 Setup
 
-1. Copy the example files:
+1. **Copy the example files.**
 
    ```bash
    cp .env.example .env
    cp compose.example.yml compose.yml
    ```
 
-2. Fill in `.env`. Generate the secret with `openssl rand -hex 24`.
-3. In `compose.yml`, set the network name to the Docker network your reverse
-   proxy uses.
-4. Point your reverse proxy at `bitchord-selfhosted-addon:8080` for the host in
-   `PUBLIC_URL`.
-5. Start it:
+2. **Fill in `.env`.** Generate the secret with `openssl rand -hex 24`. See
+   [Configuration](#%EF%B8%8F-configuration) for every setting and for where
+   to find your Plex token.
+
+3. **Connect it to HTTPS.** In `compose.yml`, set the network name to the
+   Docker network your reverse proxy uses, then point the proxy at
+   `bitchord-selfhosted-addon:8080` for the host in `PUBLIC_URL`.
+
+4. **Start it.**
 
    ```bash
    docker compose up -d
    ```
 
-   This pulls `ghcr.io/rairulyle/bitchord-selfhosted-addon:latest`, built for
-   `linux/amd64` and `linux/arm64`. To pin a version, use a tag such as
-   `:0.1` or `:0.1.0`. To update, run `docker compose pull` and then
-   `docker compose up -d`. To build from source instead, replace the `image:`
-   line in `compose.yml` with `build: .` and add `--build`.
-
-6. Check it. The first command prints the manifest. The second prints `200`
-   once the first index load has finished, and `503` before that.
+5. **Check it.** The first command prints the manifest. The second prints
+   `200` once the first index load has finished, and `503` before that.
 
    ```bash
    curl https://music.example.com/<ADDON_SECRET>/manifest.json
    curl -o /dev/null -w '%{http_code}\n' https://music.example.com/health
    ```
 
-## Configuration
+6. **Add it to your app.** See [Adding it to a client](#-adding-it-to-a-client).
+
+### Image tags and updates
+
+- The image is `ghcr.io/rairulyle/bitchord-selfhosted-addon:latest`, built for
+  `linux/amd64` and `linux/arm64`.
+- **Pin a version** with a tag such as `:0.2` or `:0.2.0`.
+- **Update** with `docker compose pull`, then `docker compose up -d`.
+- **Build from source** by replacing the `image:` line in `compose.yml` with
+  `build: .` and running `docker compose up -d --build`.
+
+## ⚙️ Configuration
 
 | Variable | Required | Default | Meaning |
 |---|---|---|---|
@@ -83,7 +105,7 @@ In Plex Web, open any item, choose **Get Info**, then **View XML**. The
 address bar of the new tab ends with `X-Plex-Token=...`. That value is the
 token. Plex documents this under "Finding an authentication token".
 
-## Adding it to a client
+## 📱 Adding it to a client
 
 The addon URL is your public URL followed by the secret:
 
@@ -95,11 +117,12 @@ In BitChord, open **Sources**, add an addon, and paste the URL.
 
 If a client asks for a manifest URL instead, append `/manifest.json`.
 
-Treat the URL like a password. Anyone who has it can stream your library. To
-revoke it, change `ADDON_SECRET`, restart the container, and add the new URL
-to your clients.
+> [!WARNING]
+> Treat the URL like a password. Anyone who has it can stream your library.
+> To revoke it, change `ADDON_SECRET`, restart the container, and add the new
+> URL to your clients.
 
-## Reverse proxy notes
+## 🔀 Reverse proxy notes
 
 Turn off response buffering for the addon, so seeking stays fast and a
 skipped track stops downloading from Plex at once.
@@ -120,12 +143,7 @@ skipped track stops downloading from Plex at once.
 Do not publish the container's port on the host. Only the reverse proxy
 should reach it.
 
-## Memory
-
-The whole index lives in memory. Expect roughly 30 to 50 MB for a library of
-100,000 tracks.
-
-## Logs
+## 📜 Logs
 
 At the default `info` level the addon logs what a client asked for and what
 came of it:
@@ -138,38 +156,39 @@ msg=play id=5820 track="Time‐Bomb — All Time Low" range="bytes=0-" status=20
 msg="library indexed" tracks=8697 added=12 removed=0 skipped=0
 ```
 
-- `search` shows how many tracks matched every word (`strict`), how many
-  matched on the title alone (`fallback`), and the first row returned.
-- `stream` means the client accepted one of those rows and is about to play
-  it. A `search` that returned rows with no `stream` after it means the
-  client turned them down. BitChord does that when the title, the version
-  (live, acoustic, remix), the artist or the runtime disagree with the track
-  it wanted.
-- `play` is one line per file request. `ended` is `complete`, `client left`
-  (a skip, or the player closing the connection) or `upstream error`.
-- `search miss` is a query that returned nothing.
+| Line | Meaning |
+|---|---|
+| `search` | How many tracks matched every word (`strict`), how many matched on the title alone (`fallback`), and the first row returned |
+| `search miss` | A query that returned nothing |
+| `stream` | The client accepted one of the rows and is about to play it |
+| `play` | One line per file request. `ended` is `complete`, `client left` (a skip, or the player closing the connection) or `upstream error` |
+| `library indexed` | An index refresh finished |
 
-Search text is written to the log, so the log records what was listened to.
-It stays on your server. The secret and the Plex token are never logged.
-`LOG_LEVEL=debug` adds one line per HTTP request and per `HEAD` probe.
+A `search` that returned rows with no `stream` after it means the client
+turned them down. BitChord does that when the title, the version (live,
+acoustic, remix), the artist or the runtime disagree with the track it wanted.
 
 BitChord cannot match a track whose title has no Latin letters or digits at
 all, such as `夜に駆ける`. It builds no search for those, so they never reach
 the addon and leave no `search miss` behind.
 
-## Troubleshooting
+**Privacy.** Search text is written to the log, so the log records what was
+listened to. It stays on your server. The secret and the Plex token are never
+logged. `LOG_LEVEL=debug` adds one line per HTTP request and per `HEAD` probe.
+
+## 🛠️ Troubleshooting
 
 | Symptom | Cause |
 |---|---|
 | `/health` stays `503` | The first index load has not succeeded. Check the logs for `first library load failed` |
 | Log says `plex rejected the token` | `PLEX_TOKEN` is wrong or has been revoked |
 | Log says `no music section matches` | `PLEX_SECTION` does not name a music library. Use its exact title or its numeric id |
-| Search works but playback fails | The reverse proxy buffers or times out long responses. See the notes above |
+| Search works but playback fails | The reverse proxy buffers or times out long responses. See the reverse proxy notes |
 | A track in Plex plays from another source | Look for its `search` line. With rows returned and no `stream` after it, the client turned them down: compare the title, version words and runtime in Plex with the service's. With no `search` line at all, the client never asked, which is what BitChord does for titles with no Latin letters |
 | A new album does not show up | The index refreshes every `REFRESH_INTERVAL`. Restart the container to refresh now |
 | Playback stops when the container is redeployed | A restart lets active streams run for 10 seconds, then closes them. The player resumes with a Range request once the addon is back |
 
-## Roadmap
+## 🗺️ Roadmap
 
 - **Jellyfin support.** Serve a Jellyfin music library the same way as a Plex
   one. Each running addon will talk to one server, picked by which settings
@@ -178,7 +197,17 @@ the addon and leave no `search miss` behind.
   "Jellyfin" unless `ADDON_NAME` overrides it. To use both servers, run two
   containers and add both addon URLs.
 
-## Releasing
+## 🧑‍💻 Development
+
+```bash
+go test -race ./...
+gofmt -l . && go vet ./...
+```
+
+Tests run against an in-process fake Plex server in `internal/plextest`. No
+real Plex server is needed.
+
+### Releasing
 
 `CHANGELOG.md` is the source of truth for release notes.
 
@@ -198,13 +227,3 @@ version is stamped into the binary and shows in the manifest. Publishing a
 release from the GitHub UI triggers the same workflow, and its notes are
 replaced by the changelog section. Preview the notes locally with
 `scripts/release-notes.sh vX.Y.Z`.
-
-## Development
-
-```bash
-go test -race ./...
-gofmt -l . && go vet ./...
-```
-
-Tests run against an in-process fake Plex server in `internal/plextest`. No
-real Plex server is needed.
