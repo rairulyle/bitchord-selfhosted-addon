@@ -6,6 +6,8 @@ Entries are written **one line per paragraph and bullet** (no hard-wrapping) so 
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-21
+
 ### Changed
 
 - The readiness endpoint is now `/health`. `/healthz` is gone and answers the same empty `404` as any unknown path. The image's own healthcheck uses the binary's `-healthcheck` flag, so containers need no change; update anything external that probes the old path, such as an uptime monitor or a dashboard link.
