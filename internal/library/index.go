@@ -26,7 +26,7 @@ type Index struct {
 	byID        map[string]int
 	postings    map[string][]int
 	titlePosts  map[string][]int
-	titleCounts []int
+	titleTokens [][]string
 }
 
 func NewIndex(tracks []Track) *Index {
@@ -35,17 +35,24 @@ func NewIndex(tracks []Track) *Index {
 		byID:        make(map[string]int, len(tracks)),
 		postings:    map[string][]int{},
 		titlePosts:  map[string][]int{},
-		titleCounts: make([]int, len(tracks)),
+		titleTokens: make([][]string, len(tracks)),
 	}
 	for i, t := range tracks {
 		ix.byID[t.ID] = i
 		title := unique(Tokens(t.Title))
-		ix.titleCounts[i] = len(title)
+		ix.titleTokens[i] = title
 		for _, token := range title {
 			ix.titlePosts[token] = append(ix.titlePosts[token], i)
 		}
-		everything := strings.Join([]string{t.Title, t.Artist, t.AlbumArtist, t.Album}, " ")
+		everything := strings.Join([]string{t.Artist, t.AlbumArtist, t.Album}, " ")
+		hits := map[string]struct{}{}
+		for _, token := range title {
+			hits[token] = struct{}{}
+		}
 		for _, token := range unique(Tokens(everything)) {
+			hits[token] = struct{}{}
+		}
+		for token := range hits {
 			ix.postings[token] = append(ix.postings[token], i)
 		}
 	}
@@ -119,7 +126,7 @@ func (ix *Index) fallback(q []string) []int {
 	}
 	var out []int
 	for i, n := range hits {
-		if ix.titleCounts[i] >= 2 && n == ix.titleCounts[i] {
+		if count := len(ix.titleTokens[i]); count >= 2 && n == count {
 			out = append(out, i)
 		}
 	}
@@ -133,7 +140,7 @@ func (ix *Index) rank(candidates []int, q []string) {
 	}
 	titleHits := make(map[int]int, len(candidates))
 	for _, i := range candidates {
-		for _, token := range unique(Tokens(ix.tracks[i].Title)) {
+		for _, token := range ix.titleTokens[i] {
 			if _, ok := wanted[token]; ok {
 				titleHits[i]++
 			}
