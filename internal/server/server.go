@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 
@@ -59,7 +60,17 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /{secret}/art/{id}", s.guard(s.art))
 	mux.HandleFunc("OPTIONS /{secret}/{rest...}", s.guard(s.preflight))
 	mux.HandleFunc("/", quiet404)
-	return s.logged(cors(mux))
+	return s.logged(cors(cleanOnly(mux)))
+}
+
+func cleanOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if path.Clean(r.URL.Path) != r.URL.Path {
+			quiet404(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *server) base() string { return s.PublicURL + "/" + s.Secret }
@@ -166,11 +177,14 @@ func (s *server) logged(next http.Handler) http.Handler {
 	})
 }
 
-func redact(path string) string {
-	if path == "/healthz" || path == "/" {
-		return path
+func redact(p string) string {
+	if p == "/healthz" || p == "/" {
+		return p
 	}
-	rest := strings.TrimPrefix(path, "/")
+	if path.Clean(p) != p {
+		return "/***"
+	}
+	rest := strings.TrimPrefix(p, "/")
 	if i := strings.IndexByte(rest, '/'); i >= 0 {
 		return "/***" + rest[i:]
 	}

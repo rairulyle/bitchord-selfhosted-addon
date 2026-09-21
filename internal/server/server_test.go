@@ -132,6 +132,11 @@ func TestWrongSecretAndUnknownRoutesAnswerTheSameEmpty404(t *testing.T) {
 		"non numeric track id":  {http.MethodGet, "/" + testSecret + "/stream/abc"},
 		"overlong track id":     {http.MethodGet, "/" + testSecret + "/file/123456789012345678901"},
 		"unknown track in plex": {http.MethodGet, "/" + testSecret + "/stream/999"},
+		"double slash secret":   {http.MethodGet, "//" + testSecret + "/manifest.json"},
+		"dot segment secret":    {http.MethodGet, "/./" + testSecret + "/manifest.json"},
+		"dot dot secret":        {http.MethodGet, "/" + testSecret + "/../" + testSecret + "/manifest.json"},
+		"trailing slash secret": {http.MethodGet, "/" + testSecret + "/"},
+		"double slash unknown":  {http.MethodGet, "//nope"},
 	}
 	for name, request := range requests {
 		t.Run(name, func(t *testing.T) {
@@ -247,6 +252,8 @@ func TestLogsRedactTheSecretAndNeverCarryTheToken(t *testing.T) {
 	h.get("/" + testSecret + "/search?q=tum")
 	h.get("/" + testSecret + "/stream/101")
 	h.get("/healthz")
+	h.get("//" + testSecret + "/manifest.json")
+	h.get("/./" + testSecret + "/search?q=tum")
 	logs := h.logs.String()
 	if strings.Contains(logs, testSecret) || strings.Contains(logs, plextest.Token) {
 		t.Fatalf("logs leak a credential:\n%s", logs)
@@ -261,6 +268,7 @@ func TestLogsRedactTheSecretAndNeverCarryTheToken(t *testing.T) {
 func TestRedact(t *testing.T) {
 	cases := map[string]string{
 		"/healthz": "/healthz", "/": "/", "/abc": "/***", "/abc/search": "/***/search", "/abc/file/12": "/***/file/12",
+		"//x/y": "/***", "/./x/y": "/***", "/x/../y": "/***", "/x/": "/***",
 	}
 	for in, want := range cases {
 		if got := redact(in); got != want {
