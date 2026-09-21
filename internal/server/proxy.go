@@ -96,6 +96,8 @@ func (s *server) pipe(w http.ResponseWriter, r *http.Request, method, path strin
 	}
 	w.WriteHeader(upstream.StatusCode)
 	if r.Method != http.MethodHead {
-		io.Copy(w, upstream.Body)
+		if _, err := io.Copy(w, upstream.Body); err != nil && r.Context().Err() == nil {
+			s.Log.Debug("stream ended early", "error", err.Error())
+		}
 	}
 }
