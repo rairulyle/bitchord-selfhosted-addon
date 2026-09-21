@@ -114,7 +114,7 @@ func (s *server) healthz(w http.ResponseWriter, _ *http.Request) {
 
 func (s *server) manifest(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, manifestJSON{
-		ID:          "app.bitchord-selfhosted-addon",
+		ID:          "app.bitchord-selfhosted-addon.plex",
 		Name:        s.AddonName,
 		Version:     s.Version,
 		Description: "Your Plex music library",
