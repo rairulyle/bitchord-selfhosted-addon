@@ -54,6 +54,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("GET /{secret}/manifest.json", s.guard(s.manifest))
 	mux.HandleFunc("GET /{secret}/search", s.guard(s.search))
+	mux.HandleFunc("GET /{secret}/stream/{id}", s.guard(s.stream))
 	mux.HandleFunc("OPTIONS /{secret}/{rest...}", s.guard(s.preflight))
 	mux.HandleFunc("/", quiet404)
 	return s.logged(cors(mux))
