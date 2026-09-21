@@ -11,10 +11,8 @@
 ## 🎵 What it is
 
 A small self-hosted server that makes your Plex music library a source in
-BitChord (Android). It speaks the
-[Eclipse Music addon protocol](https://eclipsemusic.app/docs), so any other
-client that speaks the protocol can search the library and stream the original
-files too: Eclipse Music (iOS, iPadOS, web), Sonido (Linux) and others.
+BitChord (Android). BitChord searches your library through the addon and
+streams the original files from it.
 
 BitChord ranks user-added addons above its built-in sources, so when a queued
 track also exists in your Plex library, the Plex copy plays instead.
@@ -37,7 +35,7 @@ track also exists in your Plex library, the Plex copy plays instead.
 - Docker.
 - A Plex server the addon container can reach over the network.
 - A reverse proxy that terminates HTTPS, such as Caddy, Traefik or nginx. The
-  addon itself listens on plain HTTP. Eclipse clients require HTTPS. A
+  addon itself listens on plain HTTP. BitChord requires HTTPS. A
   [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
   pointed at `bitchord-selfhosted-addon:8080` works too, and reaches the addon
   from outside your network without opening router ports.
@@ -115,8 +113,7 @@ The addon URL is your public URL followed by the secret:
 https://music.example.com/<ADDON_SECRET>
 ```
 
-- **BitChord:** open **Sources**, add an addon, and paste the URL.
-- **Eclipse Music:** open the addons screen, add an addon, and paste the URL.
+In BitChord, open **Sources**, add an addon, and paste the URL.
 
 If a client asks for a manifest URL instead, append `/manifest.json`.
 

@@ -74,7 +74,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
           labels: |
             org.opencontainers.image.title=bitchord-selfhosted-addon
-            org.opencontainers.image.description=Self-hosted music library addon for BitChord and other Eclipse Music protocol clients
+            org.opencontainers.image.description=Self-hosted music library addon for BitChord
 
       - name: Build and push image
         uses: docker/build-push-action@v7
