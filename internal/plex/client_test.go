@@ -63,6 +63,30 @@ func TestAllTracksFiltersSections(t *testing.T) {
 	}
 }
 
+func TestAllTracksTerminatesWhenPlexIgnoresThePagingHeaders(t *testing.T) {
+	fake := plextest.New(t)
+	fake.IgnorePaging = true
+	tracks, err := client(fake, 2).AllTracks(context.Background(), "Music")
+	if err != nil {
+		t.Fatalf("AllTracks: %v", err)
+	}
+	if got := keys(tracks); got != "101,102,103,104,105,106" {
+		t.Fatalf("keys = %s", got)
+	}
+}
+
+func TestAllTracksTerminatesWhenPageSizeEqualsTheSectionLength(t *testing.T) {
+	fake := plextest.New(t)
+	fake.IgnorePaging = true
+	tracks, err := client(fake, 6).AllTracks(context.Background(), "Music")
+	if err != nil {
+		t.Fatalf("AllTracks: %v", err)
+	}
+	if got := keys(tracks); got != "101,102,103,104,105,106" {
+		t.Fatalf("keys = %s", got)
+	}
+}
+
 func TestAllTracksFailsWhenNoSectionMatches(t *testing.T) {
 	for _, filter := range []string{"Nope", "Movies", "1"} {
 		_, err := client(plextest.New(t), 1000).AllTracks(context.Background(), filter)
