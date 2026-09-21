@@ -55,6 +55,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /{secret}/manifest.json", s.guard(s.manifest))
 	mux.HandleFunc("GET /{secret}/search", s.guard(s.search))
 	mux.HandleFunc("GET /{secret}/stream/{id}", s.guard(s.stream))
+	mux.HandleFunc("GET /{secret}/file/{id}", s.guard(s.file))
+	mux.HandleFunc("GET /{secret}/art/{id}", s.guard(s.art))
 	mux.HandleFunc("OPTIONS /{secret}/{rest...}", s.guard(s.preflight))
 	mux.HandleFunc("/", quiet404)
 	return s.logged(cors(mux))
