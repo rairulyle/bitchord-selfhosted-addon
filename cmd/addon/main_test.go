@@ -74,7 +74,7 @@ func TestServeAnswersOverHTTPAndShutsDownOnCancel(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	res, err := http.Get(base + "/abcdefghijklmnop/search?q=paniyon+sa")
+	res, err := http.Get(base + "/abcdefghijklmnop/search?q=new+religion")
 	if err != nil {
 		t.Fatal(err)
 	}
