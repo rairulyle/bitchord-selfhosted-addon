@@ -52,7 +52,7 @@ func newServer(o Options) *server {
 
 func (s *server) handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", s.healthz)
+	mux.HandleFunc("GET /health", s.health)
 	mux.HandleFunc("GET /{secret}/manifest.json", s.guard(s.manifest))
 	mux.HandleFunc("GET /{secret}/search", s.guard(s.search))
 	mux.HandleFunc("GET /{secret}/stream/{id}", s.guard(s.stream))
@@ -104,7 +104,7 @@ func (s *server) preflight(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *server) healthz(w http.ResponseWriter, _ *http.Request) {
+func (s *server) health(w http.ResponseWriter, _ *http.Request) {
 	if !s.Library.Ready() {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
@@ -196,7 +196,7 @@ func (s *server) logged(next http.Handler) http.Handler {
 }
 
 func redact(p string) string {
-	if p == "/healthz" || p == "/" {
+	if p == "/health" || p == "/" {
 		return p
 	}
 	if path.Clean(p) != p {

@@ -128,7 +128,8 @@ func TestWrongSecretAndUnknownRoutesAnswerTheSameEmpty404(t *testing.T) {
 		"unknown nested route":  {http.MethodGet, "/" + testSecret + "/search/extra"},
 		"root":                  {http.MethodGet, "/"},
 		"wrong method":          {http.MethodPost, "/" + testSecret + "/search"},
-		"healthz under secret":  {http.MethodGet, "/" + testSecret + "/healthz"},
+		"the old healthz path":  {http.MethodGet, "/healthz"},
+		"health under secret":   {http.MethodGet, "/" + testSecret + "/health"},
 		"non numeric track id":  {http.MethodGet, "/" + testSecret + "/stream/abc"},
 		"overlong track id":     {http.MethodGet, "/" + testSecret + "/file/123456789012345678901"},
 		"unknown track in plex": {http.MethodGet, "/" + testSecret + "/stream/999"},
@@ -153,7 +154,7 @@ func TestWrongSecretAndUnknownRoutesAnswerTheSameEmpty404(t *testing.T) {
 
 func TestCORS(t *testing.T) {
 	h := newHarness(t)
-	for _, path := range []string{"/" + testSecret + "/manifest.json", "/wrong/manifest.json", "/healthz"} {
+	for _, path := range []string{"/" + testSecret + "/manifest.json", "/wrong/manifest.json", "/health"} {
 		if got := h.get(path).Header().Get("Access-Control-Allow-Origin"); got != "*" {
 			t.Errorf("%s: Access-Control-Allow-Origin = %q", path, got)
 		}
@@ -238,11 +239,11 @@ func TestSearchAnswersEmptyArraysNeverNull(t *testing.T) {
 	}
 }
 
-func TestHealthz(t *testing.T) {
-	if rec := newHarnessWith(t, plex.Options{}, false).get("/healthz"); rec.Code != http.StatusServiceUnavailable {
+func TestHealth(t *testing.T) {
+	if rec := newHarnessWith(t, plex.Options{}, false).get("/health"); rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("before the first load: %d", rec.Code)
 	}
-	if rec := newHarness(t).get("/healthz"); rec.Code != http.StatusOK {
+	if rec := newHarness(t).get("/health"); rec.Code != http.StatusOK {
 		t.Errorf("after the first load: %d", rec.Code)
 	}
 }
@@ -251,14 +252,14 @@ func TestLogsRedactTheSecretAndNeverCarryTheToken(t *testing.T) {
 	h := newHarness(t)
 	h.get("/" + testSecret + "/search?q=closer")
 	h.get("/" + testSecret + "/stream/101")
-	h.get("/healthz")
+	h.get("/health")
 	h.get("//" + testSecret + "/manifest.json")
 	h.get("/./" + testSecret + "/search?q=closer")
 	logs := h.logs.String()
 	if strings.Contains(logs, testSecret) || strings.Contains(logs, plextest.Token) {
 		t.Fatalf("logs leak a credential:\n%s", logs)
 	}
-	for _, want := range []string{`"path":"/***/search"`, `"path":"/***/stream/101"`, `"path":"/healthz"`, `"status":200`} {
+	for _, want := range []string{`"path":"/***/search"`, `"path":"/***/stream/101"`, `"path":"/health"`, `"status":200`} {
 		if !strings.Contains(logs, want) {
 			t.Errorf("logs lack %s:\n%s", want, logs)
 		}
@@ -267,7 +268,7 @@ func TestLogsRedactTheSecretAndNeverCarryTheToken(t *testing.T) {
 
 func TestRedact(t *testing.T) {
 	cases := map[string]string{
-		"/healthz": "/healthz", "/": "/", "/abc": "/***", "/abc/search": "/***/search", "/abc/file/12": "/***/file/12",
+		"/health": "/health", "/": "/", "/abc": "/***", "/abc/search": "/***/search", "/abc/file/12": "/***/file/12",
 		"//x/y": "/***", "/./x/y": "/***", "/x/../y": "/***", "/x/": "/***",
 	}
 	for in, want := range cases {
