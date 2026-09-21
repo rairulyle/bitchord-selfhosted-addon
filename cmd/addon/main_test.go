@@ -20,15 +20,15 @@ import (
 func TestHealthcheckExitCodes(t *testing.T) {
 	status := http.StatusOK
 	probe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(status) }))
-	if got := healthcheck(probe.URL + "/healthz"); got != 0 {
+	if got := healthcheck(probe.URL + "/health"); got != 0 {
 		t.Errorf("200 gave exit code %d", got)
 	}
 	status = http.StatusServiceUnavailable
-	if got := healthcheck(probe.URL + "/healthz"); got != 1 {
+	if got := healthcheck(probe.URL + "/health"); got != 1 {
 		t.Errorf("503 gave exit code %d", got)
 	}
 	probe.Close()
-	if got := healthcheck(probe.URL + "/healthz"); got != 1 {
+	if got := healthcheck(probe.URL + "/health"); got != 1 {
 		t.Errorf("a dead server gave exit code %d", got)
 	}
 }
@@ -68,7 +68,7 @@ func TestServeAnswersOverHTTPAndShutsDownOnCancel(t *testing.T) {
 	}
 
 	deadline := time.Now().Add(5 * time.Second)
-	for healthcheck(base+"/healthz") != 0 {
+	for healthcheck(base+"/health") != 0 {
 		if time.Now().After(deadline) {
 			t.Fatal("never became healthy")
 		}

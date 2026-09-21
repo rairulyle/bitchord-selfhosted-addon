@@ -59,7 +59,7 @@ track also exists in your Plex library, the Plex copy plays instead.
 
    ```bash
    curl https://music.example.com/<ADDON_SECRET>/manifest.json
-   curl -o /dev/null -w '%{http_code}\n' https://music.example.com/healthz
+   curl -o /dev/null -w '%{http_code}\n' https://music.example.com/health
    ```
 
 ## Configuration
@@ -164,7 +164,7 @@ the addon and leave no `search miss` behind.
 
 | Symptom | Cause |
 |---|---|
-| `/healthz` stays `503` | The first index load has not succeeded. Check the logs for `first library load failed` |
+| `/health` stays `503` | The first index load has not succeeded. Check the logs for `first library load failed` |
 | Log says `plex rejected the token` | `PLEX_TOKEN` is wrong or has been revoked |
 | Log says `no music section matches` | `PLEX_SECTION` does not name a music library. Use its exact title or its numeric id |
 | Search works but playback fails | The reverse proxy buffers or times out long responses. See the notes above |
