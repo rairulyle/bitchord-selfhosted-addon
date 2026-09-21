@@ -102,7 +102,7 @@ func TestManifest(t *testing.T) {
 	}
 	got := decode[map[string]any](t, rec)
 	want := map[string]any{
-		"id": "app.bitchord-selfhosted-addon", "name": "Home Plex", "version": "1.2.3",
+		"id": "app.bitchord-selfhosted-addon.plex", "name": "Home Plex", "version": "1.2.3",
 		"description": "Your Plex music library", "contentType": "music",
 		"resources": []any{"search", "stream"}, "types": []any{"track"},
 	}
