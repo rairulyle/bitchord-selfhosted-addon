@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rairulyle/eclipse-plex-addon/internal/library"
-	"github.com/rairulyle/eclipse-plex-addon/internal/plex"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/library"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
 )
 
 const searchLimit = 50
@@ -114,7 +114,7 @@ func (s *server) healthz(w http.ResponseWriter, _ *http.Request) {
 
 func (s *server) manifest(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, manifestJSON{
-		ID:          "app.eclipse-plex-addon",
+		ID:          "app.bitchord-selfhosted-addon.plex",
 		Name:        s.AddonName,
 		Version:     s.Version,
 		Description: "Your Plex music library",

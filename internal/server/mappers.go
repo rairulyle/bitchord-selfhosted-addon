@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/rairulyle/eclipse-plex-addon/internal/library"
-	"github.com/rairulyle/eclipse-plex-addon/internal/plex"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/library"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
 )
 
 type manifestJSON struct {

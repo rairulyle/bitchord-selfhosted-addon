@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rairulyle/eclipse-plex-addon/internal/library"
-	"github.com/rairulyle/eclipse-plex-addon/internal/plex"
-	"github.com/rairulyle/eclipse-plex-addon/internal/plextest"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/library"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plextest"
 )
 
 const (
@@ -102,7 +102,7 @@ func TestManifest(t *testing.T) {
 	}
 	got := decode[map[string]any](t, rec)
 	want := map[string]any{
-		"id": "app.eclipse-plex-addon", "name": "Home Plex", "version": "1.2.3",
+		"id": "app.bitchord-selfhosted-addon.plex", "name": "Home Plex", "version": "1.2.3",
 		"description": "Your Plex music library", "contentType": "music",
 		"resources": []any{"search", "stream"}, "types": []any{"track"},
 	}

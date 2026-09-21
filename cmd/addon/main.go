@@ -15,10 +15,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/rairulyle/eclipse-plex-addon/internal/config"
-	"github.com/rairulyle/eclipse-plex-addon/internal/library"
-	"github.com/rairulyle/eclipse-plex-addon/internal/plex"
-	"github.com/rairulyle/eclipse-plex-addon/internal/server"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/config"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/library"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/server"
 )
 
 var version = "dev"

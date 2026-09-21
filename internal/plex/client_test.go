@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rairulyle/eclipse-plex-addon/internal/plex"
-	"github.com/rairulyle/eclipse-plex-addon/internal/plextest"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plextest"
 )
 
 func client(fake *plextest.Fake, pageSize int) *plex.Client {

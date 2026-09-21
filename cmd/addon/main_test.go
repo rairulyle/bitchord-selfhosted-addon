@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rairulyle/eclipse-plex-addon/internal/config"
-	"github.com/rairulyle/eclipse-plex-addon/internal/plextest"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/config"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plextest"
 )
 
 func TestHealthcheckExitCodes(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/rairulyle/eclipse-plex-addon/internal/plex"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
 )
 
 var (
