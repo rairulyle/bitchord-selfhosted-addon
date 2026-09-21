@@ -199,6 +199,36 @@ func TestABodyLongerThanEveryTimeoutStillCompletes(t *testing.T) {
 	}
 }
 
+func TestStreamEndingEarlyIsLoggedAtDebugNotAboveIt(t *testing.T) {
+	h := newHarness(t)
+	h.fake.Extra["/library/parts/102/1/file.mp3"] = func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("short"))
+		w.(http.Flusher).Flush()
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Fatal(err)
+		}
+		conn.Close()
+	}
+	rec := h.get(filePath("102"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	logs := h.logs.String()
+	if !strings.Contains(logs, `"msg":"stream ended early"`) || !strings.Contains(logs, `"error":"unexpected EOF"`) {
+		t.Fatalf("logs lack the early-stream-end message:\n%s", logs)
+	}
+	if strings.Contains(logs, `"level":"ERROR"`) || strings.Contains(logs, `"level":"WARN"`) || strings.Contains(logs, `"level":"INFO"`) {
+		for _, line := range strings.Split(strings.TrimSpace(logs), "\n") {
+			if strings.Contains(line, "stream ended early") && !strings.Contains(line, `"level":"DEBUG"`) {
+				t.Fatalf("stream ended early logged above debug: %s", line)
+			}
+		}
+	}
+}
+
 func TestArt(t *testing.T) {
 	h := newHarness(t)
 	rec := h.get("/" + testSecret + "/art/101")
