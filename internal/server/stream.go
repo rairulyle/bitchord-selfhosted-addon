@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"regexp"
 
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/library"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
 )
 
@@ -31,6 +32,9 @@ func (s *server) stream(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		quiet404(w, r)
 		return
+	}
+	if track, ok := library.FromPlex(item); ok {
+		s.Log.Info("stream", "id", id, "track", label(track), "quality", descriptor.Quality, "format", descriptor.Format)
 	}
 	writeJSON(w, descriptor)
 }

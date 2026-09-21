@@ -210,3 +210,19 @@ func TestServeStopsTheRefreshLoopWhenThePortIsTaken(t *testing.T) {
 		t.Fatal("serve did not return")
 	}
 }
+
+func TestNewLoggerFormats(t *testing.T) {
+	var text, structured bytes.Buffer
+	newLogger("text", slog.LevelInfo, &text).Info("hello", "n", 1)
+	newLogger("json", slog.LevelInfo, &structured).Info("hello", "n", 1)
+	if got := text.String(); !strings.Contains(got, "msg=hello") || !strings.Contains(got, "n=1") {
+		t.Errorf("text = %s", got)
+	}
+	if got := structured.String(); !strings.Contains(got, `"msg":"hello"`) {
+		t.Errorf("json = %s", got)
+	}
+	newLogger("text", slog.LevelWarn, &text).Info("quiet")
+	if strings.Contains(text.String(), "quiet") {
+		t.Error("level not applied")
+	}
+}

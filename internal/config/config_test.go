@@ -99,3 +99,19 @@ func TestLoadAllowsPlainHTTPOnLocalhost(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 }
+
+func TestLoadLogFormat(t *testing.T) {
+	cfg, err := Load(env(valid()))
+	if err != nil || cfg.LogFormat != "text" {
+		t.Fatalf("default LogFormat = %q, err %v", cfg.LogFormat, err)
+	}
+	vars := valid()
+	vars["LOG_FORMAT"] = "JSON"
+	if cfg, err := Load(env(vars)); err != nil || cfg.LogFormat != "json" {
+		t.Fatalf("LogFormat = %q, err %v", cfg.LogFormat, err)
+	}
+	vars["LOG_FORMAT"] = "xml"
+	if _, err := Load(env(vars)); err == nil || !strings.Contains(err.Error(), "LOG_FORMAT") {
+		t.Fatalf("err = %v", err)
+	}
+}

@@ -276,3 +276,37 @@ func TestRedact(t *testing.T) {
 		}
 	}
 }
+
+func TestSearchesAreLoggedWithTheirOutcome(t *testing.T) {
+	h := newHarness(t)
+	h.get("/" + testSecret + "/search?q=New+Religion+Teddy+Swims")
+	h.get("/" + testSecret + "/search?q=zzzz")
+	h.get("/" + testSecret + "/search?q=" + strings.Repeat("a", 500))
+	logs := h.logs.String()
+	for _, want := range []string{
+		`"msg":"search","q":"New Religion Teddy Swims","strict":1,"fallback":0,"returned":1,"top":"New Religion — All Time Low feat. Teddy Swims"`,
+		`"msg":"search miss","q":"zzzz","strict":0,"fallback":0,"returned":0`,
+		`"q":"` + strings.Repeat("a", 200) + `…"`,
+	} {
+		if !strings.Contains(logs, want) {
+			t.Errorf("logs lack %s:\n%s", want, logs)
+		}
+	}
+	if strings.Contains(logs, testSecret) {
+		t.Error("the secret reached the logs")
+	}
+}
+
+func TestRequestLinesAreDebugOnly(t *testing.T) {
+	fake := plextest.New(t)
+	client := plex.New(plex.Options{BaseURL: fake.URL, Token: plextest.Token})
+	logs := &syncBuffer{}
+	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	lib := library.NewLibrary(client, "Music", time.Hour, log)
+	handler := New(Options{Secret: testSecret, PublicURL: testPublic, AddonName: "Plex", Library: lib, Plex: client, Log: log})
+	req := httptest.NewRequest(http.MethodGet, "/"+testSecret+"/manifest.json", nil)
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+	if strings.Contains(logs.String(), `"msg":"request"`) {
+		t.Fatalf("request line logged at info:\n%s", logs.String())
+	}
+}

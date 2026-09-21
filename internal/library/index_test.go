@@ -119,3 +119,27 @@ func TestSearchAnswersTheWordFormsBitChordSends(t *testing.T) {
 		})
 	}
 }
+
+func TestFindReportsHowEachTierDid(t *testing.T) {
+	ix := fixtureIndex()
+	cases := map[string]struct {
+		query            string
+		limit            int
+		strict, fallback int
+		returned         int
+	}{
+		"strict only":         {"emo girl mgk", 50, 1, 0, 1},
+		"strict and fallback": {"one step closer live", 50, 1, 1, 2},
+		"fallback only":       {"i write sins not tragedies brendon urie", 50, 0, 1, 1},
+		"counts ignore limit": {"closer", 1, 3, 0, 1},
+		"nothing":             {"zzz", 50, 0, 0, 0},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := ix.Find(tc.query, tc.limit)
+			if got.Strict != tc.strict || got.Fallback != tc.fallback || len(got.Tracks) != tc.returned {
+				t.Fatalf("Find(%q) = strict %d, fallback %d, returned %d", tc.query, got.Strict, got.Fallback, len(got.Tracks))
+			}
+		})
+	}
+}

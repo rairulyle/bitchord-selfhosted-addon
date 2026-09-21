@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -9,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -47,7 +49,9 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "invalid configuration:\n%v\n", err)
 		return 1
 	}
-	log := slog.New(slog.NewJSONHandler(stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
+	log := newLogger(cfg.LogFormat, cfg.LogLevel, stderr)
+	log.Info("starting", "version", version, "plex", hostOf(cfg.PlexURL), "section", cmp.Or(cfg.Section, "all music"),
+		"refresh", cfg.RefreshInterval.String(), "public_url", cfg.PublicURL, "log_level", cfg.LogLevel.String())
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
 	if err := serve(ctx, cfg, log, func(net.Addr) {}); err != nil {
@@ -55,6 +59,22 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func newLogger(format string, level slog.Level, w io.Writer) *slog.Logger {
+	options := &slog.HandlerOptions{Level: level}
+	if format == "json" {
+		return slog.New(slog.NewJSONHandler(w, options))
+	}
+	return slog.New(slog.NewTextHandler(w, options))
+}
+
+func hostOf(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return parsed.Host
 }
 
 func healthcheck(url string) int {

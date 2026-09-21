@@ -21,6 +21,7 @@ type Config struct {
 	RefreshInterval time.Duration
 	Port            int
 	LogLevel        slog.Level
+	LogFormat       string
 }
 
 var secretPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{16,}$`)
@@ -96,6 +97,11 @@ func Load(getenv func(string) string) (Config, error) {
 		fail("LOG_LEVEL must be one of debug, info, warn, error")
 	}
 	cfg.LogLevel = level
+
+	cfg.LogFormat = strings.ToLower(get("LOG_FORMAT", "text"))
+	if cfg.LogFormat != "text" && cfg.LogFormat != "json" {
+		fail("LOG_FORMAT must be text or json")
+	}
 
 	return cfg, errors.Join(problems...)
 }
