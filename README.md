@@ -117,6 +117,21 @@ In BitChord, open **Sources**, add an addon, and paste the URL.
 
 If a client asks for a manifest URL instead, append `/manifest.json`.
 
+### Using it with other sources
+
+BitChord tries your sources from top to bottom for every track. With Plex
+first, the order looks like this:
+
+1. **Plex** (this addon). If the track is in your library, your own file plays.
+2. **Your other addons**, in the order listed.
+3. **Built-in sources**, ending with YouTube Music, which is always on.
+
+If a source does not have the track or cannot be reached, BitChord moves on
+to the next one, so music outside your library still plays.
+
+To change the order, open **Sources** and drag a source by the handle on its
+right. Use the toggle to switch a source off without removing it.
+
 > [!WARNING]
 > Treat the URL like a password. Anyone who has it can stream your library.
 > To revoke it, change `ADDON_SECRET`, restart the container, and add the new
