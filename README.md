@@ -45,8 +45,14 @@ track also exists in your Plex library, the Plex copy plays instead.
 5. Start it:
 
    ```bash
-   docker compose up -d --build
+   docker compose up -d
    ```
+
+   This pulls `ghcr.io/rairulyle/eclipse-plex-addon:latest`, built for
+   `linux/amd64` and `linux/arm64`. To pin a version, use a tag such as
+   `:0.1` or `:0.1.0`. To update, run `docker compose pull` and then
+   `docker compose up -d`. To build from source instead, replace the `image:`
+   line in `compose.yml` with `build: .` and add `--build`.
 
 6. Check it. The first command prints the manifest. The second prints `200`
    once the first index load has finished, and `503` before that.
@@ -131,6 +137,17 @@ The whole index lives in memory. Expect roughly 30 to 50 MB for a library of
 | Search works but playback fails | The reverse proxy buffers or times out long responses. See the notes above |
 | A new album does not show up | The index refreshes every `REFRESH_INTERVAL`. Restart the container to refresh now |
 | Playback stops when the container is redeployed | A restart lets active streams run for 10 seconds, then closes them. The player resumes with a Range request once the addon is back |
+
+## Releasing
+
+Publishing a GitHub release, or pushing a tag that starts with `v`, runs the
+tests and then pushes a multi-arch image to GHCR tagged `latest`, `X.Y.Z` and
+`X.Y`. The tag's version is stamped into the binary and shows in the manifest.
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
 
 ## Development
 

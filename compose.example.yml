@@ -1,6 +1,6 @@
 services:
   eclipse-plex-addon:
-    build: .
+    image: ghcr.io/rairulyle/eclipse-plex-addon:latest
     restart: unless-stopped
     env_file: .env
     networks:
