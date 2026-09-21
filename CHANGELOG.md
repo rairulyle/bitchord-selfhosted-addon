@@ -6,6 +6,10 @@ Entries are written **one line per paragraph and bullet** (no hard-wrapping) so 
 
 ## [Unreleased]
 
+### Fixed
+
+- Tracks that Plex never finished analysing (no media bitrate) now play. Plex answers `500` to a direct-play request for those parts but serves the same file as a download, so a `500` on a file request is retried once with `download=1`. Before this, such tracks got a `502` and the client fell through to the next source.
+
 ## [0.3.0] - 2026-09-21
 
 ### Changed
