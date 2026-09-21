@@ -135,6 +135,15 @@ The whole index lives in memory. Expect roughly 30 to 50 MB for a library of
 | A new album does not show up | The index refreshes every `REFRESH_INTERVAL`. Restart the container to refresh now |
 | Playback stops when the container is redeployed | A restart lets active streams run for 10 seconds, then closes them. The player resumes with a Range request once the addon is back |
 
+## Roadmap
+
+- **Jellyfin support.** Serve a Jellyfin music library the same way as a Plex
+  one. Each running addon will talk to one server, picked by which settings
+  are filled in: `PLEX_URL` and `PLEX_TOKEN`, or `JELLYFIN_URL` and
+  `JELLYFIN_API_KEY`. The source shows up in the client as "Plex" or
+  "Jellyfin" unless `ADDON_NAME` overrides it. To use both servers, run two
+  containers and add both addon URLs.
+
 ## Releasing
 
 `CHANGELOG.md` is the source of truth for release notes.
