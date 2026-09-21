@@ -94,3 +94,30 @@ func TestServeAnswersOverHTTPAndShutsDownOnCancel(t *testing.T) {
 		t.Fatal("serve did not return after cancel")
 	}
 }
+
+func TestServeStopsTheRefreshLoopWhenThePortIsTaken(t *testing.T) {
+	fake := plextest.New(t)
+	taken, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer taken.Close()
+	port := taken.Addr().(*net.TCPAddr).Port
+
+	cfg := config.Config{
+		PlexURL: fake.URL, PlexToken: plextest.Token, Secret: "abcdefghijklmnop",
+		PublicURL: "https://music.example.com", AddonName: "Plex", RefreshInterval: time.Hour, Port: port,
+	}
+	done := make(chan error, 1)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	go func() { done <- serve(context.Background(), cfg, log, func(net.Addr) {}) }()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("serve did not error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("serve did not return")
+	}
+}
