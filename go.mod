@@ -1,4 +1,4 @@
-module github.com/rairulyle/eclipse-plex-addon
+module github.com/rairulyle/bitchord-selfhosted-addon
 
 go 1.27
 

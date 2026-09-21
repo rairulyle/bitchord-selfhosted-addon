@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rairulyle/eclipse-plex-addon/internal/plex"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
 )
 
 const Token = "fake-plex-token"

@@ -1,10 +1,10 @@
-# eclipse-plex-addon
+# bitchord-selfhosted-addon
 
-A small self-hosted server that exposes your Plex music library through the
-[Eclipse Music addon protocol](https://eclipsemusic.app/docs). Any client that
-speaks the protocol can search the library and stream the original files:
-Eclipse Music (iOS, iPadOS, web), BitChord (Android), Sonido (Linux) and
-others.
+A small self-hosted server that makes your Plex music library a source in
+BitChord (Android). It speaks the
+[Eclipse Music addon protocol](https://eclipsemusic.app/docs), so any other
+client that speaks the protocol can search the library and stream the original
+files too: Eclipse Music (iOS, iPadOS, web), Sonido (Linux) and others.
 
 BitChord ranks user-added addons above its built-in sources, so when a queued
 track also exists in your Plex library, the Plex copy plays instead.
@@ -40,7 +40,7 @@ track also exists in your Plex library, the Plex copy plays instead.
 2. Fill in `.env`. Generate the secret with `openssl rand -hex 24`.
 3. In `compose.yml`, set the network name to the Docker network your reverse
    proxy uses.
-4. Point your reverse proxy at `eclipse-plex-addon:8080` for the host in
+4. Point your reverse proxy at `bitchord-selfhosted-addon:8080` for the host in
    `PUBLIC_URL`.
 5. Start it:
 
@@ -48,7 +48,7 @@ track also exists in your Plex library, the Plex copy plays instead.
    docker compose up -d
    ```
 
-   This pulls `ghcr.io/rairulyle/eclipse-plex-addon:latest`, built for
+   This pulls `ghcr.io/rairulyle/bitchord-selfhosted-addon:latest`, built for
    `linux/amd64` and `linux/arm64`. To pin a version, use a tag such as
    `:0.1` or `:0.1.0`. To update, run `docker compose pull` and then
    `docker compose up -d`. To build from source instead, replace the `image:`
@@ -111,7 +111,7 @@ skipped track stops downloading from Plex at once.
 
   ```nginx
   location / {
-      proxy_pass http://eclipse-plex-addon:8080;
+      proxy_pass http://bitchord-selfhosted-addon:8080;
       proxy_buffering off;
       proxy_request_buffering off;
       proxy_http_version 1.1;

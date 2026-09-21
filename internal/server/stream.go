@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"regexp"
 
-	"github.com/rairulyle/eclipse-plex-addon/internal/plex"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
 )
 
 var idPattern = regexp.MustCompile(`^[0-9]{1,20}$`)

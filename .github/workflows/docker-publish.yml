@@ -73,8 +73,8 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
           labels: |
-            org.opencontainers.image.title=eclipse-plex-addon
-            org.opencontainers.image.description=Plex music library addon for the Eclipse Music protocol
+            org.opencontainers.image.title=bitchord-selfhosted-addon
+            org.opencontainers.image.description=Self-hosted music library addon for BitChord and other Eclipse Music protocol clients
 
       - name: Build and push image
         uses: docker/build-push-action@v7

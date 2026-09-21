@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rairulyle/eclipse-plex-addon/internal/plex"
-	"github.com/rairulyle/eclipse-plex-addon/internal/plextest"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plextest"
 )
 
 const flacBody = "0123456789abcdefghijklmnopqrstuvwxyz"
