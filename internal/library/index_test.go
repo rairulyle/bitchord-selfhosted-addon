@@ -83,3 +83,39 @@ func TestGetAndLen(t *testing.T) {
 		t.Error("Get(999) should miss")
 	}
 }
+
+func TestSearchAnswersTheWordFormsBitChordSends(t *testing.T) {
+	ix := NewIndex([]Track{
+		{ID: "1", Title: "Time‐Bomb", Artist: "All Time Low", AlbumArtist: "All Time Low", Album: "Dirty Work"},
+		{ID: "2", Title: "Naïve Orleans", Artist: "Anberlin", AlbumArtist: "Anberlin", Album: "Blueprints for the Black Market"},
+		{ID: "3", Title: "11:11 PM", Artist: "The All‐American Rejects", AlbumArtist: "The All‐American Rejects", Album: "Move Along"},
+		{ID: "4", Title: "ワンテンポ遅れたMonster ain't dead", Artist: "[Alexandros]", AlbumArtist: "[Alexandros]", Album: "ALXD"},
+		{ID: "5", Title: "Weightless", Artist: "All Time Low", AlbumArtist: "All Time Low", Album: "Nothing Personal"},
+	})
+	cases := map[string]struct {
+		query string
+		want  []string
+	}{
+		"joined hyphenated title":            {"timebomb all time low", []string{"1"}},
+		"joined title alone":                 {"timebomb", []string{"1"}},
+		"spelled apart still works":          {"time bomb all time low", []string{"1"}},
+		"accent deleted":                     {"nave orleans anberlin", []string{"2"}},
+		"accent folded still works":          {"naive orleans", []string{"2"}},
+		"digits joined across punctuation":   {"1111 pm the all‐american rejects", []string{"3"}},
+		"latin words of a mixed script":      {"monster aint dead [alexandros]", []string{"4"}},
+		"fallback counts only real words":    {"time bomb brendon urie", []string{"1"}},
+		"a joined form alone is no fallback": {"timebomb brendon urie", []string{}},
+		"title hit outranks an artist hit":   {"time", []string{"1", "5"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := ids(ix.Search(tc.query, 50))
+			if len(got) == 0 && len(tc.want) == 0 {
+				return
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("Search(%q) = %v, want %v", tc.query, got, tc.want)
+			}
+		})
+	}
+}
