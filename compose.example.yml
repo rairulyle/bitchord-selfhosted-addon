@@ -1,6 +1,6 @@
 services:
   bitchord-selfhosted-addon:
-    build: .
+    image: ghcr.io/rairulyle/bitchord-selfhosted-addon:latest
     restart: unless-stopped
     env_file: .env
     networks:
