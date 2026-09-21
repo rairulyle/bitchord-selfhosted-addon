@@ -1,10 +1,12 @@
 package library
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -205,4 +207,27 @@ func TestSearchIsSafeDuringASwap(t *testing.T) {
 		}
 	}
 	wg.Wait()
+}
+
+func TestRefreshLogsWhatChanged(t *testing.T) {
+	var logs bytes.Buffer
+	source := &scriptedSource{answers: []func() ([]plex.Track, error){
+		ok(plexTrack("1", "First Song"), plexTrack("2", "Second Song")),
+		ok(plexTrack("2", "Second Song"), plexTrack("3", "Third Song"), plexTrack("4", "Fourth Song")),
+	}}
+	lib := NewLibrary(source, "", time.Minute, slog.New(slog.NewJSONHandler(&logs, nil)))
+	for range 2 {
+		if err := lib.Refresh(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lines := strings.Split(strings.TrimSpace(logs.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("logs = %s", logs.String())
+	}
+	for i, want := range []string{`"tracks":2,"added":2,"removed":0`, `"tracks":3,"added":2,"removed":1`} {
+		if !strings.Contains(lines[i], want) {
+			t.Errorf("line %d lacks %s: %s", i, want, lines[i])
+		}
+	}
 }

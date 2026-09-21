@@ -30,12 +30,14 @@ func NewLibrary(source Source, section string, interval time.Duration, log *slog
 
 func (l *Library) Ready() bool { return l.index.Load() != nil }
 
-func (l *Library) Search(query string, limit int) []Track {
+func (l *Library) Search(query string, limit int) []Track { return l.Find(query, limit).Tracks }
+
+func (l *Library) Find(query string, limit int) Result {
 	ix := l.index.Load()
 	if ix == nil {
-		return nil
+		return Result{}
 	}
-	return ix.Search(query, limit)
+	return ix.Find(query, limit)
 }
 
 func (l *Library) Get(id string) (Track, bool) {
@@ -58,8 +60,14 @@ func (l *Library) Refresh(ctx context.Context) error {
 			tracks = append(tracks, track)
 		}
 	}
-	l.index.Store(NewIndex(tracks))
-	l.log.Info("library indexed", "tracks", len(tracks), "skipped", len(raw)-len(tracks), "took", time.Since(started).String())
+	next := NewIndex(tracks)
+	previous := l.index.Swap(next)
+	removed := 0
+	if previous != nil {
+		removed = previous.missingFrom(next)
+	}
+	l.log.Info("library indexed", "tracks", len(tracks), "added", next.missingFrom(previous), "removed", removed,
+		"skipped", len(raw)-len(tracks), "took", time.Since(started).String())
 	return nil
 }
 
