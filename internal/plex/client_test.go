@@ -128,7 +128,7 @@ func TestTrackReturnsStreamDetails(t *testing.T) {
 		t.Fatalf("part = %+v, %v", part, ok)
 	}
 	stream, ok := part.AudioStream()
-	if !ok || stream.SamplingRate != 96000 || stream.BitDepth != 24 {
+	if !ok || stream.SamplingRate != 48000 || stream.BitDepth != 24 {
 		t.Fatalf("stream = %+v, %v", stream, ok)
 	}
 }

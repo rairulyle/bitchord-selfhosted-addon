@@ -10,13 +10,13 @@ func TestTokens(t *testing.T) {
 		in   string
 		want []string
 	}{
-		"lowercases":          {"Tum Hi Ho", []string{"tum", "hi", "ho"}},
-		"strips accents":      {"Beyoncé Bublé", []string{"beyonce", "buble"}},
-		"punctuation splits":  {"AC/DC — Back In Black!", []string{"ac", "dc", "back", "in", "black"}},
-		"apostrophes vanish":  {"Don't Stop Believin’", []string{"dont", "stop", "believin"}},
-		"brackets":            {"Song (feat. Someone) [Live]", []string{"song", "feat", "someone", "live"}},
-		"compatibility forms": {"ﬁre Ｆｕｌｌ", []string{"fire", "full"}},
-		"digits kept":         {"1979 - 2011 Remaster", []string{"1979", "2011", "remaster"}},
+		"lowercases":          {"One Step Closer", []string{"one", "step", "closer"}},
+		"strips accents":      {"Päffgen Blasé", []string{"paffgen", "blase"}},
+		"punctuation splits":  {"Panic! at the Disco — Death of a Bachelor", []string{"panic", "at", "the", "disco", "death", "of", "a", "bachelor"}},
+		"apostrophes vanish":  {"Don't Panic: It’s Longer Now!", []string{"dont", "panic", "its", "longer", "now"}},
+		"brackets":            {"[Alexandros] spit! (live)", []string{"alexandros", "spit", "live"}},
+		"compatibility forms": {"ＯＮＥ ＯＫ ＲＯＣＫ ﬁre", []string{"one", "ok", "rock", "fire"}},
+		"digits kept":         {"Punk Goes 90’s, Volume 2", []string{"punk", "goes", "90s", "volume", "2"}},
 		"empty":               {"", []string{}},
 		"only punctuation":    {" -- !! ", []string{}},
 	}
@@ -34,7 +34,7 @@ func TestTokens(t *testing.T) {
 }
 
 func TestTokensKeepNonLatinWordsWhole(t *testing.T) {
-	for _, in := range []string{"夜に駆ける", "पानी"} {
+	for _, in := range []string{"夜に駆ける", "ショコラカタブラ"} {
 		got := Tokens(in)
 		if len(got) != 1 || got[0] == "" {
 			t.Errorf("Tokens(%q) = %q, want one non-empty token", in, got)

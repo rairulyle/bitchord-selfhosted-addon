@@ -118,7 +118,7 @@ func TestWrongSecretAndUnknownRoutesAnswerTheSameEmpty404(t *testing.T) {
 		t.Fatalf("wrong secret: status %d, body %q", reference.Code, reference.Body.String())
 	}
 	requests := map[string][2]string{
-		"wrong secret search":   {http.MethodGet, "/wrong/search?q=tum"},
+		"wrong secret search":   {http.MethodGet, "/wrong/search?q=closer"},
 		"wrong secret stream":   {http.MethodGet, "/wrong/stream/101"},
 		"wrong secret file":     {http.MethodGet, "/wrong/file/101"},
 		"wrong secret art":      {http.MethodGet, "/wrong/art/101"},
@@ -175,15 +175,15 @@ func TestCORS(t *testing.T) {
 
 func TestSearchMapsTracks(t *testing.T) {
 	h := newHarness(t)
-	rec := h.get("/" + testSecret + "/search?q=Paniyon+Sa+Atif+Aslam&quality=LOW")
+	rec := h.get("/" + testSecret + "/search?q=New+Religion+Teddy+Swims&quality=LOW")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	got := decode[map[string]any](t, rec)
 	want := map[string]any{
 		"tracks": []any{map[string]any{
-			"id": "101", "title": "Paniyon Sa", "artist": "Atif Aslam, Tulsi Kumar", "album": "Satyameva Jayate",
-			"duration": float64(249), "artworkURL": testBase + "/art/101", "format": "flac", "audioQuality": "LOSSLESS",
+			"id": "101", "title": "New Religion", "artist": "All Time Low feat. Teddy Swims", "album": "Tell Me I’m Alive",
+			"duration": float64(184), "artworkURL": testBase + "/art/101", "format": "flac", "audioQuality": "LOSSLESS",
 		}},
 		"albums": []any{}, "artists": []any{}, "playlists": []any{},
 	}
@@ -198,10 +198,10 @@ func TestSearchQualityFormatAndArtwork(t *testing.T) {
 		query, format, quality string
 		artwork                bool
 	}{
-		"mp3 falls back to album artist": {"tum hi ho arijit singh", "mp3", "HIGH", true},
-		"pcm in wav is reported as wav":  {"home michael buble", "wav", "LOSSLESS", true},
-		"album thumb is enough":          {"album cover only", "aac", "HIGH", true},
-		"no thumb, no artworkURL":        {"no cover", "mp3", "HIGH", false},
+		"mp3 falls back to album artist": {"endless slaughter limp bizkit", "mp3", "HIGH", true},
+		"pcm in wav is reported as wav":  {"closer anberlin", "wav", "LOSSLESS", true},
+		"album thumb is enough":          {"small town girl", "aac", "HIGH", true},
+		"no thumb, no artworkURL":        {"stays four the same", "mp3", "HIGH", false},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -229,7 +229,7 @@ func TestSearchAnswersEmptyArraysNeverNull(t *testing.T) {
 		"blank query":      loaded.get("/" + testSecret + "/search?q="),
 		"missing query":    loaded.get("/" + testSecret + "/search"),
 		"no match":         loaded.get("/" + testSecret + "/search?q=zzzz"),
-		"index not loaded": notLoaded.get("/" + testSecret + "/search?q=tum"),
+		"index not loaded": notLoaded.get("/" + testSecret + "/search?q=closer"),
 	}
 	for name, rec := range cases {
 		if got := strings.TrimSpace(rec.Body.String()); rec.Code != http.StatusOK || got != empty {
@@ -249,11 +249,11 @@ func TestHealthz(t *testing.T) {
 
 func TestLogsRedactTheSecretAndNeverCarryTheToken(t *testing.T) {
 	h := newHarness(t)
-	h.get("/" + testSecret + "/search?q=tum")
+	h.get("/" + testSecret + "/search?q=closer")
 	h.get("/" + testSecret + "/stream/101")
 	h.get("/healthz")
 	h.get("//" + testSecret + "/manifest.json")
-	h.get("/./" + testSecret + "/search?q=tum")
+	h.get("/./" + testSecret + "/search?q=closer")
 	logs := h.logs.String()
 	if strings.Contains(logs, testSecret) || strings.Contains(logs, plextest.Token) {
 		t.Fatalf("logs leak a credential:\n%s", logs)

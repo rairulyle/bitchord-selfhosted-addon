@@ -18,8 +18,8 @@ func TestStreamDescriptors(t *testing.T) {
 		want map[string]any
 	}{
 		"hi-res flac": {"101", map[string]any{
-			"url": testBase + "/file/101", "format": "flac", "quality": "lossless 24-bit 96kHz", "codec": "flac",
-			"container": "flac", "manifest": "none", "sampleRate": float64(96000), "bitDepth": float64(24), "bitrate": float64(2890000),
+			"url": testBase + "/file/101", "format": "flac", "quality": "lossless 24-bit 48kHz", "codec": "flac",
+			"container": "flac", "manifest": "none", "sampleRate": float64(48000), "bitDepth": float64(24), "bitrate": float64(1875000),
 		}},
 		"mp3 omits bit depth": {"102", map[string]any{
 			"url": testBase + "/file/102", "format": "mp3", "quality": "320kbps", "codec": "mp3",
@@ -30,8 +30,8 @@ func TestStreamDescriptors(t *testing.T) {
 			"container": "wav", "manifest": "none", "sampleRate": float64(44100), "bitDepth": float64(16), "bitrate": float64(1411000),
 		}},
 		"no stream details": {"104", map[string]any{
-			"url": testBase + "/file/104", "format": "mp3", "quality": "128kbps", "codec": "mp3",
-			"container": "mp3", "manifest": "none", "bitrate": float64(128000),
+			"url": testBase + "/file/104", "format": "mp3", "quality": "251kbps", "codec": "mp3",
+			"container": "mp3", "manifest": "none", "bitrate": float64(251000),
 		}},
 	}
 	for name, tc := range cases {

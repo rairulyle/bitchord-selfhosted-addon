@@ -194,15 +194,15 @@ func track(id, title, artist, albumArtist, album string, ms int, codec, containe
 }
 
 func Tracks() map[string][]plex.Track {
-	noThumb := track("104", "No Cover", "", "Nobody", "Blank", 60000, "mp3", "mp3", 128, plex.Stream{})
+	noThumb := track("104", "Stays Four the Same", "", "The Ready Set", "Stays Four The Same", 201378, "mp3", "mp3", 251, plex.Stream{})
 	noThumb.Thumb, noThumb.ParentThumb = "", ""
-	albumThumb := track("105", "Album Cover Only", "", "Somebody", "Covers", 61000, "aac", "mp4", 256, plex.Stream{SamplingRate: 44100})
+	albumThumb := track("105", "Small Town Girl", "", "Never Shout Never", "Small Town Girl", 218047, "aac", "mp4", 320, plex.Stream{SamplingRate: 44100})
 	albumThumb.Thumb = ""
 	return map[string][]plex.Track{
 		"3": {
-			track("101", "Paniyon Sa", "Atif Aslam, Tulsi Kumar", "Various Artists", "Satyameva Jayate", 249400, "flac", "flac", 2890, plex.Stream{SamplingRate: 96000, BitDepth: 24}),
-			track("102", "Tum Hi Ho", "", "Arijit Singh", "Aashiqui 2", 261600, "mp3", "mp3", 320, plex.Stream{SamplingRate: 44100}),
-			track("103", "Home", "", "Michael Bublé", "It's Time", 225000, "pcm", "wav", 1411, plex.Stream{SamplingRate: 44100, BitDepth: 16}),
+			track("101", "New Religion", "All Time Low feat. Teddy Swims", "All Time Low", "Tell Me I’m Alive", 184054, "flac", "flac", 1875, plex.Stream{SamplingRate: 48000, BitDepth: 24}),
+			track("102", "Endless Slaughter", "", "Limp Bizkit", "Endless Slaughter", 336823, "mp3", "mp3", 320, plex.Stream{SamplingRate: 44100}),
+			track("103", "Closer", "", "Anberlin", "As You Found Me", 230520, "pcm", "wav", 1411, plex.Stream{SamplingRate: 44100, BitDepth: 16}),
 			noThumb,
 			albumThumb,
 			{RatingKey: "106", Title: "Broken, No Media"},
