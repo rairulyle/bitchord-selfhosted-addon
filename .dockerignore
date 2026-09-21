@@ -1,0 +1,7 @@
+.git
+.github
+.env
+bin
+docs
+*.md
+compose.example.yml
