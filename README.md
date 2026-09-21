@@ -127,6 +127,7 @@ The whole index lives in memory. Expect roughly 30 to 50 MB for a library of
 | Log says `no music section matches` | `PLEX_SECTION` does not name a music library. Use its exact title or its numeric id |
 | Search works but playback fails | The reverse proxy buffers or times out long responses. See the notes above |
 | A new album does not show up | The index refreshes every `REFRESH_INTERVAL`. Restart the container to refresh now |
+| Playback stops when the container is redeployed | A restart lets active streams run for 10 seconds, then closes them. The player resumes with a Range request once the addon is back |
 
 ## Development
 
