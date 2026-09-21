@@ -27,6 +27,7 @@ type Index struct {
 	postings    map[string][]int
 	titlePosts  map[string][]int
 	titleTokens [][]string
+	titleForms  [][]string
 }
 
 func NewIndex(tracks []Track) *Index {
@@ -36,6 +37,7 @@ func NewIndex(tracks []Track) *Index {
 		postings:    map[string][]int{},
 		titlePosts:  map[string][]int{},
 		titleTokens: make([][]string, len(tracks)),
+		titleForms:  make([][]string, len(tracks)),
 	}
 	for i, t := range tracks {
 		ix.byID[t.ID] = i
@@ -49,8 +51,17 @@ func NewIndex(tracks []Track) *Index {
 		for _, token := range title {
 			hits[token] = struct{}{}
 		}
+		for _, form := range bitchordWords(t.Title) {
+			if _, known := hits[form]; !known {
+				ix.titleForms[i] = append(ix.titleForms[i], form)
+			}
+			hits[form] = struct{}{}
+		}
 		for _, token := range unique(Tokens(everything)) {
 			hits[token] = struct{}{}
+		}
+		for _, form := range bitchordWords(everything) {
+			hits[form] = struct{}{}
 		}
 		for token := range hits {
 			ix.postings[token] = append(ix.postings[token], i)
@@ -140,9 +151,11 @@ func (ix *Index) rank(candidates []int, q []string) {
 	}
 	titleHits := make(map[int]int, len(candidates))
 	for _, i := range candidates {
-		for _, token := range ix.titleTokens[i] {
-			if _, ok := wanted[token]; ok {
-				titleHits[i]++
+		for _, tokens := range [][]string{ix.titleTokens[i], ix.titleForms[i]} {
+			for _, token := range tokens {
+				if _, ok := wanted[token]; ok {
+					titleHits[i]++
+				}
 			}
 		}
 	}
