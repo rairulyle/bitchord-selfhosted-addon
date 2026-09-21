@@ -32,7 +32,7 @@ func main() { os.Exit(run(os.Args[1:], os.Getenv, os.Stderr)) }
 func run(args []string, getenv func(string) string, stderr io.Writer) int {
 	flags := flag.NewFlagSet("addon", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	probe := flags.Bool("healthcheck", false, "request /healthz on the local port, then exit 0 or 1")
+	probe := flags.Bool("healthcheck", false, "request /health on the local port, then exit 0 or 1")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -41,7 +41,7 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 		if port == "" {
 			port = "8080"
 		}
-		return healthcheck("http://127.0.0.1:" + port + "/healthz")
+		return healthcheck("http://127.0.0.1:" + port + "/health")
 	}
 
 	cfg, err := config.Load(getenv)
