@@ -106,6 +106,7 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger, listening f
 	case err := <-failed:
 		return err
 	case <-ctx.Done():
+		stopRun()
 	}
 	log.Info("shutting down")
 	grace, cancel := context.WithTimeout(context.Background(), shutdownGrace)
