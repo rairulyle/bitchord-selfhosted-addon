@@ -73,7 +73,16 @@ func healthcheck(url string) int {
 func serve(ctx context.Context, cfg config.Config, log *slog.Logger, listening func(net.Addr)) error {
 	client := plex.New(plex.Options{BaseURL: cfg.PlexURL, Token: cfg.PlexToken})
 	lib := library.NewLibrary(client, cfg.Section, cfg.RefreshInterval, log)
-	go lib.Run(ctx)
+	runCtx, stopRun := context.WithCancel(ctx)
+	runDone := make(chan struct{})
+	go func() {
+		defer close(runDone)
+		lib.Run(runCtx)
+	}()
+	defer func() {
+		stopRun()
+		<-runDone
+	}()
 
 	listener, err := net.Listen("tcp", ":"+strconv.Itoa(cfg.Port))
 	if err != nil {
