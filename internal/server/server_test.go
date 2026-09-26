@@ -76,14 +76,18 @@ func newHarnessWith(t *testing.T, options plex.Options, load bool) *harness {
 	return &harness{fake: fake, server: s, handler: s.handler(), logs: logs}
 }
 
-func (h *harness) do(method, path string, header http.Header) *httptest.ResponseRecorder {
+func do(handler http.Handler, method, path string, header http.Header) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, path, nil)
 	for key, values := range header {
 		req.Header[key] = values
 	}
 	rec := httptest.NewRecorder()
-	h.handler.ServeHTTP(rec, req)
+	handler.ServeHTTP(rec, req)
 	return rec
+}
+
+func (h *harness) do(method, path string, header http.Header) *httptest.ResponseRecorder {
+	return do(h.handler, method, path, header)
 }
 
 func (h *harness) get(path string) *httptest.ResponseRecorder {
