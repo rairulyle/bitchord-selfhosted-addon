@@ -18,6 +18,7 @@ const clientName = "bitchord-selfhosted-addon"
 type Options struct {
 	BaseURL       string
 	APIKey        string
+	DeviceID      string
 	Version       string
 	PageSize      int
 	HeaderTimeout time.Duration
@@ -29,11 +30,17 @@ type Client struct {
 	pageSize int
 }
 
-// Only Token is required by the server. The other fields name the addon in
-// the Jellyfin dashboard.
-func Authorization(version, key string) string {
-	return fmt.Sprintf(`MediaBrowser Client=%q, Device="server", DeviceId=%q, Version=%q, Token=%q`,
-		clientName, clientName, version, key)
+// Only Token is required by the server, and a sign-in request carries none.
+// The other fields name the addon in the Jellyfin dashboard.
+func Authorization(version, deviceID, key string) string {
+	if deviceID == "" {
+		deviceID = clientName
+	}
+	header := fmt.Sprintf(`MediaBrowser Client=%q, Device="server", DeviceId=%q, Version=%q`, clientName, deviceID, version)
+	if key == "" {
+		return header
+	}
+	return header + fmt.Sprintf(`, Token=%q`, key)
 }
 
 func New(o Options) *Client {
@@ -43,7 +50,7 @@ func New(o Options) *Client {
 	if o.Version == "" {
 		o.Version = "dev"
 	}
-	authorization := Authorization(o.Version, o.APIKey)
+	authorization := Authorization(o.Version, o.DeviceID, o.APIKey)
 	return &Client{
 		http: media.NewClient(media.ClientOptions{
 			BaseURL:       o.BaseURL,

@@ -2,6 +2,7 @@ package fakes
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -13,7 +14,12 @@ import (
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/jellyfin"
 )
 
-const JellyfinToken = "fake-jellyfin-key"
+const (
+	JellyfinToken    = "fake-jellyfin-key"
+	JellyfinUser     = "lyle"
+	JellyfinPassword = "correct horse"
+	JellyfinUserID   = "9f8e7d6c5b4a39281706f5e4d3c2b1a0"
+)
 
 type Jellyfin struct {
 	recorder
@@ -40,6 +46,10 @@ func NewJellyfin(t testing.TB) *Jellyfin {
 
 func (f *Jellyfin) serve(w http.ResponseWriter, r *http.Request) {
 	status, rawBody := f.record(r)
+	if r.URL.Path == "/Users/AuthenticateByName" {
+		f.authenticate(w, r)
+		return
+	}
 	if !strings.Contains(r.Header.Get("Authorization"), `Token="`+JellyfinToken+`"`) {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
@@ -69,6 +79,25 @@ func (f *Jellyfin) serve(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}
+}
+
+// A sign-in carries the MediaBrowser header without a Token, as Jellyfin
+// requires, and answers 401 to anything but the one known user.
+func (f *Jellyfin) authenticate(w http.ResponseWriter, r *http.Request) {
+	header := r.Header.Get("Authorization")
+	if r.Method != http.MethodPost || !strings.HasPrefix(header, "MediaBrowser ") || strings.Contains(header, "Token=") {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	var body struct{ Username, Pw string }
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Username != JellyfinUser || body.Pw != JellyfinPassword {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"AccessToken": JellyfinToken,
+		"User":        map[string]any{"Name": JellyfinUser, "Id": JellyfinUserID},
+	})
 }
 
 func (f *Jellyfin) servePage(w http.ResponseWriter, r *http.Request) {
