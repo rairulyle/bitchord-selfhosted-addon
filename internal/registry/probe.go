@@ -85,7 +85,6 @@ func (r *Registry) JellyfinSignIn(ctx context.Context, serverURL, username, pass
 	return Account{Token: session.Token, Username: session.Username, DeviceID: deviceID}, nil
 }
 
-// JellyfinSignOut revokes a signed-in server's old token.
 func (r *Registry) JellyfinSignOut(ctx context.Context, serverURL, deviceID, token string) error {
 	if deviceID == "" {
 		deviceID = r.clientIDNow()

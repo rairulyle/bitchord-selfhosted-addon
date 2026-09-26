@@ -228,7 +228,6 @@ func (r *Registry) handOver(slug string, pending *handover) {
 	r.entries[slug] = pending.next
 }
 
-// follow takes the new settings of a server whose connection is unchanged.
 func (e *Entry) follow(server store.Server) {
 	e.setLabel(server.Label)
 	e.config = server
