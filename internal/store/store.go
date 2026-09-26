@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -85,10 +86,12 @@ func (s Snapshot) clone() Snapshot {
 	return out
 }
 
+// Store serializes writers on mu; readers load the last saved snapshot
+// without a lock, so a save's fsync never stalls them.
 type Store struct {
-	path string
-	mu   sync.Mutex
-	data Snapshot
+	path    string
+	mu      sync.Mutex
+	current atomic.Pointer[Snapshot]
 }
 
 // Open reads dir/addon.json, or creates it with a fresh secret and client id
@@ -99,32 +102,33 @@ func Open(dir string) (*Store, error) {
 	raw, err := os.ReadFile(s.path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		s.data = Snapshot{Secret: NewSecret(), ClientID: newClientID(), Servers: []Server{}}
-		if err := s.save(s.data); err != nil {
+		data := Snapshot{Secret: NewSecret(), ClientID: newClientID(), Servers: []Server{}}
+		if err := s.save(data); err != nil {
 			return nil, err
 		}
+		s.current.Store(&data)
 		return s, nil
 	case err != nil:
 		return nil, err
 	}
-	if err := json.Unmarshal(raw, &s.data); err != nil {
+	var data Snapshot
+	if err := json.Unmarshal(raw, &data); err != nil {
 		return nil, fmt.Errorf("%s: %w", s.path, err)
 	}
-	if err := Validate(s.data); err != nil {
+	if err := Validate(data); err != nil {
 		return nil, fmt.Errorf("%s: %w", s.path, err)
 	}
-	if s.data.Servers == nil {
-		s.data.Servers = []Server{}
+	if data.Servers == nil {
+		data.Servers = []Server{}
 	}
+	s.current.Store(&data)
 	return s, nil
 }
 
 func (s *Store) Path() string { return s.path }
 
 func (s *Store) Snapshot() Snapshot {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.data.clone()
+	return s.current.Load().clone()
 }
 
 // Update applies change to a copy, validates it, saves it, and only then
@@ -132,7 +136,7 @@ func (s *Store) Snapshot() Snapshot {
 func (s *Store) Update(change func(*Snapshot) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	next := s.data.clone()
+	next := s.current.Load().clone()
 	if err := change(&next); err != nil {
 		return err
 	}
@@ -142,7 +146,7 @@ func (s *Store) Update(change func(*Snapshot) error) error {
 	if err := s.save(next); err != nil {
 		return err
 	}
-	s.data = next
+	s.current.Store(&next)
 	return nil
 }
 

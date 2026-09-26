@@ -268,3 +268,37 @@ func TestOrderedSortsByCreationThenSlug(t *testing.T) {
 		t.Fatalf("Ordered = %+v", got)
 	}
 }
+
+func TestSnapshotDoesNotWaitForAnUpdate(t *testing.T) {
+	s := open(t)
+	s.AddServer(plexServer())
+	entered, release := make(chan struct{}), make(chan struct{})
+	updated := make(chan error)
+	go func() {
+		updated <- s.Update(func(data *Snapshot) error {
+			close(entered)
+			<-release
+			data.PublicURL = "https://music.example.com"
+			return nil
+		})
+	}()
+	<-entered
+	read := make(chan Snapshot)
+	go func() { read <- s.Snapshot() }()
+	select {
+	case snap := <-read:
+		if snap.PublicURL != "" || len(snap.Servers) != 1 {
+			t.Errorf("snapshot during an update = %+v", snap)
+		}
+		snap.Servers[0].Label = "mutated"
+	case <-time.After(2 * time.Second):
+		t.Error("Snapshot waited for the update")
+	}
+	close(release)
+	if err := <-updated; err != nil {
+		t.Fatal(err)
+	}
+	if snap := s.Snapshot(); snap.PublicURL != "https://music.example.com" || snap.Servers[0].Label != "Home" {
+		t.Fatalf("after the update = %+v", snap)
+	}
+}
