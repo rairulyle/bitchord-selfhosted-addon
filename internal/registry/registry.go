@@ -76,14 +76,33 @@ type Registry struct {
 
 // handover is a restarted server's new entry, waiting for its first refresh
 // before it replaces the entry that is still answering.
+// settled is closed once the handover has swapped or been cancelled.
 type handover struct {
-	next      *Entry
-	cancelled chan struct{}
+	next    *Entry
+	settled chan struct{}
 }
 
 func (h *handover) cancel() {
-	close(h.cancelled)
+	close(h.settled)
 	h.next.stop()
+}
+
+var alreadySettled = func() chan struct{} {
+	ch := make(chan struct{})
+	close(ch)
+	return ch
+}()
+
+// Settled is closed once slug has no handover pending: its restarted entry
+// has taken over, or the handover was cancelled by a later Apply, a removal
+// or Stop. It is closed already when no handover is pending.
+func (r *Registry) Settled(slug string) <-chan struct{} {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if pending, ok := r.pending[slug]; ok {
+		return pending.settled
+	}
+	return alreadySettled
 }
 
 func New(snapshot store.Snapshot, o Options) *Registry {
@@ -189,7 +208,7 @@ func (r *Registry) Apply(snapshot store.Snapshot) {
 			continue
 		}
 		existing.setLabel(server.Label)
-		pending := &handover{next: entry, cancelled: make(chan struct{})}
+		pending := &handover{next: entry, settled: make(chan struct{})}
 		r.pending[server.Slug] = pending
 		r.handovers.Add(1)
 		go r.handOver(server.Slug, pending)
@@ -215,7 +234,7 @@ func (r *Registry) handOver(slug string, pending *handover) {
 	select {
 	case <-pending.next.Library.Tried():
 	case <-timer.C:
-	case <-pending.cancelled:
+	case <-pending.settled:
 		return
 	}
 	r.mu.Lock()
@@ -226,6 +245,7 @@ func (r *Registry) handOver(slug string, pending *handover) {
 	delete(r.pending, slug)
 	r.entries[slug].stop()
 	r.entries[slug] = pending.next
+	close(pending.settled)
 }
 
 func (e *Entry) follow(server store.Server) {

@@ -65,6 +65,24 @@ func waitReplaced(t *testing.T, r *Registry, slug string, before *Entry) *Entry 
 	}
 }
 
+func settled(r *Registry, slug string) bool {
+	select {
+	case <-r.Settled(slug):
+		return true
+	default:
+		return false
+	}
+}
+
+func waitSettled(t *testing.T, r *Registry, slug string) {
+	t.Helper()
+	select {
+	case <-r.Settled(slug):
+	case <-time.After(5 * time.Second):
+		t.Fatalf("%s never settled", slug)
+	}
+}
+
 func stopped(t *testing.T, entry *Entry, what string) {
 	t.Helper()
 	select {
@@ -111,8 +129,15 @@ func TestAChangedServerAnswersFromTheOldIndexUntilTheNewOneLoads(t *testing.T) {
 	waitHealthy(t, r)
 	before, _ := r.Lookup("plex-1")
 
+	if !settled(r, "plex-1") || !settled(r, "plex-9") {
+		t.Fatal("a slug with no handover is not settled")
+	}
 	r.Apply(snapshot(plexServer(next, "plex-1")))
+	waiting := r.Settled("plex-1")
 	<-held
+	if settled(r, "plex-1") {
+		t.Fatal("settled while the handover is pending")
+	}
 	if entry, _ := r.Lookup("plex-1"); entry != before || len(entry.Library.Search("Closer", 5)) == 0 {
 		t.Fatal("search stopped answering from the old index during the restart")
 	}
@@ -120,7 +145,11 @@ func TestAChangedServerAnswersFromTheOldIndexUntilTheNewOneLoads(t *testing.T) {
 		t.Fatal("unhealthy during the restart")
 	}
 	close(release)
-	after := waitReplaced(t, r, "plex-1", before)
+	<-waiting
+	after, _ := r.Lookup("plex-1")
+	if after == before {
+		t.Fatal("settled before the swap")
+	}
 	if !after.Library.Ready() || len(after.Library.Search("Closer", 5)) != 0 || len(after.Library.Search("New Religion", 5)) == 0 {
 		t.Fatal("the new entry does not answer from the new index")
 	}
@@ -152,7 +181,8 @@ func TestAChangedServerSwapsWhenItsFirstRefreshTakesTooLong(t *testing.T) {
 	before, _ := r.Lookup("plex-1")
 	r.Apply(snapshot(plexServer(next, "plex-1")))
 	<-held
-	if after := waitReplaced(t, r, "plex-1", before); after.Library.Ready() {
+	waitSettled(t, r, "plex-1")
+	if after, _ := r.Lookup("plex-1"); after == before || after.Library.Ready() {
 		t.Fatal("swapped only after the refresh finished")
 	}
 	stopped(t, before, "old refresher")
@@ -168,8 +198,9 @@ func TestALaterChangeCancelsAPendingHandover(t *testing.T) {
 
 	r.Apply(snapshot(plexServer(next, "plex-1")))
 	<-held
-	pending := r.pendingEntry("plex-1")
+	pending, waiting := r.pendingEntry("plex-1"), r.Settled("plex-1")
 	r.Apply(snapshot(plexServer(old, "plex-1")))
+	<-waiting
 	stopped(t, pending, "cancelled refresher")
 	close(release)
 	time.Sleep(50 * time.Millisecond)
@@ -180,8 +211,9 @@ func TestALaterChangeCancelsAPendingHandover(t *testing.T) {
 	again := fakes.NewPlex(t)
 	holdSections(again, make(chan struct{}))
 	r.Apply(snapshot(plexServer(again, "plex-1")))
-	pending = r.pendingEntry("plex-1")
+	pending, waiting = r.pendingEntry("plex-1"), r.Settled("plex-1")
 	r.Apply(snapshot())
+	<-waiting
 	stopped(t, pending, "refresher of a removed server")
 	stopped(t, before, "old refresher of a removed server")
 	if _, ok := r.Lookup("plex-1"); ok {
@@ -197,8 +229,9 @@ func TestStopDuringAHandoverEndsBothRefreshers(t *testing.T) {
 	before, _ := r.Lookup("plex-1")
 	r.Apply(snapshot(plexServer(next, "plex-1")))
 	<-held
-	pending := r.pendingEntry("plex-1")
+	pending, waiting := r.pendingEntry("plex-1"), r.Settled("plex-1")
 	r.Stop()
+	<-waiting
 	stopped(t, before, "old refresher")
 	stopped(t, pending, "pending refresher")
 	if _, ok := r.Lookup("plex-1"); ok {
