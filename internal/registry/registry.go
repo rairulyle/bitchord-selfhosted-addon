@@ -26,6 +26,9 @@ type Options struct {
 	PlexTV       string
 	HTTP         *http.Client
 	ProbeTimeout time.Duration
+	// HandoverTimeout caps how long a changed server keeps answering from
+	// its old entry while the new one loads its first index.
+	HandoverTimeout time.Duration
 }
 
 type Entry struct {
@@ -63,10 +66,24 @@ type Status struct {
 }
 
 type Registry struct {
-	opts     Options
-	clientID string
-	mu       sync.RWMutex
-	entries  map[string]*Entry
+	opts      Options
+	clientID  string
+	mu        sync.RWMutex
+	entries   map[string]*Entry
+	pending   map[string]*handover
+	handovers sync.WaitGroup
+}
+
+// handover is a restarted server's new entry, waiting for its first refresh
+// before it replaces the entry that is still answering.
+type handover struct {
+	next      *Entry
+	cancelled chan struct{}
+}
+
+func (h *handover) cancel() {
+	close(h.cancelled)
+	h.next.stop()
 }
 
 func New(snapshot store.Snapshot, o Options) *Registry {
@@ -79,7 +96,10 @@ func New(snapshot store.Snapshot, o Options) *Registry {
 	if o.ProbeTimeout <= 0 {
 		o.ProbeTimeout = 3 * time.Second
 	}
-	r := &Registry{opts: o, clientID: snapshot.ClientID, entries: map[string]*Entry{}}
+	if o.HandoverTimeout <= 0 {
+		o.HandoverTimeout = 30 * time.Second
+	}
+	r := &Registry{opts: o, clientID: snapshot.ClientID, entries: map[string]*Entry{}, pending: map[string]*handover{}}
 	r.Apply(snapshot)
 	return r
 }
@@ -128,8 +148,10 @@ func (r *Registry) Healthy() bool {
 	return true
 }
 
-// Apply makes the running set match the snapshot. A server whose connection
-// settings changed is restarted; a label change is applied in place.
+// Apply makes the running set match the snapshot. A label change is applied
+// in place. A server whose connection settings changed gets a new entry, and
+// its old entry keeps answering until the new one has tried its first
+// refresh, so Apply can return before the swap.
 func (r *Registry) Apply(snapshot store.Snapshot) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -140,22 +162,43 @@ func (r *Registry) Apply(snapshot store.Snapshot) {
 			continue
 		}
 		wanted[server.Slug] = true
-		if existing, ok := r.entries[server.Slug]; ok {
-			if sameConnection(existing.config, server) {
-				existing.mu.Lock()
-				existing.Label = server.Label
-				existing.mu.Unlock()
-				existing.config = server
+		if pending, ok := r.pending[server.Slug]; ok {
+			if sameConnection(pending.next.config, server) {
+				pending.next.follow(server)
+				r.entries[server.Slug].setLabel(server.Label)
 				continue
 			}
-			existing.stop()
+			pending.cancel()
+			delete(r.pending, server.Slug)
+		}
+		existing, running := r.entries[server.Slug]
+		if running && sameConnection(existing.config, server) {
+			existing.follow(server)
+			continue
 		}
 		entry, err := r.start(server)
 		if err != nil {
 			r.opts.Log.Error("server not started", "server", server.Slug, "error", err.Error())
 			continue
 		}
-		r.entries[server.Slug] = entry
+		if !running || !existing.Library.Ready() {
+			if running {
+				existing.stop()
+			}
+			r.entries[server.Slug] = entry
+			continue
+		}
+		existing.setLabel(server.Label)
+		pending := &handover{next: entry, cancelled: make(chan struct{})}
+		r.pending[server.Slug] = pending
+		r.handovers.Add(1)
+		go r.handOver(server.Slug, pending)
+	}
+	for slug, pending := range r.pending {
+		if !wanted[slug] {
+			pending.cancel()
+			delete(r.pending, slug)
+		}
 	}
 	for slug, entry := range r.entries {
 		if !wanted[slug] {
@@ -163,6 +206,38 @@ func (r *Registry) Apply(snapshot store.Snapshot) {
 			delete(r.entries, slug)
 		}
 	}
+}
+
+func (r *Registry) handOver(slug string, pending *handover) {
+	defer r.handovers.Done()
+	timer := time.NewTimer(r.opts.HandoverTimeout)
+	defer timer.Stop()
+	select {
+	case <-pending.next.Library.Tried():
+	case <-timer.C:
+	case <-pending.cancelled:
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.pending[slug] != pending {
+		return
+	}
+	delete(r.pending, slug)
+	r.entries[slug].stop()
+	r.entries[slug] = pending.next
+}
+
+// follow takes the new settings of a server whose connection is unchanged.
+func (e *Entry) follow(server store.Server) {
+	e.setLabel(server.Label)
+	e.config = server
+}
+
+func (e *Entry) setLabel(label string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.Label = label
 }
 
 func sameConnection(a, b store.Server) bool {
@@ -197,11 +272,16 @@ func (e *Entry) stop() {
 
 func (r *Registry) Stop() {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	for slug, pending := range r.pending {
+		pending.cancel()
+		delete(r.pending, slug)
+	}
 	for slug, entry := range r.entries {
 		entry.stop()
 		delete(r.entries, slug)
 	}
+	r.mu.Unlock()
+	r.handovers.Wait()
 }
 
 func hostOf(raw string) string {

@@ -2,16 +2,20 @@ package registry
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/fakes"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/store"
 )
 
@@ -44,6 +48,161 @@ func waitHealthy(t *testing.T, r *Registry) {
 			t.Fatal("never became healthy")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func waitReplaced(t *testing.T, r *Registry, slug string, before *Entry) *Entry {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if entry, ok := r.Lookup(slug); ok && entry != before {
+			return entry
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the entry was never replaced")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func stopped(t *testing.T, entry *Entry, what string) {
+	t.Helper()
+	select {
+	case <-entry.done:
+	case <-time.After(time.Second):
+		t.Fatalf("%s still running", what)
+	}
+}
+
+// holdSections makes fake answer /library/sections only once release is
+// closed, and closes the returned channel when the first request arrives.
+func holdSections(fake *fakes.Plex, release <-chan struct{}) <-chan struct{} {
+	held := make(chan struct{})
+	var once sync.Once
+	fake.Extra["/library/sections"] = func(w http.ResponseWriter, r *http.Request) {
+		once.Do(func() { close(held) })
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"MediaContainer": map[string]any{"Directory": fakes.PlexSections()}})
+	}
+	return held
+}
+
+func (r *Registry) pendingEntry(slug string) *Entry {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.pending[slug].next
+}
+
+func withoutCloser(fake *fakes.Plex) {
+	fake.Tracks["3"] = slices.DeleteFunc(fake.Tracks["3"], func(track plex.Track) bool { return track.RatingKey == "103" })
+}
+
+func TestAChangedServerAnswersFromTheOldIndexUntilTheNewOneLoads(t *testing.T) {
+	old, next := fakes.NewPlex(t), fakes.NewPlex(t)
+	withoutCloser(next)
+	release := make(chan struct{})
+	held := holdSections(next, release)
+	r := newRegistry(t, snapshot(plexServer(old, "plex-1")))
+	waitHealthy(t, r)
+	before, _ := r.Lookup("plex-1")
+
+	r.Apply(snapshot(plexServer(next, "plex-1")))
+	<-held
+	if entry, _ := r.Lookup("plex-1"); entry != before || len(entry.Library.Search("Closer", 5)) == 0 {
+		t.Fatal("search stopped answering from the old index during the restart")
+	}
+	if !r.Healthy() {
+		t.Fatal("unhealthy during the restart")
+	}
+	close(release)
+	after := waitReplaced(t, r, "plex-1", before)
+	if !after.Library.Ready() || len(after.Library.Search("Closer", 5)) != 0 || len(after.Library.Search("New Religion", 5)) == 0 {
+		t.Fatal("the new entry does not answer from the new index")
+	}
+	stopped(t, before, "old refresher")
+}
+
+func TestAChangedServerSwapsWhenItsFirstRefreshFails(t *testing.T) {
+	old, next := fakes.NewPlex(t), fakes.NewPlex(t)
+	next.FailWith(http.StatusInternalServerError)
+	r := newRegistry(t, snapshot(plexServer(old, "plex-1")))
+	waitHealthy(t, r)
+	before, _ := r.Lookup("plex-1")
+	r.Apply(snapshot(plexServer(next, "plex-1")))
+	waitReplaced(t, r, "plex-1", before)
+	if status, _ := r.Status("plex-1"); status.Ready || !strings.Contains(status.LastError, "500") {
+		t.Fatalf("status after a failed first refresh = %+v", status)
+	}
+	stopped(t, before, "old refresher")
+}
+
+func TestAChangedServerSwapsWhenItsFirstRefreshTakesTooLong(t *testing.T) {
+	old, next := fakes.NewPlex(t), fakes.NewPlex(t)
+	release := make(chan struct{})
+	defer close(release)
+	held := holdSections(next, release)
+	r := New(snapshot(plexServer(old, "plex-1")), Options{Interval: time.Hour, Log: quiet, HandoverTimeout: 100 * time.Millisecond})
+	t.Cleanup(r.Stop)
+	waitHealthy(t, r)
+	before, _ := r.Lookup("plex-1")
+	r.Apply(snapshot(plexServer(next, "plex-1")))
+	<-held
+	if after := waitReplaced(t, r, "plex-1", before); after.Library.Ready() {
+		t.Fatal("swapped only after the refresh finished")
+	}
+	stopped(t, before, "old refresher")
+}
+
+func TestALaterChangeCancelsAPendingHandover(t *testing.T) {
+	old, next := fakes.NewPlex(t), fakes.NewPlex(t)
+	release := make(chan struct{})
+	held := holdSections(next, release)
+	r := newRegistry(t, snapshot(plexServer(old, "plex-1")))
+	waitHealthy(t, r)
+	before, _ := r.Lookup("plex-1")
+
+	r.Apply(snapshot(plexServer(next, "plex-1")))
+	<-held
+	pending := r.pendingEntry("plex-1")
+	r.Apply(snapshot(plexServer(old, "plex-1")))
+	stopped(t, pending, "cancelled refresher")
+	close(release)
+	time.Sleep(50 * time.Millisecond)
+	if entry, _ := r.Lookup("plex-1"); entry != before {
+		t.Fatal("a cancelled handover still swapped")
+	}
+
+	again := fakes.NewPlex(t)
+	holdSections(again, make(chan struct{}))
+	r.Apply(snapshot(plexServer(again, "plex-1")))
+	pending = r.pendingEntry("plex-1")
+	r.Apply(snapshot())
+	stopped(t, pending, "refresher of a removed server")
+	stopped(t, before, "old refresher of a removed server")
+	if _, ok := r.Lookup("plex-1"); ok {
+		t.Fatal("removed server still listed")
+	}
+}
+
+func TestStopDuringAHandoverEndsBothRefreshers(t *testing.T) {
+	old, next := fakes.NewPlex(t), fakes.NewPlex(t)
+	held := holdSections(next, make(chan struct{}))
+	r := New(snapshot(plexServer(old, "plex-1")), Options{Interval: time.Hour, Log: quiet})
+	waitHealthy(t, r)
+	before, _ := r.Lookup("plex-1")
+	r.Apply(snapshot(plexServer(next, "plex-1")))
+	<-held
+	pending := r.pendingEntry("plex-1")
+	r.Stop()
+	stopped(t, before, "old refresher")
+	stopped(t, pending, "pending refresher")
+	if _, ok := r.Lookup("plex-1"); ok {
+		t.Fatal("entry still listed after Stop")
 	}
 }
 
@@ -96,10 +255,7 @@ func TestApplyStartsStopsAndReplacesEntries(t *testing.T) {
 	other := fakes.NewPlex(t)
 	moved := plexServer(other, "plex-1")
 	r.Apply(snapshot(moved))
-	replaced, _ := r.Lookup("plex-1")
-	if replaced == before {
-		t.Fatal("a URL change must restart the entry")
-	}
+	waitReplaced(t, r, "plex-1", before)
 	select {
 	case <-before.done:
 	case <-time.After(time.Second):

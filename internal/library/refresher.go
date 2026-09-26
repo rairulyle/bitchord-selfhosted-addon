@@ -31,11 +31,17 @@ type Library struct {
 	sleep    func(context.Context, time.Duration) error
 	mu       sync.Mutex
 	stats    Stats
+	tried    chan struct{}
+	tryOnce  sync.Once
 }
 
 func NewLibrary(source Source, filter string, interval time.Duration, log *slog.Logger) *Library {
-	return &Library{source: source, filter: filter, interval: interval, log: log, sleep: sleep}
+	return &Library{source: source, filter: filter, interval: interval, log: log, sleep: sleep, tried: make(chan struct{})}
 }
+
+// Tried is closed once the first refresh has finished, whether it loaded an
+// index or failed.
+func (l *Library) Tried() <-chan struct{} { return l.tried }
 
 func (l *Library) Ready() bool { return l.index.Load() != nil }
 
@@ -70,6 +76,7 @@ func (l *Library) Get(id string) (media.Track, bool) {
 }
 
 func (l *Library) Refresh(ctx context.Context) error {
+	defer l.tryOnce.Do(func() { close(l.tried) })
 	started := time.Now()
 	all, err := l.source.AllTracks(ctx, l.filter)
 	if err != nil {

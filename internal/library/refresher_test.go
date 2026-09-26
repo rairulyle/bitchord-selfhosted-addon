@@ -226,3 +226,19 @@ func TestRefreshLogsWhatChanged(t *testing.T) {
 		}
 	}
 }
+
+func TestTriedClosesAfterTheFirstRefreshEvenWhenItFails(t *testing.T) {
+	lib := NewLibrary(&scriptedSource{answers: []func() ([]media.Track, error){fails("down"), ok(track("1", "One"))}}, "", time.Minute, quiet)
+	select {
+	case <-lib.Tried():
+		t.Fatal("tried before any refresh")
+	default:
+	}
+	lib.Refresh(context.Background())
+	select {
+	case <-lib.Tried():
+	default:
+		t.Fatal("not tried after a failed refresh")
+	}
+	lib.Refresh(context.Background())
+}

@@ -82,7 +82,9 @@ track also exists in your library, your own copy plays instead.
    it. See [Adding it to a client](#-adding-it-to-a-client).
 
 `/health` answers `200` once every enabled server has loaded its index, and
-`503` while one is still loading.
+`503` while one is still loading. Changing a server's address, credentials or
+library keeps it answering from its current index until the new one has
+loaded, or for 30 seconds at most.
 
 ### Image tags and updates
 
