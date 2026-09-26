@@ -140,12 +140,12 @@
       if (!pin.ok) { result.textContent = pin.error; result.className = 'error'; button.disabled = false; return; }
       window.open(pin.auth_url, '_blank', 'noopener');
       var polls = 0;
-      var timer = setInterval(function () {
-        if (++polls > 150) { clearInterval(timer); result.textContent = 'No sign-in after five minutes. Start over.'; result.className = 'error'; button.disabled = false; return; }
+      var failed = function (message) { result.textContent = message; result.className = 'error'; button.disabled = false; };
+      var poll = function () {
+        if (++polls > 150) { failed('No sign-in after five minutes. Start over.'); return; }
         fetch('/setup/plex/pin/' + pin.id, { headers: { 'X-CSRF-Token': csrf } }).then(function (res) { return res.json(); }).then(function (answer) {
-          if (!answer.ok) { clearInterval(timer); result.textContent = answer.error; result.className = 'error'; button.disabled = false; return; }
-          if (!answer.claimed) { return; }
-          clearInterval(timer);
+          if (!answer.ok) { failed(answer.error); return; }
+          if (!answer.claimed) { setTimeout(poll, 2000); return; }
           button.disabled = false;
           document.getElementById('token_ref').value = answer.ref;
           signedIn(answer.username);
@@ -164,8 +164,9 @@
           if (reachable.length === 0) { document.getElementById('url').focus(); result.textContent = 'Signed in, but the addon cannot reach any of your servers. Type the address it should use.'; result.className = 'error'; return; }
           result.textContent = 'Signed in as ' + answer.username + '. Choose a server, then test the connection.';
           result.className = 'ok';
-        });
-      }, 2000);
+        }).catch(function () { failed('The addon did not answer. Start over.'); });
+      };
+      setTimeout(poll, 2000);
     });
   });
   document.getElementById('plex-servers').addEventListener('change', function () {
