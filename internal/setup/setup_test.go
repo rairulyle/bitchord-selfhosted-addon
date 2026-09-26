@@ -384,6 +384,9 @@ func TestServerLifecycleThroughTheForms(t *testing.T) {
 	if rec := a.form("/setup/servers/plex-9/delete", url.Values{}); rec.Code != http.StatusNotFound {
 		t.Fatalf("delete unknown: %d", rec.Code)
 	}
+	if rec := a.form("/setup/servers/plex-9/enabled", url.Values{"enabled": {"false"}}); rec.Code != http.StatusNotFound {
+		t.Fatalf("disable unknown: %d", rec.Code)
+	}
 	if rec := a.get("/setup/servers/plex-9/edit"); rec.Code != http.StatusNotFound {
 		t.Fatalf("edit unknown: %d", rec.Code)
 	}

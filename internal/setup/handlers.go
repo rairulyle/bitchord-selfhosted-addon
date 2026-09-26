@@ -360,7 +360,11 @@ func (a *app) setServerEnabled(w http.ResponseWriter, r *http.Request) {
 		server.Enabled = enabled
 		return nil
 	})
-	if err != nil {
+	switch {
+	case errors.Is(err, store.ErrNoServer):
+		http.NotFound(w, r)
+		return
+	case err != nil:
 		a.fail(w, r, err)
 		return
 	}
