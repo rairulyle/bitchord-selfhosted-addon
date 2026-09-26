@@ -95,11 +95,32 @@ track also exists in your library, your own copy plays instead.
 
 ### Upgrading from 0.4
 
-Servers, the public URL and the secret moved from `.env` to the setup page.
-After pulling 0.5: start the container, open `/setup`, set a password and the
-public URL, add your server, and replace the URL in BitChord with the new one
-from the server card. The old variables are ignored; the log names any that
-are still set. Delete `.env` or keep only the settings listed below.
+Servers, the public URL and the secret moved from `.env` to the setup page,
+and the addon now keeps them in `/data`. A 0.4 `compose.yml` has no volume, so
+edit it before pulling 0.5:
+
+1. **Add the data volume.** Give the service a `volumes:` entry and declare
+   the volume at the top level, as `compose.example.yml` does:
+
+   ```yaml
+   services:
+     bitchord-selfhosted-addon:
+       volumes:
+         - data:/data
+
+   volumes:
+     data:
+   ```
+
+   Without it, `docker compose down` loses the password, the secret and every
+   server, and the setup page is open again to whoever reaches it first.
+2. **Remove `env_file: .env`** from the service, then delete `.env`. Or keep
+   both, with `.env` holding only the settings listed below; Compose refuses
+   to start while `env_file:` names a file that does not exist.
+3. **Set it up.** Pull 0.5, start the container, open `/setup`, set a password
+   and the public URL, add your server, and replace the URL in BitChord with
+   the new one from the server card. The old variables are ignored; the log
+   names any that are still set.
 
 ## ⚙️ Configuration
 

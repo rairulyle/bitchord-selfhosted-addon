@@ -22,7 +22,7 @@ Entries are written **one line per paragraph and bullet** (no hard-wrapping) so 
 
 ### Removed
 
-- `ADDON_SECRET`, `PUBLIC_URL`, `ADDON_NAME`, `PLEX_URL`, `PLEX_TOKEN`, `PLEX_SECTION`, `JELLYFIN_URL`, `JELLYFIN_API_KEY` and `JELLYFIN_LIBRARY` are no longer read. The log names any that are still set. **Upgrading from 0.4:** start the container, open `/setup`, set a password and the public URL, add your server, and replace the URL in BitChord with the one on its card. The old `/<secret>/manifest.json` URL no longer answers.
+- `ADDON_SECRET`, `PUBLIC_URL`, `ADDON_NAME`, `PLEX_URL`, `PLEX_TOKEN`, `PLEX_SECTION`, `JELLYFIN_URL`, `JELLYFIN_API_KEY` and `JELLYFIN_LIBRARY` are no longer read. The log names any that are still set. **Upgrading from 0.4:** add `volumes: - data:/data` to the service and a top-level `volumes: { data: }` as in `compose.example.yml`, remove `env_file: .env` (or keep a `.env` with only `PORT`, `LOG_LEVEL`, `LOG_FORMAT` and `REFRESH_INTERVAL`), then start the container, open `/setup`, set a password and the public URL, add your server, and replace the URL in BitChord with the one on its card. The old `/<secret>/manifest.json` URL no longer answers.
 
 ## [0.4.0] - 2026-09-27
 
