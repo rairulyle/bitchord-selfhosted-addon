@@ -39,6 +39,9 @@ func NewClient(o ClientOptions) *Client {
 	if o.CallTimeout <= 0 {
 		o.CallTimeout = 30 * time.Second
 	}
+	if o.Authorize == nil {
+		o.Authorize = func(*http.Request) {}
+	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = o.HeaderTimeout
 	return &Client{

@@ -157,6 +157,14 @@ func TestErrors(t *testing.T) {
 			t.Fatalf("err = %v", err)
 		}
 	})
+	t.Run("id plex cannot parse", func(t *testing.T) {
+		fake := fakes.NewPlex(t)
+		fake.FailWith(http.StatusBadRequest)
+		_, err := client(fake, 1000).Track(context.Background(), "abc")
+		if !errors.Is(err, media.ErrNotFound) {
+			t.Fatalf("err = %v", err)
+		}
+	})
 	t.Run("rejected token names the variable", func(t *testing.T) {
 		fake := fakes.NewPlex(t)
 		c := plex.New(plex.Options{BaseURL: fake.URL, Token: "wrong"})

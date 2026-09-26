@@ -92,17 +92,22 @@ func healthcheck(url string) int {
 	return 0
 }
 
-func newBackend(cfg config.Config, log *slog.Logger) media.Backend {
+func newBackend(cfg config.Config, log *slog.Logger) (media.Backend, error) {
 	switch cfg.Backend {
+	case config.Plex:
+		return plex.New(plex.Options{BaseURL: cfg.ServerURL, Token: cfg.ServerToken, Log: log}), nil
 	case config.Jellyfin:
-		return jellyfin.New(jellyfin.Options{BaseURL: cfg.ServerURL, APIKey: cfg.ServerToken, Version: version})
+		return jellyfin.New(jellyfin.Options{BaseURL: cfg.ServerURL, APIKey: cfg.ServerToken, Version: version}), nil
 	default:
-		return plex.New(plex.Options{BaseURL: cfg.ServerURL, Token: cfg.ServerToken, Log: log})
+		return nil, fmt.Errorf("unknown backend %q", cfg.Backend)
 	}
 }
 
 func serve(ctx context.Context, cfg config.Config, log *slog.Logger, listening func(net.Addr)) error {
-	backend := newBackend(cfg, log)
+	backend, err := newBackend(cfg, log)
+	if err != nil {
+		return err
+	}
 	lib := library.NewLibrary(backend, cfg.Library, cfg.RefreshInterval, log)
 	runCtx, stopRun := context.WithCancel(ctx)
 	runDone := make(chan struct{})

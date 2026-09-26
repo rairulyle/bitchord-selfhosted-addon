@@ -2,6 +2,7 @@ package plex
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -111,13 +112,20 @@ func (c *Client) trackPage(ctx context.Context, sectionKey string, start int) ([
 	return answer.MediaContainer.Metadata, nil
 }
 
+// An id Plex cannot parse as a rating key may get a 400, which is as good as
+// not found.
 func (c *Client) Track(ctx context.Context, id string) (media.Track, error) {
 	var answer struct {
 		MediaContainer struct {
 			Metadata []Track `json:"Metadata"`
 		} `json:"MediaContainer"`
 	}
-	if err := c.http.GetJSON(ctx, "/library/metadata/"+url.PathEscape(id), nil, &answer); err != nil {
+	err := c.http.GetJSON(ctx, "/library/metadata/"+url.PathEscape(id), nil, &answer)
+	var status media.StatusError
+	if errors.As(err, &status) && status == http.StatusBadRequest {
+		return media.Track{}, media.ErrNotFound
+	}
+	if err != nil {
 		return media.Track{}, err
 	}
 	if len(answer.MediaContainer.Metadata) == 0 {

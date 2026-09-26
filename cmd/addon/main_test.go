@@ -256,6 +256,19 @@ func TestServeStopsTheRefreshLoopWhenThePortIsTaken(t *testing.T) {
 	}
 }
 
+func TestNewBackendPicksByKind(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	for kind, name := range map[config.Backend]string{config.Plex: "Plex", config.Jellyfin: "Jellyfin"} {
+		backend, err := newBackend(config.Config{Backend: kind}, log)
+		if err != nil || backend.Name() != name {
+			t.Errorf("%s: %v, %v", kind, backend, err)
+		}
+	}
+	if _, err := newBackend(config.Config{Backend: "emby"}, log); err == nil || !strings.Contains(err.Error(), "emby") {
+		t.Errorf("unknown kind: %v", err)
+	}
+}
+
 func TestNewLoggerFormats(t *testing.T) {
 	var text, structured bytes.Buffer
 	newLogger("text", slog.LevelInfo, &text).Info("hello", "n", 1)

@@ -94,6 +94,18 @@ func TestClientKeepsABasePath(t *testing.T) {
 	}
 }
 
+func TestClientWorksWithoutAuthorize(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(upstream.Close)
+	c := NewClient(ClientOptions{BaseURL: upstream.URL, Name: "fake"})
+	var into struct{}
+	if err := c.GetJSON(context.Background(), "/", nil, &into); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestClientMapsStatusesAndNamesTheVariable(t *testing.T) {
 	c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Fake") != "1" {
