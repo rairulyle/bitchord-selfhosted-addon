@@ -172,7 +172,8 @@ is used for that one request and never stored; Jellyfin hands back an access
 token, which is what the addon keeps. The addon then appears under that
 user's devices in the Jellyfin dashboard, where it can be revoked, and it
 sees the libraries that user can see. Changing the server address later
-means signing in again.
+means signing in again. When a server signs in again from its edit form, the
+old session is signed out once the new one is saved.
 
 ### Pasting a Jellyfin API key
 

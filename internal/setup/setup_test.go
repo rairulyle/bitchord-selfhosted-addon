@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -510,7 +511,7 @@ func TestJellyfinSignInStoresTheTokenAndNeverThePassword(t *testing.T) {
 	if rec.Code != http.StatusOK || answer["ok"] != true || answer["username"] != fakes.JellyfinUser || answer["ref"] == "" {
 		t.Fatalf("sign-in: %d %v", rec.Code, answer)
 	}
-	if strings.Contains(rec.Body.String(), fakes.JellyfinToken) {
+	if strings.Contains(rec.Body.String(), fakes.JellyfinSessionPrefix) {
 		t.Fatal("the access token reached the browser")
 	}
 	ref := answer["ref"].(string)
@@ -518,7 +519,7 @@ func TestJellyfinSignInStoresTheTokenAndNeverThePassword(t *testing.T) {
 		t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
 	}
 	server, _ := a.store.Snapshot().Server("jellyfin-1")
-	if server.Token != fakes.JellyfinToken || server.Auth != store.AuthJellyfinSignIn || server.Account != fakes.JellyfinUser || server.Library != fakes.MusicFolder {
+	if !strings.HasPrefix(server.Token, fakes.JellyfinSessionPrefix) || server.Auth != store.AuthJellyfinSignIn || server.Account != fakes.JellyfinUser || server.Library != fakes.MusicFolder {
 		t.Fatalf("stored = %+v", server)
 	}
 	moved := a.form("/setup/servers/jellyfin-1", url.Values{"label": {"NAS"}, "url": {fakes.NewJellyfin(t).URL}, "enabled": {"1"}})
@@ -534,7 +535,7 @@ func TestJellyfinSignInStoresTheTokenAndNeverThePassword(t *testing.T) {
 	if rec, _ := a.json(http.MethodPost, "/setup/jellyfin/signin", jellyfinSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: fakes.JellyfinPassword}); rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("after five failures: %d", rec.Code)
 	}
-	if logs := a.logs.String(); strings.Contains(logs, fakes.JellyfinPassword) || strings.Contains(logs, "nope") || strings.Contains(logs, fakes.JellyfinToken) {
+	if logs := a.logs.String(); strings.Contains(logs, fakes.JellyfinPassword) || strings.Contains(logs, "nope") || strings.Contains(logs, fakes.JellyfinSessionPrefix) {
 		t.Fatalf("logs carry a credential:\n%s", logs)
 	}
 	_ = plexURLs
@@ -713,6 +714,79 @@ func TestJellyfinSignInLimiterCountsOnlyRejectedCredentials(t *testing.T) {
 	}
 	if rec, _ := a.json(http.MethodPost, "/setup/jellyfin/signin", jellyfinSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: fakes.JellyfinPassword}); rec.Code != http.StatusOK {
 		t.Fatalf("sign-in after upstream failures and four rejections: %d", rec.Code)
+	}
+}
+
+func logouts(fake *fakes.Jellyfin) []fakes.Request {
+	return slices.DeleteFunc(fake.Requests(), func(request fakes.Request) bool { return request.Path != "/Sessions/Logout" })
+}
+
+func (a *testApp) jellyfinSignIn(fake *fakes.Jellyfin) string {
+	a.t.Helper()
+	rec, answer := a.json(http.MethodPost, "/setup/jellyfin/signin", jellyfinSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: fakes.JellyfinPassword})
+	if rec.Code != http.StatusOK {
+		a.t.Fatalf("sign-in: %d %v", rec.Code, answer)
+	}
+	return answer["ref"].(string)
+}
+
+func TestJellyfinReSignInSignsTheOldSessionOutOnlyOnceSaved(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	fake := fakes.NewJellyfin(t)
+	if rec := a.form("/setup/servers", url.Values{"kind": {"jellyfin"}, "url": {fake.URL}, "token_ref": {a.jellyfinSignIn(fake)}, "enabled": {"1"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("add: %d %s", rec.Code, rec.Body.String())
+	}
+	original, _ := a.store.Snapshot().Server("jellyfin-1")
+	works := func(token string) bool {
+		t.Helper()
+		request := testRequest{Kind: store.Jellyfin, URL: fake.URL, Token: token, Slug: "jellyfin-1"}
+		rec, _ := a.json(http.MethodPost, "/setup/servers/test", request)
+		return rec.Code == http.StatusOK
+	}
+
+	a.jellyfinSignIn(fake)
+	if rec := a.form("/setup/servers/jellyfin-1", url.Values{"label": {"Renamed"}, "url": {fake.URL}, "enabled": {"1"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("label edit: %d %s", rec.Code, rec.Body.String())
+	}
+	if len(logouts(fake)) != 0 || !works("") {
+		t.Fatal("an abandoned re-sign-in or a label edit signed the running server out")
+	}
+
+	if rec := a.form("/setup/servers/jellyfin-1", url.Values{"url": {fake.URL}, "token_ref": {a.jellyfinSignIn(fake)}, "enabled": {"1"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
+	}
+	saved, _ := a.store.Snapshot().Server("jellyfin-1")
+	if saved.Token == original.Token || saved.DeviceID == original.DeviceID || saved.DeviceID == "" {
+		t.Fatalf("after the save = %+v, before = %+v", saved, original)
+	}
+	sent := logouts(fake)
+	if len(sent) != 1 || !strings.Contains(sent[0].Header.Get("Authorization"), `DeviceId="`+original.DeviceID+`"`) || !strings.Contains(sent[0].Header.Get("Authorization"), `Token="`+original.Token+`"`) {
+		t.Fatalf("logouts = %+v", sent)
+	}
+	if works(original.Token) || !works("") {
+		t.Fatal("the old token still works, or the new one does not")
+	}
+	if strings.Contains(a.logs.String(), fakes.JellyfinSessionPrefix) {
+		t.Fatal("a token reached the logs")
+	}
+}
+
+func TestAPastedJellyfinKeyIsNotSignedOut(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	fake := fakes.NewJellyfin(t)
+	if rec := a.form("/setup/servers", url.Values{"kind": {"jellyfin"}, "url": {fake.URL}, "token": {fakes.JellyfinToken}, "enabled": {"1"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("add: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := a.form("/setup/servers/jellyfin-1", url.Values{"url": {fake.URL}, "token_ref": {a.jellyfinSignIn(fake)}, "enabled": {"1"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
+	}
+	if len(logouts(fake)) != 0 {
+		t.Fatal("the pasted API key was signed out")
+	}
+	if rec, _ := a.json(http.MethodPost, "/setup/servers/test", testRequest{Kind: store.Jellyfin, URL: fake.URL, Token: fakes.JellyfinToken}); rec.Code != http.StatusOK {
+		t.Fatalf("pasted key after the edit: %d", rec.Code)
 	}
 }
 

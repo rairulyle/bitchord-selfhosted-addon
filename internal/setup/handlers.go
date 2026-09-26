@@ -17,7 +17,10 @@ import (
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/store"
 )
 
-const probeTimeout = 15 * time.Second
+const (
+	probeTimeout   = 15 * time.Second
+	signOutTimeout = 3 * time.Second
+)
 
 func (a *app) render(w http.ResponseWriter, r *http.Request, status int, name string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -265,6 +268,7 @@ func (a *app) updateServer(w http.ResponseWriter, r *http.Request) {
 	a.refs.take(form.tokenRef)
 	a.apply()
 	a.Log.Info("server updated", "server", slug, "source", string(server.Kind), "host", hostOf(server.URL), "auth", string(server.Auth))
+	a.signOutReplaced(r.Context(), existing, server)
 	redirectNotice(w, r, registry.DisplayName(kindName(server.Kind), server.Label)+" saved.")
 }
 
@@ -501,6 +505,20 @@ func (a *app) jellyfinSignIn(w http.ResponseWriter, r *http.Request) {
 	ref := a.refs.put(store.Jellyfin, account.Token, account.Username, account.DeviceID)
 	a.Log.Info("jellyfin sign-in completed", "host", hostOf(req.URL), "username", account.Username)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "username": account.Username, "ref": ref})
+}
+
+// signOutReplaced revokes the token a Jellyfin sign-in replaced, so the old
+// session does not linger in Jellyfin. A pasted API key is left alone: the
+// user made it by hand. It is best effort and never fails the save.
+func (a *app) signOutReplaced(ctx context.Context, old, saved store.Server) {
+	if old.Kind != store.Jellyfin || old.Auth != store.AuthJellyfinSignIn || old.Token == saved.Token {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), signOutTimeout)
+	defer cancel()
+	if err := a.Registry.JellyfinSignOut(ctx, old.URL, old.DeviceID, old.Token); err != nil {
+		a.Log.Warn("old jellyfin session not signed out", "server", old.Slug, "host", hostOf(old.URL))
+	}
 }
 
 // describe turns an adapter error into a sentence for the page.

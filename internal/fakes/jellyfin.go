@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,6 +20,9 @@ const (
 	JellyfinUser     = "lyle"
 	JellyfinPassword = "correct horse"
 	JellyfinUserID   = "9f8e7d6c5b4a39281706f5e4d3c2b1a0"
+	// JellyfinSessionPrefix starts every access token a sign-in hands out;
+	// each sign-in gets its own.
+	JellyfinSessionPrefix = "fake-jellyfin-session-"
 )
 
 type Jellyfin struct {
@@ -29,6 +33,10 @@ type Jellyfin struct {
 	Files        map[string][]byte
 	Extra        map[string]http.HandlerFunc
 	IgnorePaging bool
+	sessions     sync.Mutex
+	signIns      int
+	issued       map[string]bool
+	revoked      map[string]bool
 }
 
 func NewJellyfin(t testing.TB) *Jellyfin {
@@ -37,6 +45,8 @@ func NewJellyfin(t testing.TB) *Jellyfin {
 		Items:   JellyfinItems(),
 		Files:   JellyfinFiles(),
 		Extra:   map[string]http.HandlerFunc{},
+		issued:  map[string]bool{},
+		revoked: map[string]bool{},
 	}
 	server := httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(server.Close)
@@ -52,11 +62,19 @@ func (f *Jellyfin) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if !strings.Contains(r.Header.Get("Authorization"), `Token="`+JellyfinToken+`"`) {
+	token := headerToken(r.Header.Get("Authorization"))
+	if !f.valid(token) {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 	if f.override(w, status, rawBody) {
+		return
+	}
+	if r.URL.Path == "/Sessions/Logout" && r.Method == http.MethodPost {
+		f.sessions.Lock()
+		f.revoked[token] = true
+		f.sessions.Unlock()
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	if extra, ok := f.Extra[r.URL.Path]; ok {
@@ -96,10 +114,30 @@ func (f *Jellyfin) authenticate(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
+	f.sessions.Lock()
+	f.signIns++
+	token := JellyfinSessionPrefix + strconv.Itoa(f.signIns)
+	f.issued[token] = true
+	f.sessions.Unlock()
 	writeJSON(w, map[string]any{
-		"AccessToken": JellyfinToken,
+		"AccessToken": token,
 		"User":        map[string]any{"Name": JellyfinUser, "Id": JellyfinUserID},
 	})
+}
+
+func (f *Jellyfin) valid(token string) bool {
+	f.sessions.Lock()
+	defer f.sessions.Unlock()
+	return (token == JellyfinToken || f.issued[token]) && !f.revoked[token]
+}
+
+func headerToken(header string) string {
+	_, rest, found := strings.Cut(header, `Token="`)
+	if !found {
+		return ""
+	}
+	token, _, _ := strings.Cut(rest, `"`)
+	return token
 }
 
 func (f *Jellyfin) servePage(w http.ResponseWriter, r *http.Request) {

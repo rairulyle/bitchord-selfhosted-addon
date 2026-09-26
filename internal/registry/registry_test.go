@@ -406,7 +406,7 @@ func TestEveryJellyfinSignInGetsItsOwnDeviceID(t *testing.T) {
 	var ids []string
 	for i := range 2 {
 		session, err := r.JellyfinSignIn(context.Background(), jellyfinFake.URL, fakes.JellyfinUser, fakes.JellyfinPassword)
-		if err != nil || session.Token != fakes.JellyfinToken || session.Username != fakes.JellyfinUser || session.DeviceID == "" || session.DeviceID == "addon-uuid" {
+		if err != nil || !strings.HasPrefix(session.Token, fakes.JellyfinSessionPrefix) || session.Username != fakes.JellyfinUser || session.DeviceID == "" || session.DeviceID == "addon-uuid" {
 			t.Fatalf("session = %+v, %v", session, err)
 		}
 		if got := jellyfinFake.Requests()[i].Header.Get("Authorization"); !strings.Contains(got, `DeviceId="`+session.DeviceID+`"`) {

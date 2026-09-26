@@ -61,3 +61,28 @@ func SignIn(ctx context.Context, client *http.Client, baseURL, deviceID, version
 	}
 	return Session{Token: answer.AccessToken, Username: answer.User.Name, UserID: answer.User.ID}, nil
 }
+
+// SignOut ends the session that token belongs to through /Sessions/Logout,
+// which revokes the token.
+func SignOut(ctx context.Context, client *http.Client, baseURL, version, deviceID, token string) error {
+	if client == nil {
+		client = &http.Client{Timeout: 15 * time.Second}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/Sessions/Logout", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", Authorization(version, deviceID, token))
+	res, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("jellyfin: %w", err)
+	}
+	defer res.Body.Close()
+	switch {
+	case res.StatusCode == http.StatusUnauthorized:
+		return fmt.Errorf("jellyfin: %w", media.ErrUnauthorized)
+	case res.StatusCode/100 != 2:
+		return fmt.Errorf("jellyfin: %w", media.StatusError(res.StatusCode))
+	}
+	return nil
+}

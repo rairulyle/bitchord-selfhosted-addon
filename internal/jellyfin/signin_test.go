@@ -17,7 +17,7 @@ func TestSignInReturnsAnAccessTokenTheServerHonours(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if session.Token != fakes.JellyfinToken || session.Username != fakes.JellyfinUser || session.UserID != fakes.JellyfinUserID {
+	if !strings.HasPrefix(session.Token, fakes.JellyfinSessionPrefix) || session.Username != fakes.JellyfinUser || session.UserID != fakes.JellyfinUserID {
 		t.Fatalf("session = %+v", session)
 	}
 	request := fake.Requests()[0]
@@ -46,5 +46,27 @@ func TestAuthorizationOmitsTheTokenFieldWhenEmpty(t *testing.T) {
 	}
 	if strings.Contains(without, "Token") || !strings.Contains(without, `DeviceId="dev-1"`) {
 		t.Errorf("without token = %q", without)
+	}
+}
+
+func TestSignOutRevokesTheToken(t *testing.T) {
+	fake := fakes.NewJellyfin(t)
+	session, err := jellyfin.SignIn(context.Background(), nil, fake.URL, "device-1", "1.2.3", fakes.JellyfinUser, fakes.JellyfinPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := jellyfin.SignOut(context.Background(), nil, fake.URL, "1.2.3", "device-1", session.Token); err != nil {
+		t.Fatal(err)
+	}
+	last := fake.Requests()[len(fake.Requests())-1]
+	if header := last.Header.Get("Authorization"); last.Method != "POST" || last.Path != "/Sessions/Logout" || !strings.Contains(header, `DeviceId="device-1"`) || !strings.Contains(header, `Token="`+session.Token+`"`) || last.Query != "" {
+		t.Fatalf("logout request = %+v", last)
+	}
+	c := jellyfin.New(jellyfin.Options{BaseURL: fake.URL, APIKey: session.Token, DeviceID: "device-1"})
+	if _, err := c.Libraries(context.Background()); !errors.Is(err, media.ErrUnauthorized) {
+		t.Fatalf("signed-out token still works: %v", err)
+	}
+	if err := jellyfin.SignOut(context.Background(), nil, fake.URL, "1.2.3", "device-1", session.Token); !errors.Is(err, media.ErrUnauthorized) || strings.Contains(err.Error(), session.Token) {
+		t.Fatalf("second sign-out: %v", err)
 	}
 }
