@@ -40,8 +40,8 @@ header {
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
-  padding-top: 22px;
-  padding-bottom: 16px;
+  padding-top: 20px;
+  padding-bottom: 18px;
   border-bottom: 1px solid var(--line-soft);
 }
 header nav { display: flex; gap: 18px; align-items: center; }
@@ -51,31 +51,37 @@ header nav a, header nav button.link {
   font-size: 13px;
 }
 header nav a:hover, header nav button.link:hover { color: var(--strong); }
+.brand-group { display: flex; align-items: center; gap: 12px; }
 .brand { font-weight: 600; font-size: 14px; text-decoration: none; color: var(--strong); }
+.repo { display: inline-flex; color: var(--muted); }
+.repo:hover { color: var(--strong); }
 
 a { color: inherit; text-underline-offset: 3px; }
 
 footer { color: var(--muted); font-size: 12px; padding-top: 32px; padding-bottom: 40px; }
 
-h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; margin: 32px 0 20px; color: var(--strong); }
-h2 { font-size: 15px; font-weight: 600; margin: 0 0 4px; color: var(--strong); }
+h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; margin: 36px 0 24px; color: var(--strong); }
+h2 { font-size: 15px; font-weight: 600; margin: 0 0 6px; color: var(--strong); }
 h2 small { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 8px; }
 
-.card { border-top: 1px dashed var(--line); border-radius: 0; padding: 24px 0; margin: 0; }
-.card > p:first-of-type { margin-top: 0; }
-.card.empty { text-align: center; padding: 48px 0; }
-.card.empty p { color: var(--muted); }
+.card { border-top: 1px dashed var(--line); border-radius: 0; padding: 28px 0; margin: 0; }
+.card > p { margin: 0 0 16px; }
+.card.empty { text-align: center; padding: 44px 0; }
+.card.empty p { color: var(--muted); margin: 0 0 16px; }
+main > p { margin: 24px 0; }
 
-.stack { display: flex; flex-direction: column; gap: 18px; max-width: 440px; }
-.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.actions { margin-top: 18px; }
+.stack { display: flex; flex-direction: column; gap: 20px; max-width: 440px; }
+.stack > .hint { margin-top: -10px; }
+.row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.actions { margin-top: 20px; }
 
 label { display: flex; flex-direction: column; gap: 6px; font-weight: 500; font-size: 13px; color: var(--strong); }
 label.inline { flex-direction: row; align-items: center; gap: 8px; font-weight: 400; font-size: 14px; color: var(--text); }
 
 input[type=text], input[type=url], input[type=password], select {
   font: inherit;
-  padding: 8px 12px;
+  line-height: 20px;
+  padding: 9px 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: transparent;
@@ -112,17 +118,18 @@ select {
   transition: border-color 0.15s ease;
 }
 .prefixed:focus-within { border-color: var(--strong); }
-.prefixed .prefix { padding: 8px 0 8px 12px; color: var(--muted); white-space: nowrap; font-weight: 400; }
+.prefixed .prefix { padding: 9px 0 9px 12px; line-height: 20px; color: var(--muted); white-space: nowrap; font-weight: 400; }
 .prefixed input, .prefixed input:focus { border: 0; padding-left: 6px; }
 
-fieldset { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+fieldset { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
 legend { padding: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--strong); }
 
 button, .button {
   font: inherit;
   font-size: 13px;
   font-weight: 500;
-  padding: 7px 14px;
+  line-height: 20px;
+  padding: 9px 16px;
   border-radius: 8px;
   border: 1px solid var(--strong);
   background: var(--strong);
@@ -156,7 +163,7 @@ button:focus-visible, .button:focus-visible, .tab:focus-visible, header nav a:fo
   outline-offset: 2px;
 }
 
-.tabs { display: flex; gap: 18px; border-bottom: 1px solid var(--line-soft); }
+.tabs { display: flex; gap: 20px; border-bottom: 1px solid var(--line-soft); }
 .tab {
   background: none;
   border: 0;
@@ -170,17 +177,17 @@ button:focus-visible, .button:focus-visible, .tab:focus-visible, header nav a:fo
 }
 .tab:hover { color: var(--strong); opacity: 1; }
 .tab.active { color: var(--strong); border-bottom-color: var(--strong); }
-.panel { display: flex; flex-direction: column; gap: 12px; padding-top: 12px; }
+.panel { display: flex; flex-direction: column; gap: 12px; padding-top: 14px; }
 .panel > div { display: flex; flex-direction: column; gap: 12px; }
 
 code { font-family: ui-monospace, "SF Mono", monospace; font-size: 12.5px; word-break: break-all; }
 code.url, #secret {
   border: 1px solid var(--line);
-  padding: 4px 8px;
+  padding: 5px 10px;
   border-radius: 6px;
 }
 
-dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 24px; margin: 14px 0 0; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 8px 24px; margin: 16px 0 0; }
 dt { color: var(--muted); font-size: 13px; }
 dd { margin: 0; font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
 code.url { display: inline-block; max-width: 100%; }
@@ -191,7 +198,7 @@ code.url { display: inline-block; max-width: 100%; }
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: 20px 0 0;
+  margin: 24px 0 0;
   padding: 10px 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
