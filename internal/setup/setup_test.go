@@ -663,3 +663,53 @@ func TestConcurrentWritesApplyTheLatestSnapshotLast(t *testing.T) {
 		t.Fatalf("last applied servers = %+v, store servers = %+v", got.Servers, want.Servers)
 	}
 }
+
+func TestTwoJellyfinSignInsKeepTheirOwnDeviceIDs(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	fake := fakes.NewJellyfin(t)
+	for _, label := range []string{"Music", "Audiobooks"} {
+		rec, answer := a.json(http.MethodPost, "/setup/jellyfin/signin", jellyfinSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: fakes.JellyfinPassword})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("sign-in: %d %v", rec.Code, answer)
+		}
+		if rec := a.form("/setup/servers", url.Values{"kind": {"jellyfin"}, "label": {label}, "url": {fake.URL}, "token_ref": {answer["ref"].(string)}, "library": {label}, "enabled": {"1"}}); rec.Code != http.StatusSeeOther {
+			t.Fatalf("save %s: %d %s", label, rec.Code, rec.Body.String())
+		}
+	}
+	snapshot := a.store.Snapshot()
+	first, _ := snapshot.Server("jellyfin-1")
+	second, _ := snapshot.Server("jellyfin-2")
+	if first.DeviceID == "" || second.DeviceID == "" || first.DeviceID == second.DeviceID || first.DeviceID == snapshot.ClientID {
+		t.Fatalf("device ids = %q, %q (client id %q)", first.DeviceID, second.DeviceID, snapshot.ClientID)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for !a.reg.Healthy() {
+		if time.Now().After(deadline) {
+			t.Fatal("registry never indexed both servers")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	for _, server := range []store.Server{first, second} {
+		sent := false
+		for _, request := range fake.Requests() {
+			if request.Path == "/Items" && strings.Contains(request.Query, "ParentId="+server.Library) && strings.Contains(request.Header.Get("Authorization"), `DeviceId="`+server.DeviceID+`"`) {
+				sent = true
+			}
+		}
+		if !sent {
+			t.Errorf("%s never sent its own DeviceId %q", server.Slug, server.DeviceID)
+		}
+	}
+	if rec := a.form("/setup/servers/jellyfin-1", url.Values{"label": {"Renamed"}, "url": {fake.URL}, "library": {"Music"}, "enabled": {"1"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("edit: %d %s", rec.Code, rec.Body.String())
+	}
+	if edited, _ := a.store.Snapshot().Server("jellyfin-1"); edited.DeviceID != first.DeviceID {
+		t.Fatalf("edit changed the device id from %q to %q", first.DeviceID, edited.DeviceID)
+	}
+	for _, path := range []string{"/setup", "/setup/servers/jellyfin-1/edit"} {
+		if body := a.get(path).Body.String(); strings.Contains(body, first.DeviceID) || strings.Contains(body, second.DeviceID) {
+			t.Errorf("%s shows a device id", path)
+		}
+	}
+}

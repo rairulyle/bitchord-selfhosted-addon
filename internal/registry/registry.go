@@ -89,7 +89,11 @@ func NewBackend(server store.Server, clientID, version string, log *slog.Logger)
 	case store.Plex:
 		return plex.New(plex.Options{BaseURL: server.URL, Token: server.Token, ClientID: clientID, Log: log}), nil
 	case store.Jellyfin:
-		return jellyfin.New(jellyfin.Options{BaseURL: server.URL, APIKey: server.Token, DeviceID: clientID, Version: version}), nil
+		deviceID := server.DeviceID
+		if deviceID == "" {
+			deviceID = clientID
+		}
+		return jellyfin.New(jellyfin.Options{BaseURL: server.URL, APIKey: server.Token, DeviceID: deviceID, Version: version}), nil
 	default:
 		return nil, fmt.Errorf("unknown server kind %q", server.Kind)
 	}
@@ -162,7 +166,7 @@ func (r *Registry) Apply(snapshot store.Snapshot) {
 }
 
 func sameConnection(a, b store.Server) bool {
-	return a.Kind == b.Kind && a.URL == b.URL && a.Token == b.Token && a.Library == b.Library
+	return a.Kind == b.Kind && a.URL == b.URL && a.Token == b.Token && a.DeviceID == b.DeviceID && a.Library == b.Library
 }
 
 func (r *Registry) start(server store.Server) (*Entry, error) {

@@ -36,7 +36,7 @@ const (
 type Runtime interface {
 	Apply(snapshot store.Snapshot)
 	Status(slug string) (registry.Status, bool)
-	Probe(ctx context.Context, kind store.Kind, serverURL, token string) (registry.Probe, error)
+	Probe(ctx context.Context, server store.Server) (registry.Probe, error)
 	PlexPIN(ctx context.Context) (registry.PIN, error)
 	PlexClaim(ctx context.Context, id int) (registry.Account, bool, error)
 	PlexServers(ctx context.Context, token string) ([]registry.PlexServer, error)

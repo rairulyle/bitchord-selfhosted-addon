@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"crypto/rand"
 	"net/url"
 	"sync"
 
@@ -16,11 +17,11 @@ type Probe struct {
 	Libraries []media.Library
 }
 
-// Probe checks that a server answers with the given credentials and lists
-// its music libraries. Libraries is asked first because Plex answers
-// /identity without a token, so a bad token would otherwise pass.
-func (r *Registry) Probe(ctx context.Context, kind store.Kind, serverURL, token string) (Probe, error) {
-	backend, err := NewBackend(store.Server{Kind: kind, URL: serverURL, Token: token}, r.clientIDNow(), r.opts.Version, r.opts.Log)
+// Probe checks that a server answers with its credentials and lists its
+// music libraries. Libraries is asked first because Plex answers /identity
+// without a token, so a bad token would otherwise pass.
+func (r *Registry) Probe(ctx context.Context, server store.Server) (Probe, error) {
+	backend, err := NewBackend(server, r.clientIDNow(), r.opts.Version, r.opts.Log)
 	if err != nil {
 		return Probe{}, err
 	}
@@ -52,6 +53,7 @@ type PIN struct {
 type Account struct {
 	Token    string
 	Username string
+	DeviceID string
 }
 
 func (r *Registry) PlexPIN(ctx context.Context) (PIN, error) {
@@ -71,12 +73,16 @@ func (r *Registry) PlexClaim(ctx context.Context, id int) (Account, bool, error)
 	return Account{Token: account.Token, Username: account.Username}, true, nil
 }
 
+// JellyfinSignIn signs in as a new device each time: Jellyfin ends the other
+// sessions of a device when it signs in again, so two servers added with the
+// same account must not share one.
 func (r *Registry) JellyfinSignIn(ctx context.Context, serverURL, username, password string) (Account, error) {
-	session, err := jellyfin.SignIn(ctx, r.opts.HTTP, serverURL, r.clientIDNow(), r.opts.Version, username, password)
+	deviceID := rand.Text()
+	session, err := jellyfin.SignIn(ctx, r.opts.HTTP, serverURL, deviceID, r.opts.Version, username, password)
 	if err != nil {
 		return Account{}, err
 	}
-	return Account{Token: session.Token, Username: session.Username}, nil
+	return Account{Token: session.Token, Username: session.Username, DeviceID: deviceID}, nil
 }
 
 type PlexServer struct {

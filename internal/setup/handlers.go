@@ -281,10 +281,10 @@ func (a *app) resolveServer(ctx context.Context, form submitted, existing store.
 		if !ok || pending.kind != server.Kind {
 			return server, errors.New("the sign-in has expired, sign in again")
 		}
-		server.Token, server.Account = pending.token, pending.account
+		server.Token, server.Account, server.DeviceID = pending.token, pending.account, pending.deviceID
 		server.Auth = map[store.Kind]store.Auth{store.Plex: store.AuthPlexSignIn, store.Jellyfin: store.AuthJellyfinSignIn}[server.Kind]
 	case form.token != "":
-		server.Token, server.Account, server.Auth = form.token, "", store.AuthToken
+		server.Token, server.Account, server.DeviceID, server.Auth = form.token, "", "", store.AuthToken
 	case existing.Token == "":
 		return server, errors.New("sign in or paste a token")
 	case existing.Auth == store.AuthJellyfinSignIn && existing.URL != server.URL:
@@ -292,7 +292,7 @@ func (a *app) resolveServer(ctx context.Context, form submitted, existing store.
 	}
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	probe, err := a.Registry.Probe(ctx, server.Kind, server.URL, server.Token)
+	probe, err := a.Registry.Probe(ctx, server)
 	if err != nil {
 		return server, describe(err)
 	}
@@ -367,30 +367,30 @@ func (a *app) testServer(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	token := strings.TrimSpace(req.Token)
+	server := store.Server{Kind: req.Kind, URL: req.URL, Token: strings.TrimSpace(req.Token)}
 	switch {
-	case token != "":
+	case server.Token != "":
 	case req.TokenRef != "":
 		pending, ok := a.refs.peek(req.TokenRef)
 		if !ok || pending.kind != req.Kind {
 			jsonError(w, http.StatusBadRequest, "the sign-in has expired, sign in again")
 			return
 		}
-		token = pending.token
+		server.Token, server.DeviceID = pending.token, pending.deviceID
 	case req.Slug != "":
 		existing, ok := a.Store.Snapshot().Server(req.Slug)
 		if !ok {
 			jsonError(w, http.StatusBadRequest, "unknown server")
 			return
 		}
-		token, req.Kind = existing.Token, existing.Kind
+		server.Kind, server.Token, server.DeviceID = existing.Kind, existing.Token, existing.DeviceID
 	default:
 		jsonError(w, http.StatusBadRequest, "sign in or paste a token first")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), probeTimeout)
 	defer cancel()
-	probe, err := a.Registry.Probe(ctx, req.Kind, req.URL, token)
+	probe, err := a.Registry.Probe(ctx, server)
 	if err != nil {
 		jsonError(w, http.StatusBadGateway, describe(err).Error())
 		return
@@ -448,7 +448,7 @@ func (a *app) plexPoll(w http.ResponseWriter, r *http.Request) {
 	for i, server := range servers {
 		list[i] = map[string]any{"name": server.Name, "url": server.URL, "reachable": server.Reachable}
 	}
-	ref := a.refs.put(store.Plex, account.Token, account.Username)
+	ref := a.refs.put(store.Plex, account.Token, account.Username, "")
 	a.Log.Info("plex sign-in completed", "account", account.Username)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "claimed": true, "username": account.Username, "ref": ref, "servers": list})
 }
@@ -487,7 +487,7 @@ func (a *app) jellyfinSignIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.signins.reset(req.URL)
-	ref := a.refs.put(store.Jellyfin, account.Token, account.Username)
+	ref := a.refs.put(store.Jellyfin, account.Token, account.Username, account.DeviceID)
 	a.Log.Info("jellyfin sign-in completed", "host", hostOf(req.URL), "username", account.Username)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "username": account.Username, "ref": ref})
 }

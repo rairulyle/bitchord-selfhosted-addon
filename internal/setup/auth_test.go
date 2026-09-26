@@ -131,18 +131,18 @@ func TestTokenRefsAreOneTimeAndExpire(t *testing.T) {
 	now := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
 	clock := func() time.Time { return now }
 	refs := newTokenRefs(clock, 10*time.Minute)
-	ref := refs.put(store.Plex, "secret-token", "lyle")
+	ref := refs.put(store.Jellyfin, "secret-token", "lyle", "device-1")
 	if strings.Contains(ref, "secret-token") || len(ref) < 20 {
 		t.Fatalf("ref = %q", ref)
 	}
 	got, ok := refs.take(ref)
-	if !ok || got.kind != store.Plex || got.token != "secret-token" || got.account != "lyle" {
+	if !ok || got.kind != store.Jellyfin || got.token != "secret-token" || got.account != "lyle" || got.deviceID != "device-1" {
 		t.Fatalf("take = %+v, %v", got, ok)
 	}
 	if _, ok := refs.take(ref); ok {
 		t.Fatal("reference usable twice")
 	}
-	stale := refs.put(store.Jellyfin, "t", "u")
+	stale := refs.put(store.Jellyfin, "t", "u", "")
 	now = now.Add(10 * time.Minute)
 	if _, ok := refs.take(stale); ok {
 		t.Fatal("expired reference usable")
@@ -150,9 +150,9 @@ func TestTokenRefsAreOneTimeAndExpire(t *testing.T) {
 	if _, ok := refs.take("nope"); ok {
 		t.Fatal("unknown reference usable")
 	}
-	old := refs.put(store.Plex, "old", "u")
+	old := refs.put(store.Plex, "old", "u", "")
 	now = now.Add(11 * time.Minute)
-	refs.put(store.Plex, "new", "u")
+	refs.put(store.Plex, "new", "u", "")
 	if _, kept := refs.refs[old]; kept {
 		t.Fatal("expired reference not swept on put")
 	}

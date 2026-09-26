@@ -170,17 +170,18 @@ type tokenRefs struct {
 }
 
 type pendingToken struct {
-	kind    store.Kind
-	token   string
-	account string
-	expires time.Time
+	kind     store.Kind
+	token    string
+	account  string
+	deviceID string
+	expires  time.Time
 }
 
 func newTokenRefs(now func() time.Time, ttl time.Duration) *tokenRefs {
 	return &tokenRefs{now: now, ttl: ttl, refs: map[string]pendingToken{}}
 }
 
-func (t *tokenRefs) put(kind store.Kind, token, account string) string {
+func (t *tokenRefs) put(kind store.Kind, token, account, deviceID string) string {
 	raw := make([]byte, 16)
 	rand.Read(raw)
 	ref := base64.RawURLEncoding.EncodeToString(raw)
@@ -192,7 +193,7 @@ func (t *tokenRefs) put(kind store.Kind, token, account string) string {
 			delete(t.refs, key)
 		}
 	}
-	t.refs[ref] = pendingToken{kind: kind, token: token, account: account, expires: now.Add(t.ttl)}
+	t.refs[ref] = pendingToken{kind: kind, token: token, account: account, deviceID: deviceID, expires: now.Add(t.ttl)}
 	return ref
 }
 

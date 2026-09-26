@@ -181,21 +181,21 @@ func TestStopEndsEveryRefresher(t *testing.T) {
 func TestProbeListsLibrariesAndRejectsABadToken(t *testing.T) {
 	r := newRegistry(t, snapshot())
 	plexFake, jellyfinFake := fakes.NewPlex(t), fakes.NewJellyfin(t)
-	got, err := r.Probe(context.Background(), store.Plex, plexFake.URL, fakes.PlexToken)
+	got, err := r.Probe(context.Background(), store.Server{Kind: store.Plex, URL: plexFake.URL, Token: fakes.PlexToken})
 	if err != nil || got.Version != "1.42.0.9999" || len(got.Libraries) != 2 || got.Libraries[0] != (media.Library{ID: "3", Name: "Music"}) {
 		t.Fatalf("plex probe = %+v, %v", got, err)
 	}
-	got, err = r.Probe(context.Background(), store.Jellyfin, jellyfinFake.URL, fakes.JellyfinToken)
+	got, err = r.Probe(context.Background(), store.Server{Kind: store.Jellyfin, URL: jellyfinFake.URL, Token: fakes.JellyfinToken})
 	if err != nil || got.Version != "10.10.7" || len(got.Libraries) != 2 {
 		t.Fatalf("jellyfin probe = %+v, %v", got, err)
 	}
-	if _, err := r.Probe(context.Background(), store.Plex, plexFake.URL, "wrong"); !errors.Is(err, media.ErrUnauthorized) {
+	if _, err := r.Probe(context.Background(), store.Server{Kind: store.Plex, URL: plexFake.URL, Token: "wrong"}); !errors.Is(err, media.ErrUnauthorized) {
 		t.Fatalf("wrong plex token: %v", err)
 	}
-	if _, err := r.Probe(context.Background(), store.Jellyfin, jellyfinFake.URL, "wrong"); !errors.Is(err, media.ErrUnauthorized) {
+	if _, err := r.Probe(context.Background(), store.Server{Kind: store.Jellyfin, URL: jellyfinFake.URL, Token: "wrong"}); !errors.Is(err, media.ErrUnauthorized) {
 		t.Fatalf("wrong jellyfin key: %v", err)
 	}
-	if _, err := r.Probe(context.Background(), "emby", plexFake.URL, "x"); err == nil {
+	if _, err := r.Probe(context.Background(), store.Server{Kind: "emby", URL: plexFake.URL, Token: "x"}); err == nil {
 		t.Fatal("unknown kind accepted")
 	}
 	if got := plexFake.Requests()[0].Header.Get("X-Plex-Client-Identifier"); got != "addon-uuid" {
@@ -228,7 +228,7 @@ func TestPlexServersReportsWhichAddressesAnswer(t *testing.T) {
 }
 
 func TestSignInWrappersCarryTheClientID(t *testing.T) {
-	plexTV, jellyfinFake := fakes.NewPlexTV(t), fakes.NewJellyfin(t)
+	plexTV := fakes.NewPlexTV(t)
 	r := New(snapshot(), Options{Version: "1.2.3", Log: quiet, PlexTV: plexTV.URL})
 	pin, err := r.PlexPIN(context.Background())
 	if err != nil || pin.ID != 1 || !strings.Contains(pin.AuthURL, "clientID=addon-uuid") {
@@ -242,12 +242,52 @@ func TestSignInWrappersCarryTheClientID(t *testing.T) {
 	if err != nil || !ok || account != (Account{Token: fakes.PlexTVToken, Username: fakes.PlexTVUsername}) {
 		t.Fatalf("claim = %+v, %v, %v", account, ok, err)
 	}
-	session, err := r.JellyfinSignIn(context.Background(), jellyfinFake.URL, fakes.JellyfinUser, fakes.JellyfinPassword)
-	if err != nil || session != (Account{Token: fakes.JellyfinToken, Username: fakes.JellyfinUser}) {
-		t.Fatalf("session = %+v, %v", session, err)
+}
+
+func TestEveryJellyfinSignInGetsItsOwnDeviceID(t *testing.T) {
+	jellyfinFake := fakes.NewJellyfin(t)
+	r := New(snapshot(), Options{Version: "1.2.3", Log: quiet})
+	var ids []string
+	for i := range 2 {
+		session, err := r.JellyfinSignIn(context.Background(), jellyfinFake.URL, fakes.JellyfinUser, fakes.JellyfinPassword)
+		if err != nil || session.Token != fakes.JellyfinToken || session.Username != fakes.JellyfinUser || session.DeviceID == "" || session.DeviceID == "addon-uuid" {
+			t.Fatalf("session = %+v, %v", session, err)
+		}
+		if got := jellyfinFake.Requests()[i].Header.Get("Authorization"); !strings.Contains(got, `DeviceId="`+session.DeviceID+`"`) {
+			t.Errorf("Authorization = %q, want DeviceId %q", got, session.DeviceID)
+		}
+		ids = append(ids, session.DeviceID)
 	}
-	if got := jellyfinFake.Requests()[0].Header.Get("Authorization"); !strings.Contains(got, `DeviceId="addon-uuid"`) {
-		t.Errorf("Authorization = %q", got)
+	if ids[0] == ids[1] {
+		t.Fatalf("two sign-ins share the device id %q", ids[0])
+	}
+}
+
+func TestJellyfinBackendsSendTheirOwnDeviceID(t *testing.T) {
+	jellyfinFake := fakes.NewJellyfin(t)
+	signedIn := jellyfinServer(jellyfinFake, "jellyfin-1")
+	signedIn.DeviceID = "device-of-jellyfin-1"
+	cases := map[string]struct {
+		server store.Server
+		want   string
+	}{
+		"signed in":  {signedIn, `DeviceId="device-of-jellyfin-1"`},
+		"pasted key": {jellyfinServer(jellyfinFake, "jellyfin-2"), `DeviceId="addon-uuid"`},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			backend, err := NewBackend(tc.server, "addon-uuid", "1.2.3", quiet)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := len(jellyfinFake.Requests())
+			if _, err := backend.Version(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if got := jellyfinFake.Requests()[before].Header.Get("Authorization"); !strings.Contains(got, tc.want) {
+				t.Errorf("Authorization = %q, want %s", got, tc.want)
+			}
+		})
 	}
 }
 
