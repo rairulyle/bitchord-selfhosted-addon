@@ -696,6 +696,27 @@ func TestAFailedSaveKeepsTheSignIn(t *testing.T) {
 	}
 }
 
+func TestJellyfinSignInLimiterCountsOnlyRejectedCredentials(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	fake := fakes.NewJellyfin(t)
+	fake.FailWith(http.StatusServiceUnavailable)
+	for i := range 6 {
+		if rec, _ := a.json(http.MethodPost, "/setup/jellyfin/signin", jellyfinSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: fakes.JellyfinPassword}); rec.Code != http.StatusBadGateway {
+			t.Fatalf("upstream failure %d: %d", i, rec.Code)
+		}
+	}
+	fake.FailWith(0)
+	for i := range 4 {
+		if rec, _ := a.json(http.MethodPost, "/setup/jellyfin/signin", jellyfinSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: "nope"}); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("rejected %d: %d", i, rec.Code)
+		}
+	}
+	if rec, _ := a.json(http.MethodPost, "/setup/jellyfin/signin", jellyfinSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: fakes.JellyfinPassword}); rec.Code != http.StatusOK {
+		t.Fatalf("sign-in after upstream failures and four rejections: %d", rec.Code)
+	}
+}
+
 func TestTwoJellyfinSignInsKeepTheirOwnDeviceIDs(t *testing.T) {
 	a := newTestApp(t)
 	a.signIn()

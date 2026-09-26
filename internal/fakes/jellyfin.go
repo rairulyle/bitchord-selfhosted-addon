@@ -47,7 +47,9 @@ func NewJellyfin(t testing.TB) *Jellyfin {
 func (f *Jellyfin) serve(w http.ResponseWriter, r *http.Request) {
 	status, rawBody := f.record(r)
 	if r.URL.Path == "/Users/AuthenticateByName" {
-		f.authenticate(w, r)
+		if !f.override(w, status, rawBody) {
+			f.authenticate(w, r)
+		}
 		return
 	}
 	if !strings.Contains(r.Header.Get("Authorization"), `Token="`+JellyfinToken+`"`) {

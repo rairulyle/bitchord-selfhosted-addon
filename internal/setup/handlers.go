@@ -494,6 +494,7 @@ func (a *app) jellyfinSignIn(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusUnauthorized, "jellyfin rejected the sign-in")
 		return
 	case err != nil:
+		a.signins.forgive(req.URL)
 		jsonError(w, http.StatusBadGateway, describe(err).Error())
 		return
 	}

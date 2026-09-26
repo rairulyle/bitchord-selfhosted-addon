@@ -137,6 +137,16 @@ func (l *limiter) attempt(key string) bool {
 	return true
 }
 
+// forgive takes back one recorded attempt, for one that failed for a reason
+// other than the credentials.
+func (l *limiter) forgive(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if failures := l.failures[key]; len(failures) > 0 {
+		l.failures[key] = failures[:len(failures)-1]
+	}
+}
+
 func (l *limiter) reset(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
