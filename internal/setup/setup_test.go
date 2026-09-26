@@ -717,3 +717,31 @@ func TestTwoJellyfinSignInsKeepTheirOwnDeviceIDs(t *testing.T) {
 		}
 	}
 }
+
+func TestSignedInLoginPageRedirectsToTheOverview(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	if rec := a.get("/setup/login"); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/setup" {
+		t.Fatalf("GET /setup/login signed in: %d -> %q", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+func TestSinceDropsZeroUnits(t *testing.T) {
+	now := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	cases := map[time.Duration]string{
+		30 * time.Second:                            "just now",
+		5 * time.Minute:                             "5m ago",
+		5*time.Minute + 40*time.Second:              "5m ago",
+		2 * time.Hour:                               "2h ago",
+		2*time.Hour + 5*time.Minute:                 "2h5m ago",
+		2*time.Hour + 5*time.Minute + 9*time.Second: "2h5m ago",
+	}
+	for ago, want := range cases {
+		if got := since(now.Add(-ago), now); got != want {
+			t.Errorf("since(%s) = %q, want %q", ago, got, want)
+		}
+	}
+	if got := since(time.Time{}, now); got != "never" {
+		t.Errorf("zero time = %q", got)
+	}
+}

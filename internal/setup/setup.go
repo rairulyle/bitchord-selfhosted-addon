@@ -5,6 +5,7 @@ package setup
 import (
 	"context"
 	"embed"
+	"fmt"
 	"html/template"
 	"io/fs"
 	"log/slog"
@@ -101,6 +102,7 @@ func (a *app) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /setup", a.overview)
 	mux.HandleFunc("GET /setup/{$}", redirectTo("/setup"))
+	mux.HandleFunc("GET /setup/login", redirectTo("/setup"))
 	mux.HandleFunc("GET /setup/password", a.passwordForm)
 	mux.HandleFunc("POST /setup/password", a.changePassword)
 	mux.HandleFunc("POST /setup/logout", a.logout)
@@ -241,13 +243,16 @@ func since(at time.Time, now time.Time) string {
 	if at.IsZero() {
 		return "never"
 	}
-	d := now.Sub(at).Round(time.Second)
+	d := now.Sub(at)
+	hours, minutes := int(d/time.Hour), int(d%time.Hour/time.Minute)
 	switch {
 	case d < time.Minute:
 		return "just now"
-	case d < time.Hour:
-		return d.Truncate(time.Minute).String() + " ago"
+	case hours == 0:
+		return fmt.Sprintf("%dm ago", minutes)
+	case minutes == 0:
+		return fmt.Sprintf("%dh ago", hours)
 	default:
-		return d.Truncate(time.Hour).String() + " ago"
+		return fmt.Sprintf("%dh%dm ago", hours, minutes)
 	}
 }
