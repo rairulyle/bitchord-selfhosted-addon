@@ -5,24 +5,12 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
 )
 
-type Track struct {
-	ID          string
-	Title       string
-	Artist      string
-	AlbumArtist string
-	Album       string
-	DurationSec int
-	Codec       string
-	Container   string
-	BitrateKbps int
-	PartKey     string
-	Thumb       string
-}
-
 type Index struct {
-	tracks      []Track
+	tracks      []media.Track
 	byID        map[string]int
 	postings    map[string][]int
 	titlePosts  map[string][]int
@@ -30,7 +18,7 @@ type Index struct {
 	titleForms  [][]string
 }
 
-func NewIndex(tracks []Track) *Index {
+func NewIndex(tracks []media.Track) *Index {
 	ix := &Index{
 		tracks:      tracks,
 		byID:        make(map[string]int, len(tracks)),
@@ -85,21 +73,21 @@ func (ix *Index) missingFrom(other *Index) int {
 	return missing
 }
 
-func (ix *Index) Get(id string) (Track, bool) {
+func (ix *Index) Get(id string) (media.Track, bool) {
 	i, ok := ix.byID[id]
 	if !ok {
-		return Track{}, false
+		return media.Track{}, false
 	}
 	return ix.tracks[i], true
 }
 
 type Result struct {
-	Tracks   []Track
+	Tracks   []media.Track
 	Strict   int
 	Fallback int
 }
 
-func (ix *Index) Search(query string, limit int) []Track { return ix.Find(query, limit).Tracks }
+func (ix *Index) Search(query string, limit int) []media.Track { return ix.Find(query, limit).Tracks }
 
 func (ix *Index) Find(query string, limit int) Result {
 	q := unique(Tokens(query))
@@ -124,7 +112,7 @@ func (ix *Index) Find(query string, limit int) Result {
 	if len(ordered) > limit {
 		ordered = ordered[:limit]
 	}
-	out := make([]Track, len(ordered))
+	out := make([]media.Track, len(ordered))
 	for n, i := range ordered {
 		out[n] = ix.tracks[i]
 	}

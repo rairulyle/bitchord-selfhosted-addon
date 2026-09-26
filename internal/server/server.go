@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
@@ -12,7 +11,7 @@ import (
 	"time"
 
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/library"
-	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
 )
 
 const searchLimit = 50
@@ -20,12 +19,7 @@ const searchLimit = 50
 type Library interface {
 	Ready() bool
 	Find(query string, limit int) library.Result
-	Get(id string) (library.Track, bool)
-}
-
-type Plex interface {
-	Track(ctx context.Context, id string) (plex.Track, error)
-	Open(ctx context.Context, method, path string, header http.Header) (*http.Response, error)
+	Get(id string) (media.Track, bool)
 }
 
 type Options struct {
@@ -34,7 +28,7 @@ type Options struct {
 	AddonName string
 	Version   string
 	Library   Library
-	Plex      Plex
+	Backend   media.Backend
 	Log       *slog.Logger
 }
 
@@ -113,11 +107,16 @@ func (s *server) health(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *server) manifest(w http.ResponseWriter, _ *http.Request) {
+	source := s.Backend.Name()
+	name := s.AddonName
+	if name == "" {
+		name = source
+	}
 	writeJSON(w, manifestJSON{
-		ID:          "app.bitchord-selfhosted-addon.plex",
-		Name:        s.AddonName,
+		ID:          "app.bitchord-selfhosted-addon." + strings.ToLower(source),
+		Name:        name,
 		Version:     s.Version,
-		Description: "Your Plex music library",
+		Description: "Your " + source + " music library",
 		Resources:   []string{"search", "stream"},
 		Types:       []string{"track"},
 		ContentType: "music",
@@ -153,7 +152,7 @@ func (s *server) logSearch(query string, found library.Result, took time.Duratio
 	s.Log.Info("search", append(attrs, "top", label(found.Tracks[0]), "took", took.String())...)
 }
 
-func label(track library.Track) string { return track.Title + " — " + track.Artist }
+func label(track media.Track) string { return track.Title + " — " + track.Artist }
 
 func writeJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")

@@ -11,72 +11,38 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
 )
 
 var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 type scriptedSource struct {
 	mu      sync.Mutex
-	answers []func() ([]plex.Track, error)
+	answers []func() ([]media.Track, error)
 	calls   int
-	section string
+	filter  string
 }
 
-func (s *scriptedSource) AllTracks(_ context.Context, section string) ([]plex.Track, error) {
+func (s *scriptedSource) AllTracks(_ context.Context, filter string) ([]media.Track, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.section = section
+	s.filter = filter
 	answer := s.answers[min(s.calls, len(s.answers)-1)]
 	s.calls++
 	return answer()
 }
 
-func plexTrack(id, title string) plex.Track {
-	return plex.Track{
-		RatingKey:        id,
-		Title:            title,
-		GrandparentTitle: "Album Artist",
-		ParentTitle:      "Album",
-		Duration:         249500,
-		ParentThumb:      "/album/thumb",
-		Media: []plex.Media{{AudioCodec: "pcm", Container: "wav", Bitrate: 1411,
-			Part: []plex.Part{{Key: "/library/parts/" + id + "/file.wav"}}}},
-	}
+func track(id, title string) media.Track {
+	return media.Track{ID: id, Title: title, Artist: "Album Artist", AlbumArtist: "Album Artist", Album: "Album",
+		DurationSec: 250, Codec: "wav", Container: "wav", BitrateKbps: 1411, FileRef: "/parts/" + id, ArtRef: "/album/thumb"}
 }
 
-func ok(tracks ...plex.Track) func() ([]plex.Track, error) {
-	return func() ([]plex.Track, error) { return tracks, nil }
+func ok(tracks ...media.Track) func() ([]media.Track, error) {
+	return func() ([]media.Track, error) { return tracks, nil }
 }
 
-func fails(message string) func() ([]plex.Track, error) {
-	return func() ([]plex.Track, error) { return nil, errors.New(message) }
-}
-
-func TestFromPlex(t *testing.T) {
-	got, converted := FromPlex(plexTrack("7", "Song"))
-	want := Track{ID: "7", Title: "Song", Artist: "Album Artist", AlbumArtist: "Album Artist", Album: "Album",
-		DurationSec: 250, Codec: "wav", Container: "wav", BitrateKbps: 1411,
-		PartKey: "/library/parts/7/file.wav", Thumb: "/album/thumb"}
-	if !converted || got != want {
-		t.Fatalf("FromPlex = %+v, %v", got, converted)
-	}
-
-	withArtist := plexTrack("8", "Song")
-	withArtist.OriginalTitle = "Track Artist"
-	withArtist.Thumb = "/track/thumb"
-	got, _ = FromPlex(withArtist)
-	if got.Artist != "Track Artist" || got.AlbumArtist != "Album Artist" || got.Thumb != "/track/thumb" {
-		t.Errorf("track artist or thumb not preferred: %+v", got)
-	}
-
-	if _, converted := FromPlex(plex.Track{RatingKey: "9", Title: "No media"}); converted {
-		t.Error("a track without a part must be skipped")
-	}
-	noKey := plexTrack("", "No key")
-	if _, converted := FromPlex(noKey); converted {
-		t.Error("a track without a ratingKey must be skipped")
-	}
+func fails(message string) func() ([]media.Track, error) {
+	return func() ([]media.Track, error) { return nil, errors.New(message) }
 }
 
 func TestLibraryIsEmptyAndNotReadyBeforeTheFirstLoad(t *testing.T) {
@@ -92,23 +58,23 @@ func TestLibraryIsEmptyAndNotReadyBeforeTheFirstLoad(t *testing.T) {
 	}
 }
 
-func TestRefreshSwapsTheIndexAndSkipsBrokenTracks(t *testing.T) {
-	source := &scriptedSource{answers: []func() ([]plex.Track, error){
-		ok(plexTrack("1", "First Song"), plex.Track{RatingKey: "2", Title: "Broken"}),
-		ok(plexTrack("3", "Second Song")),
+func TestRefreshSwapsTheIndexAndSkipsUnplayableTracks(t *testing.T) {
+	source := &scriptedSource{answers: []func() ([]media.Track, error){
+		ok(track("1", "First Song"), media.Track{ID: "2", Title: "Broken"}),
+		ok(track("3", "Second Song")),
 	}}
 	lib := NewLibrary(source, "Music", time.Minute, quiet)
 	if err := lib.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if source.section != "Music" {
-		t.Errorf("section filter passed = %q", source.section)
+	if source.filter != "Music" {
+		t.Errorf("library filter passed = %q", source.filter)
 	}
 	if !lib.Ready() || len(lib.Search("first song", 50)) != 1 {
 		t.Fatal("first index not live")
 	}
 	if _, found := lib.Get("2"); found {
-		t.Error("broken track was indexed")
+		t.Error("unplayable track was indexed")
 	}
 	if err := lib.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
@@ -119,7 +85,7 @@ func TestRefreshSwapsTheIndexAndSkipsBrokenTracks(t *testing.T) {
 }
 
 func TestFailedRefreshKeepsThePreviousIndex(t *testing.T) {
-	source := &scriptedSource{answers: []func() ([]plex.Track, error){ok(plexTrack("1", "First Song")), fails("plex down")}}
+	source := &scriptedSource{answers: []func() ([]media.Track, error){ok(track("1", "First Song")), fails("server down")}}
 	lib := NewLibrary(source, "", time.Minute, quiet)
 	if err := lib.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
@@ -133,11 +99,11 @@ func TestFailedRefreshKeepsThePreviousIndex(t *testing.T) {
 }
 
 func TestRunRetriesTheFirstLoadWithCappedBackoffThenRefreshesOnTheInterval(t *testing.T) {
-	answers := make([]func() ([]plex.Track, error), 0, 10)
+	answers := make([]func() ([]media.Track, error), 0, 10)
 	for range 8 {
-		answers = append(answers, fails("plex not up yet"))
+		answers = append(answers, fails("server not up yet"))
 	}
-	answers = append(answers, ok(plexTrack("1", "First Song")), ok(plexTrack("2", "Second Song")))
+	answers = append(answers, ok(track("1", "First Song")), ok(track("2", "Second Song")))
 	source := &scriptedSource{answers: answers}
 	lib := NewLibrary(source, "", 15*time.Minute, quiet)
 
@@ -171,7 +137,7 @@ func TestRunRetriesTheFirstLoadWithCappedBackoffThenRefreshesOnTheInterval(t *te
 }
 
 func TestRunStopsWhenTheContextIsCancelled(t *testing.T) {
-	lib := NewLibrary(&scriptedSource{answers: []func() ([]plex.Track, error){ok(plexTrack("1", "Song"))}}, "", time.Hour, quiet)
+	lib := NewLibrary(&scriptedSource{answers: []func() ([]media.Track, error){ok(track("1", "Song"))}}, "", time.Hour, quiet)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
@@ -190,7 +156,7 @@ func TestRunStopsWhenTheContextIsCancelled(t *testing.T) {
 }
 
 func TestSearchIsSafeDuringASwap(t *testing.T) {
-	source := &scriptedSource{answers: []func() ([]plex.Track, error){ok(plexTrack("1", "First Song"))}}
+	source := &scriptedSource{answers: []func() ([]media.Track, error){ok(track("1", "First Song"))}}
 	lib := NewLibrary(source, "", time.Minute, quiet)
 	var wg sync.WaitGroup
 	for range 4 {
@@ -211,9 +177,9 @@ func TestSearchIsSafeDuringASwap(t *testing.T) {
 
 func TestRefreshLogsWhatChanged(t *testing.T) {
 	var logs bytes.Buffer
-	source := &scriptedSource{answers: []func() ([]plex.Track, error){
-		ok(plexTrack("1", "First Song"), plexTrack("2", "Second Song")),
-		ok(plexTrack("2", "Second Song"), plexTrack("3", "Third Song"), plexTrack("4", "Fourth Song")),
+	source := &scriptedSource{answers: []func() ([]media.Track, error){
+		ok(track("1", "First Song"), track("2", "Second Song"), media.Track{ID: "9", Title: "Broken"}),
+		ok(track("2", "Second Song"), track("3", "Third Song"), track("4", "Fourth Song")),
 	}}
 	lib := NewLibrary(source, "", time.Minute, slog.New(slog.NewJSONHandler(&logs, nil)))
 	for range 2 {
@@ -225,7 +191,7 @@ func TestRefreshLogsWhatChanged(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("logs = %s", logs.String())
 	}
-	for i, want := range []string{`"tracks":2,"added":2,"removed":0`, `"tracks":3,"added":2,"removed":1`} {
+	for i, want := range []string{`"tracks":2,"added":2,"removed":0,"skipped":1`, `"tracks":3,"added":2,"removed":1,"skipped":0`} {
 		if !strings.Contains(lines[i], want) {
 			t.Errorf("line %d lacks %s: %s", i, want, lines[i])
 		}

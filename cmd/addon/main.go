@@ -18,7 +18,9 @@ import (
 	"time"
 
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/config"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/jellyfin"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/library"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/server"
 )
@@ -49,8 +51,8 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "invalid configuration:\n%v\n", err)
 		return 1
 	}
-	log := newLogger(cfg.LogFormat, cfg.LogLevel, stderr)
-	log.Info("starting", "version", version, "plex", hostOf(cfg.PlexURL), "section", cmp.Or(cfg.Section, "all music"),
+	log := newLogger(cfg.LogFormat, cfg.LogLevel, stderr).With("source", string(cfg.Backend))
+	log.Info("starting", "version", version, "server", hostOf(cfg.ServerURL), "library", cmp.Or(cfg.Library, "all music"),
 		"refresh", cfg.RefreshInterval.String(), "public_url", cfg.PublicURL, "log_level", cfg.LogLevel.String())
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
@@ -90,9 +92,23 @@ func healthcheck(url string) int {
 	return 0
 }
 
+func newBackend(cfg config.Config, log *slog.Logger) (media.Backend, error) {
+	switch cfg.Backend {
+	case config.Plex:
+		return plex.New(plex.Options{BaseURL: cfg.ServerURL, Token: cfg.ServerToken, Log: log}), nil
+	case config.Jellyfin:
+		return jellyfin.New(jellyfin.Options{BaseURL: cfg.ServerURL, APIKey: cfg.ServerToken, Version: version}), nil
+	default:
+		return nil, fmt.Errorf("unknown backend %q", cfg.Backend)
+	}
+}
+
 func serve(ctx context.Context, cfg config.Config, log *slog.Logger, listening func(net.Addr)) error {
-	client := plex.New(plex.Options{BaseURL: cfg.PlexURL, Token: cfg.PlexToken})
-	lib := library.NewLibrary(client, cfg.Section, cfg.RefreshInterval, log)
+	backend, err := newBackend(cfg, log)
+	if err != nil {
+		return err
+	}
+	lib := library.NewLibrary(backend, cfg.Library, cfg.RefreshInterval, log)
 	runCtx, stopRun := context.WithCancel(ctx)
 	runDone := make(chan struct{})
 	go func() {
@@ -111,7 +127,7 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger, listening f
 	srv := &http.Server{
 		Handler: server.New(server.Options{
 			Secret: cfg.Secret, PublicURL: cfg.PublicURL, AddonName: cfg.AddonName, Version: version,
-			Library: lib, Plex: client, Log: log,
+			Library: lib, Backend: backend, Log: log,
 		}),
 		// WriteTimeout stays unset: a stream lasts as long as the song.
 		ReadHeaderTimeout: 10 * time.Second,

@@ -11,12 +11,20 @@ import (
 	"time"
 )
 
+type Backend string
+
+const (
+	Plex     Backend = "plex"
+	Jellyfin Backend = "jellyfin"
+)
+
 type Config struct {
-	PlexURL         string
-	PlexToken       string
+	Backend         Backend
+	ServerURL       string
+	ServerToken     string
+	Library         string
 	Secret          string
 	PublicURL       string
-	Section         string
 	AddonName       string
 	RefreshInterval time.Duration
 	Port            int
@@ -32,6 +40,13 @@ var logLevels = map[string]slog.Level{
 	"warn":  slog.LevelWarn,
 	"error": slog.LevelError,
 }
+
+type variables struct{ url, token, library string }
+
+var (
+	plexVars     = variables{"PLEX_URL", "PLEX_TOKEN", "PLEX_SECTION"}
+	jellyfinVars = variables{"JELLYFIN_URL", "JELLYFIN_API_KEY", "JELLYFIN_LIBRARY"}
+)
 
 func Load(getenv func(string) string) (Config, error) {
 	var problems []error
@@ -51,22 +66,35 @@ func Load(getenv func(string) string) (Config, error) {
 		}
 		return value
 	}
+	anySet := func(v variables) bool {
+		return get(v.url, "") != "" || get(v.token, "") != "" || get(v.library, "") != ""
+	}
 
 	cfg := Config{
-		PlexURL:   strings.TrimRight(required("PLEX_URL"), "/"),
-		PlexToken: required("PLEX_TOKEN"),
 		Secret:    required("ADDON_SECRET"),
 		PublicURL: strings.TrimRight(required("PUBLIC_URL"), "/"),
-		Section:   get("PLEX_SECTION", ""),
-		AddonName: get("ADDON_NAME", "Plex"),
+		AddonName: get("ADDON_NAME", ""),
 	}
-
-	if cfg.PlexURL != "" {
-		parsed, err := url.Parse(cfg.PlexURL)
-		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-			fail("PLEX_URL must be an http or https URL")
+	choose := func(backend Backend, v variables) {
+		cfg.Backend = backend
+		cfg.ServerURL = strings.TrimRight(required(v.url), "/")
+		cfg.ServerToken = required(v.token)
+		cfg.Library = get(v.library, "")
+		if cfg.ServerURL != "" && !isHTTP(cfg.ServerURL) {
+			fail("%s must be an http or https URL", v.url)
 		}
 	}
+	switch plexSet, jellyfinSet := anySet(plexVars), anySet(jellyfinVars); {
+	case plexSet && jellyfinSet:
+		fail("configure either Plex or Jellyfin, not both")
+	case jellyfinSet:
+		choose(Jellyfin, jellyfinVars)
+	case plexSet:
+		choose(Plex, plexVars)
+	default:
+		fail("set PLEX_URL and PLEX_TOKEN, or JELLYFIN_URL and JELLYFIN_API_KEY")
+	}
+
 	if cfg.PublicURL != "" {
 		parsed, err := url.Parse(cfg.PublicURL)
 		switch {
@@ -104,4 +132,9 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 
 	return cfg, errors.Join(problems...)
+}
+
+func isHTTP(raw string) bool {
+	parsed, err := url.Parse(raw)
+	return err == nil && parsed.Host != "" && (parsed.Scheme == "http" || parsed.Scheme == "https")
 }

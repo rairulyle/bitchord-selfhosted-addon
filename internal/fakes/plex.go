@@ -1,47 +1,34 @@
-package plextest
+package fakes
 
 import (
 	"bytes"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
 )
 
-const Token = "fake-plex-token"
+const PlexToken = "fake-plex-token"
 
-type Request struct {
-	Method string
-	Path   string
-	Query  string
-	Header http.Header
-}
-
-type Fake struct {
+type Plex struct {
+	recorder
 	URL          string
 	Sections     []plex.Section
 	Tracks       map[string][]plex.Track
 	Files        map[string][]byte
 	Extra        map[string]http.HandlerFunc
 	IgnorePaging bool
-
-	mu       sync.Mutex
-	status   int
-	rawBody  string
-	requests []Request
 }
 
-func New(t testing.TB) *Fake {
-	f := &Fake{
-		Sections: Sections(),
-		Tracks:   Tracks(),
-		Files:    Files(),
+func NewPlex(t testing.TB) *Plex {
+	f := &Plex{
+		Sections: PlexSections(),
+		Tracks:   PlexTracks(),
+		Files:    PlexFiles(),
 		Extra:    map[string]http.HandlerFunc{},
 	}
 	server := httptest.NewServer(http.HandlerFunc(f.serve))
@@ -50,41 +37,13 @@ func New(t testing.TB) *Fake {
 	return f
 }
 
-func (f *Fake) FailWith(status int) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.status = status
-}
-
-func (f *Fake) AnswerRaw(body string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.rawBody = body
-}
-
-func (f *Fake) Requests() []Request {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]Request(nil), f.requests...)
-}
-
-func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
-	f.mu.Lock()
-	f.requests = append(f.requests, Request{r.Method, r.URL.Path, r.URL.RawQuery, r.Header.Clone()})
-	status, rawBody := f.status, f.rawBody
-	f.mu.Unlock()
-
-	if r.Header.Get("X-Plex-Token") != Token {
+func (f *Plex) serve(w http.ResponseWriter, r *http.Request) {
+	status, rawBody := f.record(r)
+	if r.Header.Get("X-Plex-Token") != PlexToken {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	if status != 0 {
-		w.WriteHeader(status)
-		return
-	}
-	if rawBody != "" {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(rawBody))
+	if f.override(w, status, rawBody) {
 		return
 	}
 	if extra, ok := f.Extra[r.URL.Path]; ok {
@@ -107,7 +66,7 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (f *Fake) servePage(w http.ResponseWriter, r *http.Request, key string) {
+func (f *Plex) servePage(w http.ResponseWriter, r *http.Request, key string) {
 	all := f.Tracks[key]
 	if f.IgnorePaging {
 		writeJSON(w, map[string]any{"MediaContainer": map[string]any{
@@ -131,7 +90,7 @@ func (f *Fake) servePage(w http.ResponseWriter, r *http.Request, key string) {
 	}})
 }
 
-func (f *Fake) serveTrack(w http.ResponseWriter, id string) {
+func (f *Plex) serveTrack(w http.ResponseWriter, id string) {
 	for _, tracks := range f.Tracks {
 		for _, track := range tracks {
 			if track.RatingKey == id {
@@ -143,7 +102,7 @@ func (f *Fake) serveTrack(w http.ResponseWriter, id string) {
 	w.WriteHeader(http.StatusNotFound)
 }
 
-func (f *Fake) serveFile(w http.ResponseWriter, r *http.Request) {
+func (f *Plex) serveFile(w http.ResponseWriter, r *http.Request) {
 	body, ok := f.Files[r.URL.Path]
 	if !ok {
 		w.WriteHeader(http.StatusNotFound)
@@ -155,12 +114,7 @@ func (f *Fake) serveFile(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, "", time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), bytes.NewReader(body))
 }
 
-func writeJSON(w http.ResponseWriter, value any) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(value)
-}
-
-func Sections() []plex.Section {
+func PlexSections() []plex.Section {
 	return []plex.Section{
 		{Key: "1", Type: "movie", Title: "Movies"},
 		{Key: "3", Type: "artist", Title: "Music"},
@@ -168,7 +122,7 @@ func Sections() []plex.Section {
 	}
 }
 
-func track(id, title, artist, albumArtist, album string, ms int, codec, container string, kbps int, stream plex.Stream) plex.Track {
+func plexTrack(id, title, artist, albumArtist, album string, ms int, codec, container string, kbps int, stream plex.Stream) plex.Track {
 	stream.StreamType = 2
 	stream.Codec = codec
 	return plex.Track{
@@ -193,27 +147,27 @@ func track(id, title, artist, albumArtist, album string, ms int, codec, containe
 	}
 }
 
-func Tracks() map[string][]plex.Track {
-	noThumb := track("104", "Stays Four the Same", "", "The Ready Set", "Stays Four The Same", 201378, "mp3", "mp3", 251, plex.Stream{})
+func PlexTracks() map[string][]plex.Track {
+	noThumb := plexTrack("104", "Stays Four the Same", "", "The Ready Set", "Stays Four The Same", 201378, "mp3", "mp3", 251, plex.Stream{})
 	noThumb.Thumb, noThumb.ParentThumb = "", ""
-	albumThumb := track("105", "Small Town Girl", "", "Never Shout Never", "Small Town Girl", 218047, "aac", "mp4", 320, plex.Stream{SamplingRate: 44100})
+	albumThumb := plexTrack("105", "Small Town Girl", "", "Never Shout Never", "Small Town Girl", 218047, "aac", "mp4", 320, plex.Stream{SamplingRate: 44100})
 	albumThumb.Thumb = ""
 	return map[string][]plex.Track{
 		"3": {
-			track("101", "New Religion", "All Time Low feat. Teddy Swims", "All Time Low", "Tell Me I’m Alive", 184054, "flac", "flac", 1875, plex.Stream{SamplingRate: 48000, BitDepth: 24}),
-			track("102", "Endless Slaughter", "", "Limp Bizkit", "Endless Slaughter", 336823, "mp3", "mp3", 320, plex.Stream{SamplingRate: 44100}),
-			track("103", "Closer", "", "Anberlin", "As You Found Me", 230520, "pcm", "wav", 1411, plex.Stream{SamplingRate: 44100, BitDepth: 16}),
+			plexTrack("101", "New Religion", "All Time Low feat. Teddy Swims", "All Time Low", "Tell Me I’m Alive", 184054, "flac", "flac", 1875, plex.Stream{SamplingRate: 48000, BitDepth: 24}),
+			plexTrack("102", "Endless Slaughter", "", "Limp Bizkit", "Endless Slaughter", 336823, "mp3", "mp3", 320, plex.Stream{SamplingRate: 44100}),
+			plexTrack("103", "Closer", "", "Anberlin", "As You Found Me", 230520, "pcm", "wav", 1411, plex.Stream{SamplingRate: 44100, BitDepth: 16}),
 			noThumb,
 			albumThumb,
 			{RatingKey: "106", Title: "Broken, No Media"},
 		},
 		"5": {
-			track("501", "Chapter One", "", "Some Author", "Some Book", 1800000, "mp3", "mp3", 64, plex.Stream{}),
+			plexTrack("501", "Chapter One", "", "Some Author", "Some Book", 1800000, "mp3", "mp3", 64, plex.Stream{}),
 		},
 	}
 }
 
-func Files() map[string][]byte {
+func PlexFiles() map[string][]byte {
 	return map[string][]byte{
 		"/library/parts/101/1/file.flac": []byte("0123456789abcdefghijklmnopqrstuvwxyz"),
 		"/library/parts/102/1/file.mp3":  []byte("mp3-bytes"),

@@ -2,18 +2,15 @@ package plex
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
 	"time"
-)
 
-var (
-	ErrNotFound     = errors.New("plex: not found")
-	ErrUnauthorized = errors.New("plex: token rejected")
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
 )
 
 type Options struct {
@@ -22,85 +19,46 @@ type Options struct {
 	PageSize      int
 	HeaderTimeout time.Duration
 	CallTimeout   time.Duration
+	Log           *slog.Logger
 }
 
 type Client struct {
-	baseURL     string
-	token       string
-	pageSize    int
-	callTimeout time.Duration
-	http        *http.Client
+	http     *media.Client
+	pageSize int
+	log      *slog.Logger
 }
 
 func New(o Options) *Client {
 	if o.PageSize <= 0 {
 		o.PageSize = 1000
 	}
-	if o.HeaderTimeout <= 0 {
-		o.HeaderTimeout = 10 * time.Second
+	if o.Log == nil {
+		o.Log = slog.New(slog.DiscardHandler)
 	}
-	if o.CallTimeout <= 0 {
-		o.CallTimeout = 30 * time.Second
-	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.ResponseHeaderTimeout = o.HeaderTimeout
+	token := o.Token
 	return &Client{
-		baseURL:     o.BaseURL,
-		token:       o.Token,
-		pageSize:    o.PageSize,
-		callTimeout: o.CallTimeout,
-		// No http.Client.Timeout: it would cut a long audio body short.
-		http: &http.Client{Transport: transport},
+		http: media.NewClient(media.ClientOptions{
+			BaseURL:       o.BaseURL,
+			Name:          "plex",
+			TokenVar:      "PLEX_TOKEN",
+			Authorize:     func(r *http.Request) { r.Header.Set("X-Plex-Token", token) },
+			HeaderTimeout: o.HeaderTimeout,
+			CallTimeout:   o.CallTimeout,
+		}),
+		pageSize: o.PageSize,
+		log:      o.Log,
 	}
 }
 
-func (c *Client) Open(ctx context.Context, method, path string, header http.Header) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, nil)
-	if err != nil {
-		return nil, err
-	}
-	for key, values := range header {
-		req.Header[key] = values
-	}
-	req.Header.Set("X-Plex-Token", c.token)
-	// Identity encoding keeps Content-Length and Content-Range true to the file.
-	req.Header.Set("Accept-Encoding", "identity")
-	return c.http.Do(req)
-}
+func (c *Client) Name() string { return "Plex" }
 
-func (c *Client) getJSON(ctx context.Context, path string, header http.Header, into any) error {
-	ctx, cancel := context.WithTimeout(ctx, c.callTimeout)
-	defer cancel()
-	if header == nil {
-		header = http.Header{}
-	}
-	header.Set("Accept", "application/json")
-	res, err := c.Open(ctx, http.MethodGet, path, header)
-	if err != nil {
-		return fmt.Errorf("plex: %w", err)
-	}
-	defer res.Body.Close()
-	switch {
-	case res.StatusCode == http.StatusNotFound:
-		return ErrNotFound
-	case res.StatusCode == http.StatusUnauthorized:
-		return ErrUnauthorized
-	case res.StatusCode != http.StatusOK:
-		return fmt.Errorf("plex: unexpected status %d", res.StatusCode)
-	}
-	if err := json.NewDecoder(res.Body).Decode(into); err != nil {
-		return fmt.Errorf("plex: malformed answer: %w", err)
-	}
-	return nil
-}
-
-func (c *Client) MusicSections(ctx context.Context, filter string) ([]Section, error) {
+func (c *Client) musicSections(ctx context.Context, filter string) ([]Section, error) {
 	var answer struct {
 		MediaContainer struct {
 			Directory []Section `json:"Directory"`
 		} `json:"MediaContainer"`
 	}
-	if err := c.getJSON(ctx, "/library/sections", nil, &answer); err != nil {
+	if err := c.http.GetJSON(ctx, "/library/sections", nil, &answer); err != nil {
 		return nil, err
 	}
 	var out []Section
@@ -118,29 +76,21 @@ func (c *Client) MusicSections(ctx context.Context, filter string) ([]Section, e
 	return out, nil
 }
 
-func (c *Client) AllTracks(ctx context.Context, filter string) ([]Track, error) {
-	sections, err := c.MusicSections(ctx, filter)
+func (c *Client) AllTracks(ctx context.Context, filter string) ([]media.Track, error) {
+	sections, err := c.musicSections(ctx, filter)
 	if err != nil {
 		return nil, err
 	}
-	var out []Track
+	var out []media.Track
 	for _, section := range sections {
-		var previousFirst string
-		havePrevious := false
-		for start := 0; ; start += c.pageSize {
-			page, err := c.trackPage(ctx, section.Key, start)
-			if err != nil {
-				return nil, err
-			}
-			if havePrevious && len(page) > 0 && page[0].RatingKey == previousFirst {
-				break
-			}
-			out = append(out, page...)
-			if len(page) != c.pageSize {
-				break
-			}
-			previousFirst = page[0].RatingKey
-			havePrevious = true
+		items, err := media.AllPages(c.pageSize,
+			func(t Track) string { return t.RatingKey },
+			func(start int) ([]Track, error) { return c.trackPage(ctx, section.Key, start) })
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range items {
+			out = append(out, item.convert())
 		}
 	}
 	return out, nil
@@ -156,25 +106,48 @@ func (c *Client) trackPage(ctx context.Context, sectionKey string, start int) ([
 	header.Set("X-Plex-Container-Start", strconv.Itoa(start))
 	header.Set("X-Plex-Container-Size", strconv.Itoa(c.pageSize))
 	path := "/library/sections/" + url.PathEscape(sectionKey) + "/all?type=10"
-	if err := c.getJSON(ctx, path, header, &answer); err != nil {
+	if err := c.http.GetJSON(ctx, path, header, &answer); err != nil {
 		return nil, err
 	}
 	return answer.MediaContainer.Metadata, nil
 }
 
-func (c *Client) Track(ctx context.Context, id string) (Track, error) {
+// An id Plex cannot parse as a rating key may get a 400, which is as good as
+// not found.
+func (c *Client) Track(ctx context.Context, id string) (media.Track, error) {
 	var answer struct {
 		MediaContainer struct {
 			Metadata []Track `json:"Metadata"`
 		} `json:"MediaContainer"`
 	}
-	if err := c.getJSON(ctx, "/library/metadata/"+url.PathEscape(id), nil, &answer); err != nil {
-		return Track{}, err
+	err := c.http.GetJSON(ctx, "/library/metadata/"+url.PathEscape(id), nil, &answer)
+	var status media.StatusError
+	if errors.As(err, &status) && status == http.StatusBadRequest {
+		return media.Track{}, media.ErrNotFound
+	}
+	if err != nil {
+		return media.Track{}, err
 	}
 	if len(answer.MediaContainer.Metadata) == 0 {
-		return Track{}, ErrNotFound
+		return media.Track{}, media.ErrNotFound
 	}
-	return answer.MediaContainer.Metadata[0], nil
+	return answer.MediaContainer.Metadata[0].convert(), nil
+}
+
+// Plex answers 500 to a direct-play request for a track it never finished
+// analysing (no media bitrate), yet serves the same part as a download.
+func (c *Client) OpenFile(ctx context.Context, track media.Track, method string, header http.Header) (*http.Response, error) {
+	res, err := c.http.Open(ctx, method, track.FileRef, header)
+	if err != nil || res.StatusCode != http.StatusInternalServerError {
+		return res, err
+	}
+	res.Body.Close()
+	c.log.Debug("plex refused direct play, retrying as a download", "id", track.ID)
+	return c.http.Open(ctx, method, track.FileRef+"?download=1", header)
+}
+
+func (c *Client) OpenArt(ctx context.Context, track media.Track) (*http.Response, error) {
+	return c.http.Open(ctx, http.MethodGet, ArtPath(track.ArtRef), nil)
 }
 
 func ArtPath(thumb string) string {

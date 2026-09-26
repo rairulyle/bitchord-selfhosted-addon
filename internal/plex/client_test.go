@@ -8,25 +8,31 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/fakes"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
-	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plextest"
 )
 
-func client(fake *plextest.Fake, pageSize int) *plex.Client {
-	return plex.New(plex.Options{BaseURL: fake.URL, Token: plextest.Token, PageSize: pageSize})
+const flacBody = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+func client(fake *fakes.Plex, pageSize int) *plex.Client {
+	return plex.New(plex.Options{BaseURL: fake.URL, Token: fakes.PlexToken, PageSize: pageSize})
 }
 
-func keys(tracks []plex.Track) string {
+func keys(tracks []media.Track) string {
 	out := make([]string, len(tracks))
 	for i, t := range tracks {
-		out[i] = t.RatingKey
+		out[i] = t.ID
 	}
 	return strings.Join(out, ",")
 }
 
+func flac() media.Track { return media.Track{ID: "101", FileRef: "/library/parts/101/1/file.flac"} }
+
 func TestAllTracksPagesThroughEveryMusicSection(t *testing.T) {
-	fake := plextest.New(t)
+	fake := fakes.NewPlex(t)
 	tracks, err := client(fake, 2).AllTracks(context.Background(), "")
 	if err != nil {
 		t.Fatalf("AllTracks: %v", err)
@@ -45,6 +51,22 @@ func TestAllTracksPagesThroughEveryMusicSection(t *testing.T) {
 	}
 }
 
+func TestAllTracksKeepsUnplayableTracksForTheCount(t *testing.T) {
+	tracks, err := client(fakes.NewPlex(t), 1000).AllTracks(context.Background(), "Music")
+	if err != nil {
+		t.Fatalf("AllTracks: %v", err)
+	}
+	playable := 0
+	for _, track := range tracks {
+		if track.Playable() {
+			playable++
+		}
+	}
+	if len(tracks) != 6 || playable != 5 {
+		t.Fatalf("%d tracks, %d playable, want 6 and 5", len(tracks), playable)
+	}
+}
+
 func TestAllTracksFiltersSections(t *testing.T) {
 	cases := map[string]struct{ filter, want string }{
 		"by id":    {"5", "501"},
@@ -52,7 +74,7 @@ func TestAllTracksFiltersSections(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			tracks, err := client(plextest.New(t), 1000).AllTracks(context.Background(), tc.filter)
+			tracks, err := client(fakes.NewPlex(t), 1000).AllTracks(context.Background(), tc.filter)
 			if err != nil {
 				t.Fatalf("AllTracks: %v", err)
 			}
@@ -64,7 +86,7 @@ func TestAllTracksFiltersSections(t *testing.T) {
 }
 
 func TestAllTracksTerminatesWhenPlexIgnoresThePagingHeaders(t *testing.T) {
-	fake := plextest.New(t)
+	fake := fakes.NewPlex(t)
 	fake.IgnorePaging = true
 	tracks, err := client(fake, 2).AllTracks(context.Background(), "Music")
 	if err != nil {
@@ -76,7 +98,7 @@ func TestAllTracksTerminatesWhenPlexIgnoresThePagingHeaders(t *testing.T) {
 }
 
 func TestAllTracksTerminatesWhenPageSizeEqualsTheSectionLength(t *testing.T) {
-	fake := plextest.New(t)
+	fake := fakes.NewPlex(t)
 	fake.IgnorePaging = true
 	tracks, err := client(fake, 6).AllTracks(context.Background(), "Music")
 	if err != nil {
@@ -89,7 +111,7 @@ func TestAllTracksTerminatesWhenPageSizeEqualsTheSectionLength(t *testing.T) {
 
 func TestAllTracksFailsWhenNoSectionMatches(t *testing.T) {
 	for _, filter := range []string{"Nope", "Movies", "1"} {
-		_, err := client(plextest.New(t), 1000).AllTracks(context.Background(), filter)
+		_, err := client(fakes.NewPlex(t), 1000).AllTracks(context.Background(), filter)
 		if err == nil || !strings.Contains(err.Error(), filter) {
 			t.Errorf("filter %q: err = %v, want it to name the filter", filter, err)
 		}
@@ -97,7 +119,7 @@ func TestAllTracksFailsWhenNoSectionMatches(t *testing.T) {
 }
 
 func TestEveryRequestCarriesTheTokenAsAHeaderOnly(t *testing.T) {
-	fake := plextest.New(t)
+	fake := fakes.NewPlex(t)
 	c := client(fake, 1000)
 	if _, err := c.AllTracks(context.Background(), ""); err != nil {
 		t.Fatal(err)
@@ -106,10 +128,10 @@ func TestEveryRequestCarriesTheTokenAsAHeaderOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, r := range fake.Requests() {
-		if r.Header.Get("X-Plex-Token") != plextest.Token {
+		if r.Header.Get("X-Plex-Token") != fakes.PlexToken {
 			t.Errorf("%s: token header missing", r.Path)
 		}
-		if strings.Contains(r.Query, plextest.Token) || strings.Contains(r.Path, plextest.Token) {
+		if strings.Contains(r.Query, fakes.PlexToken) || strings.Contains(r.Path, fakes.PlexToken) {
 			t.Errorf("%s?%s: token leaked into the URL", r.Path, r.Query)
 		}
 		if r.Header.Get("Accept") != "application/json" {
@@ -119,37 +141,40 @@ func TestEveryRequestCarriesTheTokenAsAHeaderOnly(t *testing.T) {
 }
 
 func TestTrackReturnsStreamDetails(t *testing.T) {
-	track, err := client(plextest.New(t), 1000).Track(context.Background(), "101")
+	track, err := client(fakes.NewPlex(t), 1000).Track(context.Background(), "101")
 	if err != nil {
 		t.Fatalf("Track: %v", err)
 	}
-	_, part, ok := track.FirstPart()
-	if !ok || part.Key != "/library/parts/101/1/file.flac" {
-		t.Fatalf("part = %+v, %v", part, ok)
-	}
-	stream, ok := part.AudioStream()
-	if !ok || stream.SamplingRate != 48000 || stream.BitDepth != 24 {
-		t.Fatalf("stream = %+v, %v", stream, ok)
+	if track.FileRef != "/library/parts/101/1/file.flac" || track.SampleRate != 48000 || track.BitDepth != 24 {
+		t.Fatalf("track = %+v", track)
 	}
 }
 
 func TestErrors(t *testing.T) {
 	t.Run("unknown track", func(t *testing.T) {
-		_, err := client(plextest.New(t), 1000).Track(context.Background(), "999")
-		if !errors.Is(err, plex.ErrNotFound) {
+		_, err := client(fakes.NewPlex(t), 1000).Track(context.Background(), "999")
+		if !errors.Is(err, media.ErrNotFound) {
 			t.Fatalf("err = %v", err)
 		}
 	})
-	t.Run("rejected token", func(t *testing.T) {
-		fake := plextest.New(t)
+	t.Run("id plex cannot parse", func(t *testing.T) {
+		fake := fakes.NewPlex(t)
+		fake.FailWith(http.StatusBadRequest)
+		_, err := client(fake, 1000).Track(context.Background(), "abc")
+		if !errors.Is(err, media.ErrNotFound) {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("rejected token names the variable", func(t *testing.T) {
+		fake := fakes.NewPlex(t)
 		c := plex.New(plex.Options{BaseURL: fake.URL, Token: "wrong"})
 		_, err := c.AllTracks(context.Background(), "")
-		if !errors.Is(err, plex.ErrUnauthorized) {
+		if !errors.Is(err, media.ErrUnauthorized) || !strings.Contains(err.Error(), "PLEX_TOKEN") {
 			t.Fatalf("err = %v", err)
 		}
 	})
 	t.Run("server error", func(t *testing.T) {
-		fake := plextest.New(t)
+		fake := fakes.NewPlex(t)
 		fake.FailWith(http.StatusInternalServerError)
 		_, err := client(fake, 1000).AllTracks(context.Background(), "")
 		if err == nil || !strings.Contains(err.Error(), "500") {
@@ -157,7 +182,7 @@ func TestErrors(t *testing.T) {
 		}
 	})
 	t.Run("malformed answer", func(t *testing.T) {
-		fake := plextest.New(t)
+		fake := fakes.NewPlex(t)
 		fake.AnswerRaw("<MediaContainer/>")
 		_, err := client(fake, 1000).AllTracks(context.Background(), "")
 		if err == nil || !strings.Contains(err.Error(), "malformed") {
@@ -167,32 +192,11 @@ func TestErrors(t *testing.T) {
 	t.Run("unreachable", func(t *testing.T) {
 		dead := httptest.NewServer(http.NotFoundHandler())
 		dead.Close()
-		c := plex.New(plex.Options{BaseURL: dead.URL, Token: plextest.Token})
+		c := plex.New(plex.Options{BaseURL: dead.URL, Token: fakes.PlexToken})
 		if _, err := c.AllTracks(context.Background(), ""); err == nil {
 			t.Fatal("expected an error")
 		}
 	})
-}
-
-func TestAudioFormatAndLossless(t *testing.T) {
-	cases := []struct {
-		codec, container, format string
-		lossless                 bool
-	}{
-		{"flac", "flac", "flac", true},
-		{"pcm", "wav", "wav", true},
-		{"pcm", "aiff", "aiff", true},
-		{"alac", "mp4", "alac", true},
-		{"mp3", "mp3", "mp3", false},
-		{"aac", "mp4", "aac", false},
-		{"", "ogg", "ogg", false},
-	}
-	for _, tc := range cases {
-		format := plex.AudioFormat(tc.codec, tc.container)
-		if format != tc.format || plex.Lossless(format) != tc.lossless {
-			t.Errorf("%s/%s = %s lossless=%v", tc.codec, tc.container, format, plex.Lossless(format))
-		}
-	}
 }
 
 func TestArtPathEscapesTheThumb(t *testing.T) {
@@ -203,12 +207,12 @@ func TestArtPathEscapesTheThumb(t *testing.T) {
 	}
 }
 
-func TestOpenStreamsAFileWithRangeAndIdentityEncoding(t *testing.T) {
-	fake := plextest.New(t)
+func TestOpenFileStreamsWithRangeAndIdentityEncoding(t *testing.T) {
+	fake := fakes.NewPlex(t)
 	c := client(fake, 1000)
-	res, err := c.Open(context.Background(), http.MethodGet, "/library/parts/101/1/file.flac", http.Header{"Range": {"bytes=10-19"}})
+	res, err := c.OpenFile(context.Background(), flac(), http.MethodGet, http.Header{"Range": {"bytes=10-19"}})
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("OpenFile: %v", err)
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusPartialContent {
@@ -226,16 +230,55 @@ func TestOpenStreamsAFileWithRangeAndIdentityEncoding(t *testing.T) {
 	if req.Header.Get("Accept-Encoding") != "identity" {
 		t.Errorf("Accept-Encoding = %q, want %q", req.Header.Get("Accept-Encoding"), "identity")
 	}
-	if req.Header.Get("X-Plex-Token") != plextest.Token {
-		t.Errorf("X-Plex-Token = %q, want %q", req.Header.Get("X-Plex-Token"), plextest.Token)
+	if req.Header.Get("X-Plex-Token") != fakes.PlexToken {
+		t.Errorf("X-Plex-Token = %q, want %q", req.Header.Get("X-Plex-Token"), fakes.PlexToken)
 	}
 	if req.Header.Get("Range") != "bytes=10-19" {
 		t.Errorf("Range = %q, want %q", req.Header.Get("Range"), "bytes=10-19")
 	}
-	if strings.Contains(req.Path, plextest.Token) {
-		t.Errorf("token leaked into Path: %s", req.Path)
+	if strings.Contains(req.Path, fakes.PlexToken) || strings.Contains(req.Query, fakes.PlexToken) {
+		t.Errorf("token leaked into the URL: %s?%s", req.Path, req.Query)
 	}
-	if strings.Contains(req.Query, plextest.Token) {
-		t.Errorf("token leaked into Query: %s", req.Query)
+}
+
+func TestOpenFileRetriesAsADownloadWhenPlexRefusesDirectPlay(t *testing.T) {
+	fake := fakes.NewPlex(t)
+	fake.Extra[flac().FileRef] = func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("download") != "1" {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		http.ServeContent(w, r, "", time.Time{}, strings.NewReader(flacBody))
+	}
+	res, err := client(fake, 1000).OpenFile(context.Background(), flac(), http.MethodGet, http.Header{"Range": {"bytes=10-19"}})
+	if err != nil {
+		t.Fatalf("OpenFile: %v", err)
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	if res.StatusCode != http.StatusPartialContent || string(body) != "abcdefghij" {
+		t.Fatalf("status %d, body %q", res.StatusCode, body)
+	}
+}
+
+func TestOpenFileAndArtMapMissingAndRejected(t *testing.T) {
+	fake := fakes.NewPlex(t)
+	c := client(fake, 1000)
+	gone := media.Track{ID: "103", FileRef: "/library/parts/103/1/file.wav", ArtRef: "/library/metadata/103/thumb/1"}
+	if _, err := c.OpenFile(context.Background(), gone, http.MethodGet, nil); !errors.Is(err, media.ErrNotFound) {
+		t.Errorf("missing file: %v", err)
+	}
+	res, err := c.OpenArt(context.Background(), gone)
+	if err != nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("OpenArt = %v, %v", res, err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if string(body) != "jpeg:/library/metadata/103/thumb/1" {
+		t.Errorf("art body = %q", body)
+	}
+	wrong := plex.New(plex.Options{BaseURL: fake.URL, Token: "wrong"})
+	if _, err := wrong.OpenFile(context.Background(), flac(), http.MethodGet, nil); !errors.Is(err, media.ErrUnauthorized) {
+		t.Errorf("rejected token: %v", err)
 	}
 }

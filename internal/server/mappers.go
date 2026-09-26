@@ -4,8 +4,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/rairulyle/bitchord-selfhosted-addon/internal/library"
-	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
 )
 
 type manifestJSON struct {
@@ -48,7 +47,7 @@ type streamJSON struct {
 	Bitrate    int    `json:"bitrate,omitempty"`
 }
 
-func toTrackJSON(base string, track library.Track) trackJSON {
+func toTrackJSON(base string, track media.Track) trackJSON {
 	out := trackJSON{
 		ID:           track.ID,
 		Title:        track.Title,
@@ -58,56 +57,44 @@ func toTrackJSON(base string, track library.Track) trackJSON {
 		Format:       track.Codec,
 		AudioQuality: "HIGH",
 	}
-	if plex.Lossless(track.Codec) {
+	if media.Lossless(track.Codec) {
 		out.AudioQuality = "LOSSLESS"
 	}
-	if track.Thumb != "" {
+	if track.ArtRef != "" {
 		out.ArtworkURL = base + "/art/" + track.ID
 	}
 	return out
 }
 
-func toStreamJSON(base string, item plex.Track) (streamJSON, bool) {
-	media, part, ok := item.FirstPart()
-	if !ok {
-		return streamJSON{}, false
-	}
-	container := media.Container
-	if container == "" {
-		container = part.Container
-	}
-	format := plex.AudioFormat(media.AudioCodec, container)
-	stream, _ := part.AudioStream()
-	kbps := media.Bitrate
-	if kbps == 0 {
-		kbps = stream.Bitrate
-	}
+// Bitrate is sent in bits per second: BitChord reads any value above 3000 as
+// bits per second, and a hi-res FLAC in kbps would cross that line.
+func toStreamJSON(base string, track media.Track) streamJSON {
 	return streamJSON{
-		URL:        base + "/file/" + item.RatingKey,
-		Format:     format,
-		Quality:    quality(format, kbps, stream),
-		Codec:      format,
-		Container:  container,
+		URL:        base + "/file/" + track.ID,
+		Format:     track.Codec,
+		Quality:    quality(track),
+		Codec:      track.Codec,
+		Container:  track.Container,
 		Manifest:   "none",
-		SampleRate: stream.SamplingRate,
-		BitDepth:   stream.BitDepth,
-		Bitrate:    kbps * 1000,
-	}, true
+		SampleRate: track.SampleRate,
+		BitDepth:   track.BitDepth,
+		Bitrate:    track.BitrateKbps * 1000,
+	}
 }
 
-func quality(format string, kbps int, stream plex.Stream) string {
-	if !plex.Lossless(format) {
-		if kbps == 0 {
-			return format
+func quality(track media.Track) string {
+	if !media.Lossless(track.Codec) {
+		if track.BitrateKbps == 0 {
+			return track.Codec
 		}
-		return fmt.Sprintf("%dkbps", kbps)
+		return fmt.Sprintf("%dkbps", track.BitrateKbps)
 	}
 	out := "lossless"
-	if stream.BitDepth > 0 {
-		out += fmt.Sprintf(" %d-bit", stream.BitDepth)
+	if track.BitDepth > 0 {
+		out += fmt.Sprintf(" %d-bit", track.BitDepth)
 	}
-	if stream.SamplingRate > 0 {
-		out += " " + strconv.FormatFloat(float64(stream.SamplingRate)/1000, 'f', -1, 64) + "kHz"
+	if track.SampleRate > 0 {
+		out += " " + strconv.FormatFloat(float64(track.SampleRate)/1000, 'f', -1, 64) + "kHz"
 	}
 	return out
 }

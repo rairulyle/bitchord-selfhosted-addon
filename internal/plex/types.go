@@ -1,5 +1,11 @@
 package plex
 
+import (
+	"cmp"
+
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
+)
+
 type Section struct {
 	Key   string `json:"key"`
 	Type  string `json:"type"`
@@ -61,20 +67,27 @@ func (p Part) AudioStream() (Stream, bool) {
 	return Stream{}, false
 }
 
-func AudioFormat(codec, container string) string {
-	if codec == "pcm" && (container == "wav" || container == "aiff") {
-		return container
+func (t Track) convert() media.Track {
+	out := media.Track{
+		ID:          t.RatingKey,
+		Title:       t.Title,
+		Artist:      cmp.Or(t.OriginalTitle, t.GrandparentTitle),
+		AlbumArtist: t.GrandparentTitle,
+		Album:       t.ParentTitle,
+		DurationSec: (t.Duration + 500) / 1000,
+		ArtRef:      cmp.Or(t.Thumb, t.ParentThumb),
 	}
-	if codec == "" {
-		return container
+	m, part, ok := t.FirstPart()
+	if !ok {
+		return out
 	}
-	return codec
-}
-
-func Lossless(format string) bool {
-	switch format {
-	case "flac", "alac", "wav", "aiff":
-		return true
-	}
-	return false
+	container := cmp.Or(m.Container, part.Container)
+	stream, _ := part.AudioStream()
+	out.Codec = media.AudioFormat(m.AudioCodec, container)
+	out.Container = container
+	out.BitrateKbps = cmp.Or(m.Bitrate, stream.Bitrate)
+	out.SampleRate = stream.SamplingRate
+	out.BitDepth = stream.BitDepth
+	out.FileRef = part.Key
+	return out
 }

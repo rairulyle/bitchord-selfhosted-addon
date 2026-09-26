@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/fakes"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/library"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
-	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plextest"
 )
 
 const (
@@ -42,7 +42,7 @@ func (b *syncBuffer) String() string {
 }
 
 type harness struct {
-	fake    *plextest.Fake
+	fake    *fakes.Plex
 	server  *server
 	handler http.Handler
 	logs    *syncBuffer
@@ -54,11 +54,15 @@ func newHarness(t *testing.T) *harness {
 
 func newHarnessWith(t *testing.T, options plex.Options, load bool) *harness {
 	t.Helper()
-	fake := plextest.New(t)
-	options.BaseURL, options.Token = fake.URL, plextest.Token
-	client := plex.New(options)
+	fake := fakes.NewPlex(t)
+	options.BaseURL = fake.URL
+	if options.Token == "" {
+		options.Token = fakes.PlexToken
+	}
 	logs := &syncBuffer{}
 	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	options.Log = log
+	client := plex.New(options)
 	lib := library.NewLibrary(client, "Music", time.Hour, log)
 	if load {
 		if err := lib.Refresh(context.Background()); err != nil {
@@ -67,19 +71,23 @@ func newHarnessWith(t *testing.T, options plex.Options, load bool) *harness {
 	}
 	s := newServer(Options{
 		Secret: testSecret, PublicURL: testPublic, AddonName: "Home Plex", Version: "1.2.3",
-		Library: lib, Plex: client, Log: log,
+		Library: lib, Backend: client, Log: log,
 	})
 	return &harness{fake: fake, server: s, handler: s.handler(), logs: logs}
 }
 
-func (h *harness) do(method, path string, header http.Header) *httptest.ResponseRecorder {
+func do(handler http.Handler, method, path string, header http.Header) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, path, nil)
 	for key, values := range header {
 		req.Header[key] = values
 	}
 	rec := httptest.NewRecorder()
-	h.handler.ServeHTTP(rec, req)
+	handler.ServeHTTP(rec, req)
 	return rec
+}
+
+func (h *harness) do(method, path string, header http.Header) *httptest.ResponseRecorder {
+	return do(h.handler, method, path, header)
 }
 
 func (h *harness) get(path string) *httptest.ResponseRecorder {
@@ -96,7 +104,8 @@ func decode[T any](t *testing.T, rec *httptest.ResponseRecorder) T {
 }
 
 func TestManifest(t *testing.T) {
-	rec := newHarness(t).get("/" + testSecret + "/manifest.json")
+	h := newHarness(t)
+	rec := h.get("/" + testSecret + "/manifest.json")
 	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/json" {
 		t.Fatalf("status %d, type %q", rec.Code, rec.Header().Get("Content-Type"))
 	}
@@ -108,6 +117,10 @@ func TestManifest(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("manifest = %v", got)
+	}
+	h.server.AddonName = ""
+	if got := decode[map[string]any](t, h.get("/"+testSecret+"/manifest.json")); got["name"] != "Plex" {
+		t.Errorf("name without ADDON_NAME = %v, want the backend name", got["name"])
 	}
 }
 
@@ -130,8 +143,10 @@ func TestWrongSecretAndUnknownRoutesAnswerTheSameEmpty404(t *testing.T) {
 		"wrong method":          {http.MethodPost, "/" + testSecret + "/search"},
 		"the old healthz path":  {http.MethodGet, "/healthz"},
 		"health under secret":   {http.MethodGet, "/" + testSecret + "/health"},
-		"non numeric track id":  {http.MethodGet, "/" + testSecret + "/stream/abc"},
-		"overlong track id":     {http.MethodGet, "/" + testSecret + "/file/123456789012345678901"},
+		"track id with a slash": {http.MethodGet, "/" + testSecret + "/stream/1%2F2"},
+		"track id with a dot":   {http.MethodGet, "/" + testSecret + "/stream/1.2"},
+		"non hex track id":      {http.MethodGet, "/" + testSecret + "/stream/xyz"},
+		"overlong track id":     {http.MethodGet, "/" + testSecret + "/file/" + strings.Repeat("a", 37)},
 		"unknown track in plex": {http.MethodGet, "/" + testSecret + "/stream/999"},
 		"double slash secret":   {http.MethodGet, "//" + testSecret + "/manifest.json"},
 		"dot segment secret":    {http.MethodGet, "/./" + testSecret + "/manifest.json"},
@@ -256,7 +271,7 @@ func TestLogsRedactTheSecretAndNeverCarryTheToken(t *testing.T) {
 	h.get("//" + testSecret + "/manifest.json")
 	h.get("/./" + testSecret + "/search?q=closer")
 	logs := h.logs.String()
-	if strings.Contains(logs, testSecret) || strings.Contains(logs, plextest.Token) {
+	if strings.Contains(logs, testSecret) || strings.Contains(logs, fakes.PlexToken) {
 		t.Fatalf("logs leak a credential:\n%s", logs)
 	}
 	for _, want := range []string{`"path":"/***/search"`, `"path":"/***/stream/101"`, `"path":"/health"`, `"status":200`} {
@@ -299,12 +314,12 @@ func TestSearchesAreLoggedWithTheirOutcome(t *testing.T) {
 }
 
 func TestRequestLinesAreDebugOnly(t *testing.T) {
-	fake := plextest.New(t)
-	client := plex.New(plex.Options{BaseURL: fake.URL, Token: plextest.Token})
+	fake := fakes.NewPlex(t)
+	client := plex.New(plex.Options{BaseURL: fake.URL, Token: fakes.PlexToken})
 	logs := &syncBuffer{}
 	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	lib := library.NewLibrary(client, "Music", time.Hour, log)
-	handler := New(Options{Secret: testSecret, PublicURL: testPublic, AddonName: "Plex", Library: lib, Plex: client, Log: log})
+	handler := New(Options{Secret: testSecret, PublicURL: testPublic, AddonName: "Plex", Library: lib, Backend: client, Log: log})
 	req := httptest.NewRequest(http.MethodGet, "/"+testSecret+"/manifest.json", nil)
 	handler.ServeHTTP(httptest.NewRecorder(), req)
 	if strings.Contains(logs.String(), `"msg":"request"`) {

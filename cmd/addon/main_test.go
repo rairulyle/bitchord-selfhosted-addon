@@ -10,12 +10,70 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/config"
-	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plextest"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/fakes"
 )
+
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func plexConfig(fake *fakes.Plex) config.Config {
+	return config.Config{
+		Backend: config.Plex, ServerURL: fake.URL, ServerToken: fakes.PlexToken, Secret: "abcdefghijklmnop",
+		PublicURL: "https://music.example.com", RefreshInterval: time.Hour, Port: 0,
+	}
+}
+
+func jellyfinConfig(fake *fakes.Jellyfin) config.Config {
+	return config.Config{
+		Backend: config.Jellyfin, ServerURL: fake.URL, ServerToken: fakes.JellyfinToken, Secret: "abcdefghijklmnop",
+		PublicURL: "https://music.example.com", RefreshInterval: time.Hour, Port: 0,
+	}
+}
+
+// start runs serve in the background and returns the base URL once it listens.
+func start(ctx context.Context, t *testing.T, cfg config.Config, log *slog.Logger) (string, <-chan error) {
+	t.Helper()
+	addrs := make(chan net.Addr, 1)
+	done := make(chan error, 1)
+	go func() { done <- serve(ctx, cfg, log, func(addr net.Addr) { addrs <- addr }) }()
+	select {
+	case addr := <-addrs:
+		return "http://127.0.0.1:" + strconv.Itoa(addr.(*net.TCPAddr).Port), done
+	case err := <-done:
+		t.Fatalf("serve returned early: %v", err)
+		return "", done
+	}
+}
+
+func waitHealthy(t *testing.T, base string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for healthcheck(base+"/health") != 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("never became healthy")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
 
 func TestHealthcheckExitCodes(t *testing.T) {
 	status := http.StatusOK
@@ -39,7 +97,7 @@ func TestRunReportsEveryConfigurationProblem(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("exit code = %d", code)
 	}
-	for _, key := range []string{"PLEX_URL", "PLEX_TOKEN", "ADDON_SECRET", "PUBLIC_URL"} {
+	for _, key := range []string{"PLEX_URL", "PLEX_TOKEN", "JELLYFIN_URL", "JELLYFIN_API_KEY", "ADDON_SECRET", "PUBLIC_URL"} {
 		if !strings.Contains(stderr.String(), key) {
 			t.Errorf("stderr lacks %s: %s", key, stderr.String())
 		}
@@ -47,56 +105,60 @@ func TestRunReportsEveryConfigurationProblem(t *testing.T) {
 }
 
 func TestServeAnswersOverHTTPAndShutsDownOnCancel(t *testing.T) {
-	fake := plextest.New(t)
-	cfg := config.Config{
-		PlexURL: fake.URL, PlexToken: plextest.Token, Secret: "abcdefghijklmnop",
-		PublicURL: "https://music.example.com", AddonName: "Plex", RefreshInterval: time.Hour, Port: 0,
+	cases := map[string]struct {
+		cfg    config.Config
+		wantID string
+	}{
+		"plex":     {plexConfig(fakes.NewPlex(t)), `"id":"101"`},
+		"jellyfin": {jellyfinConfig(fakes.NewJellyfin(t)), `"id":"f101"`},
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	addrs := make(chan net.Addr, 1)
-	done := make(chan error, 1)
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	go func() { done <- serve(ctx, cfg, log, func(addr net.Addr) { addrs <- addr }) }()
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			logs := &syncBuffer{}
+			log := newLogger("text", slog.LevelInfo, logs).With("source", string(tc.cfg.Backend))
+			base, done := start(ctx, t, tc.cfg, log)
+			waitHealthy(t, base)
+			res, err := http.Get(base + "/abcdefghijklmnop/search?q=new+religion")
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, _ := io.ReadAll(res.Body)
+			res.Body.Close()
+			if res.StatusCode != http.StatusOK || !strings.Contains(string(body), tc.wantID) {
+				t.Fatalf("status %d, body %s", res.StatusCode, body)
+			}
+			manifest, err := http.Get(base + "/abcdefghijklmnop/manifest.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, _ = io.ReadAll(manifest.Body)
+			manifest.Body.Close()
+			if !strings.Contains(string(body), `"id":"app.bitchord-selfhosted-addon.`+name+`"`) {
+				t.Fatalf("manifest = %s", body)
+			}
 
-	var base string
-	select {
-	case addr := <-addrs:
-		base = "http://127.0.0.1:" + strconv.Itoa(addr.(*net.TCPAddr).Port)
-	case err := <-done:
-		t.Fatalf("serve returned early: %v", err)
-	}
-
-	deadline := time.Now().Add(5 * time.Second)
-	for healthcheck(base+"/health") != 0 {
-		if time.Now().After(deadline) {
-			t.Fatal("never became healthy")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	res, err := http.Get(base + "/abcdefghijklmnop/search?q=new+religion")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(res.Body)
-	res.Body.Close()
-	if res.StatusCode != http.StatusOK || !strings.Contains(string(body), `"id":"101"`) {
-		t.Fatalf("status %d, body %s", res.StatusCode, body)
-	}
-
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("serve: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("serve did not return after cancel")
+			cancel()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("serve: %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("serve did not return after cancel")
+			}
+			for _, want := range []string{"msg=listening", "msg=\"library indexed\"", "source=" + name} {
+				if !strings.Contains(logs.String(), want) {
+					t.Errorf("logs lack %s:\n%s", want, logs.String())
+				}
+			}
+		})
 	}
 }
 
 func TestServeStopsTheRefreshLoopBeforeShuttingDown(t *testing.T) {
-	fake := plextest.New(t)
+	fake := fakes.NewPlex(t)
 	sectionsBlocked := make(chan struct{})
 	refreshCancelledAt := make(chan time.Time, 1)
 	fake.Extra["/library/sections"] = func(w http.ResponseWriter, r *http.Request) {
@@ -115,24 +177,9 @@ func TestServeStopsTheRefreshLoopBeforeShuttingDown(t *testing.T) {
 		}
 	}
 
-	cfg := config.Config{
-		PlexURL: fake.URL, PlexToken: plextest.Token, Secret: "abcdefghijklmnop",
-		PublicURL: "https://music.example.com", AddonName: "Plex", RefreshInterval: time.Hour, Port: 0,
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	addrs := make(chan net.Addr, 1)
-	done := make(chan error, 1)
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	go func() { done <- serve(ctx, cfg, log, func(addr net.Addr) { addrs <- addr }) }()
-
-	var base string
-	select {
-	case addr := <-addrs:
-		base = "http://127.0.0.1:" + strconv.Itoa(addr.(*net.TCPAddr).Port)
-	case err := <-done:
-		t.Fatalf("serve returned early: %v", err)
-	}
+	base, done := start(ctx, t, plexConfig(fake), slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	streamDone := make(chan struct{})
 	go func() {
@@ -185,7 +232,7 @@ func TestServeStopsTheRefreshLoopBeforeShuttingDown(t *testing.T) {
 }
 
 func TestServeStopsTheRefreshLoopWhenThePortIsTaken(t *testing.T) {
-	fake := plextest.New(t)
+	fake := fakes.NewPlex(t)
 	taken, err := net.Listen("tcp", ":0")
 	if err != nil {
 		t.Fatal(err)
@@ -193,10 +240,8 @@ func TestServeStopsTheRefreshLoopWhenThePortIsTaken(t *testing.T) {
 	defer taken.Close()
 	port := taken.Addr().(*net.TCPAddr).Port
 
-	cfg := config.Config{
-		PlexURL: fake.URL, PlexToken: plextest.Token, Secret: "abcdefghijklmnop",
-		PublicURL: "https://music.example.com", AddonName: "Plex", RefreshInterval: time.Hour, Port: port,
-	}
+	cfg := plexConfig(fake)
+	cfg.Port = port
 	done := make(chan error, 1)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	go func() { done <- serve(context.Background(), cfg, log, func(net.Addr) {}) }()
@@ -208,6 +253,19 @@ func TestServeStopsTheRefreshLoopWhenThePortIsTaken(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("serve did not return")
+	}
+}
+
+func TestNewBackendPicksByKind(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	for kind, name := range map[config.Backend]string{config.Plex: "Plex", config.Jellyfin: "Jellyfin"} {
+		backend, err := newBackend(config.Config{Backend: kind}, log)
+		if err != nil || backend.Name() != name {
+			t.Errorf("%s: %v, %v", kind, backend, err)
+		}
+	}
+	if _, err := newBackend(config.Config{Backend: "emby"}, log); err == nil || !strings.Contains(err.Error(), "emby") {
+		t.Errorf("unknown kind: %v", err)
 	}
 }
 

@@ -6,6 +6,19 @@ Entries are written **one line per paragraph and bullet** (no hard-wrapping) so 
 
 ## [Unreleased]
 
+### Added
+
+- Jellyfin support. Set `JELLYFIN_URL` and `JELLYFIN_API_KEY` instead of the Plex variables, and optionally `JELLYFIN_LIBRARY`, to serve a Jellyfin music library the same way. Each container talks to one server. The source shows up in the client as "Jellyfin", the manifest id is `app.bitchord-selfhosted-addon.jellyfin`, and the API key travels only in the `Authorization` header. Jellyfin 10.9 or newer is required.
+- `source=plex` or `source=jellyfin` on every log line.
+
+### Changed
+
+- `ADDON_NAME` now defaults to the server kind, `Plex` or `Jellyfin`, instead of always `Plex`.
+- Starting with neither server configured, or with both, now prints one message naming the variables to set instead of listing every Plex variable as missing.
+- A rejected token or key is logged as `upstream request failed` with an error naming the variable to check, such as `plex rejected PLEX_TOKEN`, instead of a message of its own.
+- The stream descriptor route answers from the in-memory index and asks the server only for a track the index does not know, which saves one upstream request per play.
+- The `starting` log line reports the server host under `server` and the filter under `library`, for both server kinds.
+
 ## [0.3.1] - 2026-09-21
 
 ### Fixed

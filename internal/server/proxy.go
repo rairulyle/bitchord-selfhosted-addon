@@ -1,12 +1,12 @@
 package server
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"time"
 
-	"github.com/rairulyle/bitchord-selfhosted-addon/internal/library"
-	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
 )
 
 var (
@@ -27,30 +27,30 @@ func (s *server) file(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	started := time.Now()
-	sent := s.pipe(w, r, r.Method, track.partKey, header, "", track.partKey+"?download=1")
+	sent := s.pipe(w, r, func() (*http.Response, error) {
+		return s.Backend.OpenFile(r.Context(), track, r.Method, header)
+	}, "")
 	switch {
 	case sent.ended == "":
 	case r.Method == http.MethodHead:
-		s.Log.Debug("probe", "id", r.PathValue("id"), "track", track.label, "status", sent.status)
+		s.Log.Debug("probe", "id", track.ID, "track", label(track), "status", sent.status)
 	default:
-		s.Log.Info("play", "id", r.PathValue("id"), "track", track.label, "range", r.Header.Get("Range"),
+		s.Log.Info("play", "id", track.ID, "track", label(track), "range", r.Header.Get("Range"),
 			"status", sent.status, "bytes", sent.bytes, "ended", sent.ended, "took", time.Since(started).String())
 	}
 }
 
 func (s *server) art(w http.ResponseWriter, r *http.Request) {
 	track, status := s.resolve(r)
-	if status == http.StatusOK && track.thumb == "" {
+	if status == http.StatusOK && track.ArtRef == "" {
 		status = http.StatusNotFound
 	}
 	if status != http.StatusOK {
 		w.WriteHeader(status)
 		return
 	}
-	s.pipe(w, r, http.MethodGet, plex.ArtPath(track.thumb), nil, "public, max-age=86400", "")
+	s.pipe(w, r, func() (*http.Response, error) { return s.Backend.OpenArt(r.Context(), track) }, "public, max-age=86400")
 }
-
-type resolved struct{ partKey, thumb, label string }
 
 type sent struct {
 	status int
@@ -71,59 +71,22 @@ func (c *clientWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func (s *server) resolve(r *http.Request) (resolved, int) {
-	id, ok := trackID(r)
-	if !ok {
-		return resolved{}, http.StatusNotFound
-	}
-	if track, found := s.Library.Get(id); found {
-		return resolved{track.PartKey, track.Thumb, label(track)}, http.StatusOK
-	}
-	item, status := s.lookup(r, id)
-	if status != http.StatusOK {
-		return resolved{}, status
-	}
-	_, part, ok := item.FirstPart()
-	if !ok {
-		return resolved{}, http.StatusNotFound
-	}
-	thumb := item.Thumb
-	if thumb == "" {
-		thumb = item.ParentThumb
-	}
-	name := item.Title
-	if track, ok := library.FromPlex(item); ok {
-		name = label(track)
-	}
-	return resolved{part.Key, thumb, name}, http.StatusOK
-}
-
-// Plex answers 500 to a direct-play request for a track it never finished
-// analysing (no media bitrate), yet serves the same part as a download.
-func (s *server) pipe(w http.ResponseWriter, r *http.Request, method, path string, header http.Header, cacheControl, retryPath string) sent {
-	upstream, err := s.Plex.Open(r.Context(), method, path, header)
-	if err == nil && upstream.StatusCode == http.StatusInternalServerError && retryPath != "" {
-		upstream.Body.Close()
-		s.Log.Debug("plex refused direct play, retrying as a download", "id", r.PathValue("id"))
-		upstream, err = s.Plex.Open(r.Context(), method, retryPath, header)
-	}
-	if err != nil {
-		s.logPlexFailure(r, err)
+func (s *server) pipe(w http.ResponseWriter, r *http.Request, open func() (*http.Response, error), cacheControl string) sent {
+	upstream, err := open()
+	switch {
+	case errors.Is(err, media.ErrNotFound):
+		w.WriteHeader(http.StatusNotFound)
+		return sent{}
+	case err != nil:
+		s.logFailure(r, err)
 		w.WriteHeader(http.StatusBadGateway)
 		return sent{}
 	}
 	defer upstream.Body.Close()
 	switch upstream.StatusCode {
 	case http.StatusOK, http.StatusPartialContent, http.StatusRequestedRangeNotSatisfiable:
-	case http.StatusNotFound:
-		w.WriteHeader(http.StatusNotFound)
-		return sent{}
-	case http.StatusUnauthorized:
-		s.logPlexFailure(r, plex.ErrUnauthorized)
-		w.WriteHeader(http.StatusBadGateway)
-		return sent{}
 	default:
-		s.Log.Error("plex answered the byte request badly", "status", upstream.StatusCode)
+		s.Log.Error("upstream answered the byte request badly", "status", upstream.StatusCode)
 		w.WriteHeader(http.StatusBadGateway)
 		return sent{}
 	}
