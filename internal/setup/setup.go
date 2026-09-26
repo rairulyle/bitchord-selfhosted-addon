@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/registry"
@@ -57,6 +58,7 @@ type app struct {
 	signins   *limiter
 	refs      *tokenRefs
 	verifySem chan struct{}
+	applyMu   sync.Mutex
 }
 
 func New(o Options) http.Handler {

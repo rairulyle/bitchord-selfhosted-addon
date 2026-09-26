@@ -43,6 +43,14 @@ func readJSON(r *http.Request, into any) error {
 	return json.NewDecoder(r.Body).Decode(into)
 }
 
+// apply takes the snapshot inside the lock, so a write that saved earlier can
+// never apply after one that saved later.
+func (a *app) apply() {
+	a.applyMu.Lock()
+	defer a.applyMu.Unlock()
+	a.Registry.Apply(a.Store.Snapshot())
+}
+
 func redirectNotice(w http.ResponseWriter, r *http.Request, notice string) {
 	http.Redirect(w, r, "/setup?notice="+url.QueryEscape(notice), http.StatusSeeOther)
 }
@@ -221,7 +229,7 @@ func (a *app) createServer(w http.ResponseWriter, r *http.Request) {
 		a.renderServerError(w, r, view, form, err)
 		return
 	}
-	a.Registry.Apply(a.Store.Snapshot())
+	a.apply()
 	a.Log.Info("server added", "server", added.Slug, "source", string(added.Kind), "host", hostOf(added.URL), "auth", string(added.Auth))
 	redirectNotice(w, r, registry.DisplayName(kindName(added.Kind), added.Label)+" added. Copy its URL into BitChord.")
 }
@@ -250,7 +258,7 @@ func (a *app) updateServer(w http.ResponseWriter, r *http.Request) {
 		a.renderServerError(w, r, view, form, err)
 		return
 	}
-	a.Registry.Apply(a.Store.Snapshot())
+	a.apply()
 	a.Log.Info("server updated", "server", slug, "source", string(server.Kind), "host", hostOf(server.URL), "auth", string(server.Auth))
 	redirectNotice(w, r, registry.DisplayName(kindName(server.Kind), server.Label)+" saved.")
 }
@@ -315,7 +323,7 @@ func (a *app) deleteServer(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, err)
 		return
 	}
-	a.Registry.Apply(a.Store.Snapshot())
+	a.apply()
 	a.Log.Info("server removed", "server", slug)
 	redirectNotice(w, r, slug+" removed. Its URL no longer answers.")
 }
@@ -331,7 +339,7 @@ func (a *app) setServerEnabled(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, err)
 		return
 	}
-	a.Registry.Apply(a.Store.Snapshot())
+	a.apply()
 	a.Log.Info("server enabled changed", "server", slug, "enabled", enabled)
 	redirectNotice(w, r, slug+" "+map[bool]string{true: "enabled", false: "disabled"}[enabled]+".")
 }

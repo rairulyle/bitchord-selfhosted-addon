@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -590,5 +591,75 @@ func TestStaticAndUnknownSetupPaths(t *testing.T) {
 	}
 	if rec := a.get("/setup"); rec.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal("pages must not be cached")
+	}
+}
+
+// applyRecorder records every snapshot handed to Apply. Its first Apply holds
+// until the store has moved past the snapshot it was given, so a second write
+// lands while the first is still applying.
+type applyRecorder struct {
+	Runtime
+	store   *store.Store
+	entered chan struct{}
+	mu      sync.Mutex
+	applied []store.Snapshot
+}
+
+func (r *applyRecorder) Apply(snapshot store.Snapshot) {
+	r.mu.Lock()
+	entered := r.entered
+	r.entered = nil
+	r.mu.Unlock()
+	if entered != nil {
+		close(entered)
+		deadline := time.Now().Add(2 * time.Second)
+		for reflect.DeepEqual(r.store.Snapshot(), snapshot) && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.applied = append(r.applied, snapshot)
+}
+
+func (r *applyRecorder) last() store.Snapshot {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.applied[len(r.applied)-1]
+}
+
+func TestConcurrentWritesApplyTheLatestSnapshotLast(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	for range 2 {
+		if _, err := a.store.AddServer(store.Server{Kind: store.Plex, URL: "http://plex:32400", Token: "t", Auth: store.AuthToken, Enabled: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recorder := &applyRecorder{Runtime: a.reg, store: a.store, entered: make(chan struct{})}
+	a.handler = New(Options{Store: a.store, Registry: recorder, Now: func() time.Time { return a.now }})
+	disable := func(slug string) *http.Request {
+		body := url.Values{"enabled": {"false"}, "csrf": {a.csrf()}}.Encode()
+		req := httptest.NewRequest(http.MethodPost, "/setup/servers/"+slug+"/enabled", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(&http.Cookie{Name: cookieName, Value: a.cookie})
+		return req
+	}
+	first, second := disable("plex-1"), disable("plex-2")
+	entered := recorder.entered
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		a.handler.ServeHTTP(httptest.NewRecorder(), first)
+	}()
+	<-entered
+	go func() {
+		defer wg.Done()
+		a.handler.ServeHTTP(httptest.NewRecorder(), second)
+	}()
+	wg.Wait()
+	if got, want := recorder.last(), a.store.Snapshot(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("last applied servers = %+v, store servers = %+v", got.Servers, want.Servers)
 	}
 }
