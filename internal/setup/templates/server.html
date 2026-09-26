@@ -23,12 +23,12 @@
   <fieldset id="credentials">
     <legend>Credentials</legend>
     <div class="tabs" role="tablist">
-      <button type="button" class="tab active" data-tab="signin">Sign in</button>
-      <button type="button" class="tab" data-tab="token">Paste a token</button>
+      <button type="button" class="tab active" data-tab="signin" role="tab" aria-selected="true" aria-controls="panel-signin">Sign in</button>
+      <button type="button" class="tab" data-tab="token" role="tab" aria-selected="false" aria-controls="panel-token">Paste a token</button>
     </div>
 
-    <div class="panel" data-panel="signin">
-      {{if .Account}}<p class="ok" id="signed-in">Signed in as {{.Account}}. Save keeps this sign-in{{if eq .Kind "jellyfin"}} unless the URL changes{{end}}.</p>{{else}}<p class="ok" id="signed-in" hidden></p>{{end}}
+    <div class="panel" data-panel="signin" id="panel-signin" role="tabpanel">
+      {{if .Account}}<p class="ok" id="signed-in" role="status">Signed in as {{.Account}}. Save keeps this sign-in{{if eq .Kind "jellyfin"}} unless the URL changes{{end}}.</p>{{else}}<p class="ok" id="signed-in" role="status" hidden></p>{{end}}
       <div data-kind-panel="plex" {{if ne .Kind "plex"}}hidden{{end}}>
         <button type="button" id="plex-signin" class="secondary">Sign in with Plex</button>
         <p class="hint">Opens app.plex.tv in a new tab. The addon container must be able to reach plex.tv.</p>
@@ -42,7 +42,7 @@
       </div>
     </div>
 
-    <div class="panel" data-panel="token" hidden>
+    <div class="panel" data-panel="token" id="panel-token" role="tabpanel" hidden>
       <label><span id="token-label">Plex token</span> <input type="password" name="token" id="token" autocomplete="off" placeholder="{{if .Editing}}leave empty to keep the stored token{{end}}"></label>
       <p class="hint" data-kind-panel="plex" {{if ne .Kind "plex"}}hidden{{end}}>In Plex Web, open any item, choose Get Info, then View XML. The address ends with <code>X-Plex-Token=</code> and the token.</p>
       <p class="hint" data-kind-panel="jellyfin" {{if ne .Kind "jellyfin"}}hidden{{end}}>In Jellyfin, open Dashboard, then API Keys under Advanced, and add a key. An API key sees every library.</p>
@@ -51,7 +51,7 @@
 
   <div class="row">
     <button type="button" id="test" class="secondary">Test connection</button>
-    <span id="test-result" class="hint"></span>
+    <span id="test-result" class="hint" role="status"></span>
   </div>
 
   <label>Library
@@ -76,6 +76,7 @@
   var csrf = form.dataset.csrf;
   var names = { plex: 'Plex', jellyfin: 'Jellyfin' };
   var tokenLabels = { plex: 'Plex token', jellyfin: 'Jellyfin API key' };
+  var urlPlaceholders = { plex: 'http://plex:32400', jellyfin: 'http://jellyfin:8096' };
   var result = document.getElementById('test-result');
 
   function kind() {
@@ -86,6 +87,7 @@
     var k = kind();
     document.getElementById('kind-prefix').textContent = names[k] + ' -';
     document.getElementById('token-label').textContent = tokenLabels[k];
+    document.getElementById('url').placeholder = urlPlaceholders[k];
     form.querySelectorAll('[data-kind-panel]').forEach(function (el) { el.hidden = el.dataset.kindPanel !== k; });
   }
   form.querySelectorAll('input[name=kind]').forEach(function (radio) { radio.addEventListener('change', showKind); });
@@ -93,7 +95,10 @@
 
   form.querySelectorAll('.tab').forEach(function (tab) {
     tab.addEventListener('click', function () {
-      form.querySelectorAll('.tab').forEach(function (t) { t.classList.toggle('active', t === tab); });
+      form.querySelectorAll('.tab').forEach(function (t) {
+        t.classList.toggle('active', t === tab);
+        t.setAttribute('aria-selected', t === tab ? 'true' : 'false');
+      });
       form.querySelectorAll('.panel').forEach(function (p) { p.hidden = p.dataset.panel !== tab.dataset.tab; });
     });
   });

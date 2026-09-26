@@ -91,6 +91,10 @@ input[type=text]:focus, input[type=url]:focus, input[type=password]:focus, selec
 }
 .row > input { flex: 1; width: auto; }
 
+option { background: var(--bg); color: var(--strong); }
+@media (prefers-color-scheme: dark) {
+  select { color-scheme: dark; }
+}
 select {
   appearance: none;
   -webkit-appearance: none;
@@ -178,7 +182,8 @@ code.url, #secret {
 
 dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 24px; margin: 14px 0 0; }
 dt { color: var(--muted); font-size: 13px; }
-dd { margin: 0; font-size: 13px; }
+dd { margin: 0; font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
+code.url { display: inline-block; max-width: 100%; }
 
 .hint { color: var(--muted); font-size: 13px; font-weight: 400; margin: 0; }
 
@@ -191,6 +196,7 @@ dd { margin: 0; font-size: 13px; }
   border: 1px solid var(--line);
   border-radius: 8px;
   font-size: 13px;
+  transition: opacity 0.4s ease;
 }
 .notice::before, p.error::before {
   flex: none;

@@ -17,7 +17,7 @@
   <div class="row">
     <code id="secret" data-secret="{{.Secret}}">••••••••••••••••••••</code>
     <button type="button" class="link" id="secret-toggle">Show</button>
-    <button type="button" class="copy" data-copy="{{.Secret}}">Copy</button>
+    <button type="button" class="copy" data-copy="{{.Secret}}" aria-label="Copy the secret">Copy</button>
     <form method="post" action="/setup/secret/regenerate" onsubmit="return confirm('Regenerate the secret? Every server URL changes and each client must be updated.')">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       <button class="danger">Regenerate</button>
@@ -40,14 +40,14 @@
     <dt>Library</dt><dd>{{.Library}}</dd>
     <dt>Status</dt>
     <dd>
-      {{if not .Enabled}}disabled
-      {{else if not .Running}}not running
-      {{else if .Status.LastError}}<span class="warn">error: {{.Status.LastError}}</span>{{if .Status.Ready}} (serving the last good index of {{.Status.Tracks}} tracks){{end}}
+      {{if not .Enabled}}Disabled
+      {{else if not .Running}}Not running
+      {{else if .Status.LastError}}<span class="warn">Error: {{.Status.LastError}}</span>{{if .Status.Ready}} (serving the last good index of {{.Status.Tracks}} tracks){{end}}
       {{else if .Status.Ready}}{{.Status.Tracks}} tracks, refreshed {{.Checked}}
-      {{else}}loading the index{{end}}
+      {{else}}Building the index{{end}}
     </dd>
     <dt>BitChord URL</dt>
-    <dd>{{if .URL}}<code class="url">{{.URL}}</code> <button type="button" class="copy" data-copy="{{.URL}}">Copy</button>{{else}}set the public URL first{{end}}</dd>
+    <dd>{{if .URL}}<code class="url">{{.MaskedURL}}</code> <button type="button" class="copy" data-copy="{{.URL}}" aria-label="Copy the BitChord URL for {{.Name}}">Copy</button>{{else}}Set the public URL first{{end}}</dd>
   </dl>
   <div class="row actions">
     <a class="button secondary" href="/setup/servers/{{.Slug}}/edit">Edit</a>

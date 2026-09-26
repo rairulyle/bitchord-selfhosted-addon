@@ -18,10 +18,25 @@
   {{end}}
 </header>
 <main>
-  {{if .Notice}}<p class="notice">{{.Notice}}</p>{{end}}
+  {{if .Notice}}<p class="notice" role="status">{{.Notice}}</p>{{end}}
   {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
   {{template "content" .}}
 </main>
 <footer>version {{.Version}}</footer>
+<script>
+(function () {
+  var notice = document.querySelector('p.notice');
+  if (!notice) return;
+  if (location.search.indexOf('notice=') !== -1) {
+    var url = new URL(location.href);
+    url.searchParams.delete('notice');
+    history.replaceState(null, '', url);
+  }
+  setTimeout(function () {
+    notice.style.opacity = '0';
+    setTimeout(function () { notice.remove(); }, 400);
+  }, 5000);
+})();
+</script>
 </body>
 </html>

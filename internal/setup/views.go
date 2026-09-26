@@ -54,19 +54,20 @@ func kindName(kind store.Kind) string {
 }
 
 type serverCard struct {
-	Slug     string
-	Name     string
-	Kind     string
-	Host     string
-	Library  string
-	URL      string
-	Account  string
-	Auth     store.Auth
-	Enabled  bool
-	Running  bool
-	Status   registry.Status
-	Checked  string
-	Problems string
+	Slug      string
+	Name      string
+	Kind      string
+	Host      string
+	Library   string
+	URL       string
+	MaskedURL string
+	Account   string
+	Auth      store.Auth
+	Enabled   bool
+	Running   bool
+	Status    registry.Status
+	Checked   string
+	Problems  string
 }
 
 type overviewView struct {
@@ -85,10 +86,11 @@ func (a *app) overviewView(r *http.Request, snapshot store.Snapshot) overviewVie
 			Host: hostOf(server.URL), Library: cmp.Or(server.LibraryName, server.Library), Account: server.Account, Auth: server.Auth, Enabled: server.Enabled,
 		}
 		if card.Library == "" {
-			card.Library = "all music"
+			card.Library = "All music"
 		}
 		if snapshot.PublicURL != "" {
 			card.URL = snapshot.PublicURL + "/" + server.Slug + "/" + snapshot.Secret
+			card.MaskedURL = snapshot.PublicURL + "/" + server.Slug + "/••••••••••"
 		}
 		if status, ok := a.Registry.Status(server.Slug); ok {
 			card.Running, card.Status, card.Checked = true, status, since(status.Refreshed, now)
