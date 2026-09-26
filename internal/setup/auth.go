@@ -207,8 +207,7 @@ func (t *tokenRefs) put(kind store.Kind, token, account, deviceID string) string
 	return ref
 }
 
-// peek reads a reference without consuming it, for a connection test or a
-// save that has not succeeded yet.
+// peek reads a reference without consuming it, for a connection test before save.
 func (t *tokenRefs) peek(ref string) (pendingToken, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -217,6 +216,14 @@ func (t *tokenRefs) peek(ref string) (pendingToken, bool) {
 		return pendingToken{}, false
 	}
 	return pending, true
+}
+
+// restore puts back a taken reference with its original expiry, for a save
+// that failed after taking it.
+func (t *tokenRefs) restore(ref string, pending pendingToken) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.refs[ref] = pending
 }
 
 // take returns a reference's credential once; a second take, or one after

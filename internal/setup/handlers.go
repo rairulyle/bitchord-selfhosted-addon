@@ -222,17 +222,17 @@ func readSubmitted(r *http.Request) submitted {
 func (a *app) createServer(w http.ResponseWriter, r *http.Request) {
 	form := readSubmitted(r)
 	view := a.formView(r, "Add a server")
-	server, err := a.resolveServer(r.Context(), form, store.Server{Kind: form.kind})
+	server, giveBack, err := a.resolveServer(r.Context(), form, store.Server{Kind: form.kind})
 	if err != nil {
 		a.renderServerError(w, r, view, form, err)
 		return
 	}
 	added, err := a.Store.AddServer(server)
 	if err != nil {
+		giveBack()
 		a.renderServerError(w, r, view, form, err)
 		return
 	}
-	a.refs.take(form.tokenRef)
 	a.apply()
 	a.Log.Info("server added", "server", added.Slug, "source", string(added.Kind), "host", hostOf(added.URL), "auth", string(added.Auth))
 	redirectNotice(w, r, registry.DisplayName(kindName(added.Kind), added.Label)+" added. Copy its URL into BitChord.")
@@ -252,7 +252,7 @@ func (a *app) updateServer(w http.ResponseWriter, r *http.Request) {
 	if form.library == existing.Library {
 		view.LibraryName = existing.LibraryName
 	}
-	server, err := a.resolveServer(r.Context(), form, existing)
+	server, giveBack, err := a.resolveServer(r.Context(), form, existing)
 	if err != nil {
 		a.renderServerError(w, r, view, form, err)
 		return
@@ -262,10 +262,10 @@ func (a *app) updateServer(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	if err != nil {
+		giveBack()
 		a.renderServerError(w, r, view, form, err)
 		return
 	}
-	a.refs.take(form.tokenRef)
 	a.apply()
 	a.Log.Info("server updated", "server", slug, "source", string(server.Kind), "host", hostOf(server.URL), "auth", string(server.Auth))
 	a.signOutReplaced(r.Context(), existing, server)
@@ -274,36 +274,47 @@ func (a *app) updateServer(w http.ResponseWriter, r *http.Request) {
 
 // resolveServer turns a submitted form into a validated server: it settles
 // which credential applies, probes the server with it, and checks the
-// library against what the server listed.
-func (a *app) resolveServer(ctx context.Context, form submitted, existing store.Server) (store.Server, error) {
-	server := existing
+// library against what the server listed. A sign-in reference is taken at
+// once, so two saves cannot both use it, and given back if anything fails;
+// giveBack does the same for a failure after it returns.
+func (a *app) resolveServer(ctx context.Context, form submitted, existing store.Server) (server store.Server, giveBack func(), err error) {
+	giveBack = func() {}
+	defer func() {
+		if err != nil {
+			giveBack()
+		}
+	}()
+	server = existing
 	server.Label, server.URL, server.Enabled = form.label, form.url, form.enabled
-	if err := store.ValidateServerURL(server.URL); err != nil {
-		return server, err
+	if err = store.ValidateServerURL(server.URL); err != nil {
+		return server, giveBack, err
 	}
 	if utf8.RuneCountInString(server.Label) > store.LabelMaxLength {
-		return server, fmt.Errorf("the label must be at most %d characters", store.LabelMaxLength)
+		return server, giveBack, fmt.Errorf("the label must be at most %d characters", store.LabelMaxLength)
 	}
 	switch {
 	case form.tokenRef != "":
-		pending, ok := a.refs.peek(form.tokenRef)
+		pending, ok := a.refs.take(form.tokenRef)
+		if ok {
+			giveBack = func() { a.refs.restore(form.tokenRef, pending) }
+		}
 		if !ok || pending.kind != server.Kind {
-			return server, errors.New("the sign-in has expired, sign in again")
+			return server, giveBack, errors.New("the sign-in has expired, sign in again")
 		}
 		server.Token, server.Account, server.DeviceID = pending.token, pending.account, pending.deviceID
 		server.Auth = map[store.Kind]store.Auth{store.Plex: store.AuthPlexSignIn, store.Jellyfin: store.AuthJellyfinSignIn}[server.Kind]
 	case form.token != "":
 		server.Token, server.Account, server.DeviceID, server.Auth = form.token, "", "", store.AuthToken
 	case existing.Token == "":
-		return server, errors.New("sign in or paste a token")
+		return server, giveBack, errors.New("sign in or paste a token")
 	case existing.Auth == store.AuthJellyfinSignIn && existing.URL != server.URL:
-		return server, errors.New("the Jellyfin sign-in belongs to the old address, sign in again")
+		return server, giveBack, errors.New("the Jellyfin sign-in belongs to the old address, sign in again")
 	}
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	probe, err := a.Registry.Probe(ctx, server)
 	if err != nil {
-		return server, describe(err)
+		return server, giveBack, describe(err)
 	}
 	server.Library, server.LibraryName = "", ""
 	if form.library != "" {
@@ -314,10 +325,10 @@ func (a *app) resolveServer(ctx context.Context, form submitted, existing store.
 			}
 		}
 		if !match {
-			return server, errors.New("the server has no music library with that name")
+			return server, giveBack, errors.New("the server has no music library with that name")
 		}
 	}
-	return server, nil
+	return server, giveBack, nil
 }
 
 func (a *app) renderServerError(w http.ResponseWriter, r *http.Request, view serverFormView, form submitted, err error) {

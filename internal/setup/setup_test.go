@@ -696,6 +696,30 @@ func TestAFailedSaveKeepsTheSignIn(t *testing.T) {
 	}
 }
 
+func TestASignInSavesOnlyOnceUnderConcurrentSaves(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	fake := fakes.NewJellyfin(t)
+	ref := a.jellyfinSignIn(fake)
+	start := make(chan struct{})
+	codes := make([]int, 2)
+	var wg sync.WaitGroup
+	for i := range codes {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			codes[i] = a.form("/setup/servers", url.Values{"kind": {"jellyfin"}, "url": {fake.URL}, "token_ref": {ref}, "enabled": {"1"}}).Code
+		}()
+	}
+	close(start)
+	wg.Wait()
+	slices.Sort(codes)
+	if codes[0] != http.StatusSeeOther || codes[1] != http.StatusBadRequest || len(a.store.Snapshot().Servers) != 1 {
+		t.Fatalf("codes = %v, servers = %d", codes, len(a.store.Snapshot().Servers))
+	}
+}
+
 func TestJellyfinSignInLimiterCountsOnlyRejectedCredentials(t *testing.T) {
 	a := newTestApp(t)
 	a.signIn()
