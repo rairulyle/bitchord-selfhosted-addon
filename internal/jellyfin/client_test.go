@@ -152,7 +152,7 @@ func TestTrackFetchesOneItemAsAFilteredList(t *testing.T) {
 		t.Fatalf("track = %+v", track)
 	}
 	requests := fake.Requests()
-	if last := requests[len(requests)-1]; last.Path != "/Items" || !strings.Contains(last.Query, "Ids=f101") {
+	if last := requests[len(requests)-1]; last.Path != "/Items" || !strings.Contains(last.Query, "Ids=f101") || !strings.Contains(last.Query, "IncludeItemTypes=Audio") {
 		t.Errorf("single item fetched through %s?%s", last.Path, last.Query)
 	}
 	dashed, err := c.Track(context.Background(), jellyfintest.DashedID)
