@@ -2,9 +2,13 @@ services:
   bitchord-selfhosted-addon:
     image: ghcr.io/rairulyle/bitchord-selfhosted-addon:latest
     restart: unless-stopped
-    env_file: .env
+    volumes:
+      - data:/data
     networks:
       - proxy
+
+volumes:
+  data:
 
 networks:
   proxy:

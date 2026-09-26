@@ -1,38 +1,22 @@
+// Package config reads the process settings. Everything about servers, the
+// public URL and the secret lives in the store and is set on the setup page.
 package config
 
 import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
 
-type Backend string
-
-const (
-	Plex     Backend = "plex"
-	Jellyfin Backend = "jellyfin"
-)
-
 type Config struct {
-	Backend         Backend
-	ServerURL       string
-	ServerToken     string
-	Library         string
-	Secret          string
-	PublicURL       string
-	AddonName       string
 	RefreshInterval time.Duration
 	Port            int
 	LogLevel        slog.Level
 	LogFormat       string
 }
-
-var secretPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{16,}$`)
 
 var logLevels = map[string]slog.Level{
 	"debug": slog.LevelDebug,
@@ -41,12 +25,13 @@ var logLevels = map[string]slog.Level{
 	"error": slog.LevelError,
 }
 
-type variables struct{ url, token, library string }
-
-var (
-	plexVars     = variables{"PLEX_URL", "PLEX_TOKEN", "PLEX_SECTION"}
-	jellyfinVars = variables{"JELLYFIN_URL", "JELLYFIN_API_KEY", "JELLYFIN_LIBRARY"}
-)
+// RemovedVariables were read by 0.4 and earlier. They are ignored now, and
+// Removed names the ones still set so main can say where they went.
+var RemovedVariables = []string{
+	"ADDON_SECRET", "PUBLIC_URL", "ADDON_NAME",
+	"PLEX_URL", "PLEX_TOKEN", "PLEX_SECTION",
+	"JELLYFIN_URL", "JELLYFIN_API_KEY", "JELLYFIN_LIBRARY",
+}
 
 func Load(getenv func(string) string) (Config, error) {
 	var problems []error
@@ -59,55 +44,8 @@ func Load(getenv func(string) string) (Config, error) {
 		}
 		return fallback
 	}
-	required := func(key string) string {
-		value := get(key, "")
-		if value == "" {
-			fail("%s is required", key)
-		}
-		return value
-	}
-	anySet := func(v variables) bool {
-		return get(v.url, "") != "" || get(v.token, "") != "" || get(v.library, "") != ""
-	}
 
-	cfg := Config{
-		Secret:    required("ADDON_SECRET"),
-		PublicURL: strings.TrimRight(required("PUBLIC_URL"), "/"),
-		AddonName: get("ADDON_NAME", ""),
-	}
-	choose := func(backend Backend, v variables) {
-		cfg.Backend = backend
-		cfg.ServerURL = strings.TrimRight(required(v.url), "/")
-		cfg.ServerToken = required(v.token)
-		cfg.Library = get(v.library, "")
-		if cfg.ServerURL != "" && !isHTTP(cfg.ServerURL) {
-			fail("%s must be an http or https URL", v.url)
-		}
-	}
-	switch plexSet, jellyfinSet := anySet(plexVars), anySet(jellyfinVars); {
-	case plexSet && jellyfinSet:
-		fail("configure either Plex or Jellyfin, not both")
-	case jellyfinSet:
-		choose(Jellyfin, jellyfinVars)
-	case plexSet:
-		choose(Plex, plexVars)
-	default:
-		fail("set PLEX_URL and PLEX_TOKEN, or JELLYFIN_URL and JELLYFIN_API_KEY")
-	}
-
-	if cfg.PublicURL != "" {
-		parsed, err := url.Parse(cfg.PublicURL)
-		switch {
-		case err != nil || parsed.Host == "":
-			fail("PUBLIC_URL must be a full URL such as https://music.example.com")
-		case parsed.Scheme != "https" && !(parsed.Scheme == "http" && parsed.Hostname() == "localhost"):
-			fail("PUBLIC_URL must start with https:// unless the host is localhost")
-		}
-	}
-	if cfg.Secret != "" && !secretPattern.MatchString(cfg.Secret) {
-		fail("ADDON_SECRET must be at least 16 characters of letters, digits, '-' or '_'")
-	}
-
+	var cfg Config
 	interval, err := time.ParseDuration(get("REFRESH_INTERVAL", "15m"))
 	if err != nil || interval <= 0 {
 		fail("REFRESH_INTERVAL must be a positive duration such as 15m")
@@ -134,7 +72,12 @@ func Load(getenv func(string) string) (Config, error) {
 	return cfg, errors.Join(problems...)
 }
 
-func isHTTP(raw string) bool {
-	parsed, err := url.Parse(raw)
-	return err == nil && parsed.Host != "" && (parsed.Scheme == "http" || parsed.Scheme == "https")
+func Removed(getenv func(string) string) []string {
+	var out []string
+	for _, name := range RemovedVariables {
+		if strings.TrimSpace(getenv(name)) != "" {
+			out = append(out, name)
+		}
+	}
+	return out
 }
