@@ -177,7 +177,7 @@
     var password = document.getElementById('jf-password');
     result.textContent = 'Signing in…';
     result.className = 'hint';
-    post('/setup/jellyfin/signin', { url: document.getElementById('url').value, username: document.getElementById('jf-username').value, password: password.value, slug: form.dataset.slug })
+    post('/setup/jellyfin/signin', { url: document.getElementById('url').value, username: document.getElementById('jf-username').value, password: password.value })
       .then(function (answer) {
         password.value = '';
         if (!answer.ok) { result.textContent = answer.error; result.className = 'error'; return; }

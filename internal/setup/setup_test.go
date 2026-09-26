@@ -10,7 +10,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -764,50 +763,6 @@ func TestTwoJellyfinSignInsKeepTheirOwnDeviceIDs(t *testing.T) {
 		if body := a.get(path).Body.String(); strings.Contains(body, first.DeviceID) || strings.Contains(body, second.DeviceID) {
 			t.Errorf("%s shows a device id", path)
 		}
-	}
-}
-
-func TestJellyfinReSignInOnEditReusesTheDeviceID(t *testing.T) {
-	a := newTestApp(t)
-	a.signIn()
-	fake := fakes.NewJellyfin(t)
-	signIn := func(slug string) string {
-		t.Helper()
-		rec, answer := a.json(http.MethodPost, "/setup/jellyfin/signin", jellyfinSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: fakes.JellyfinPassword, Slug: slug})
-		if rec.Code != http.StatusOK {
-			t.Fatalf("sign-in: %d %v", rec.Code, answer)
-		}
-		return answer["ref"].(string)
-	}
-	lastDeviceID := func() string {
-		requests := slices.DeleteFunc(fake.Requests(), func(request fakes.Request) bool { return request.Path != "/Users/AuthenticateByName" })
-		_, rest, _ := strings.Cut(requests[len(requests)-1].Header.Get("Authorization"), `DeviceId="`)
-		id, _, _ := strings.Cut(rest, `"`)
-		return id
-	}
-	if rec := a.form("/setup/servers", url.Values{"kind": {"jellyfin"}, "url": {fake.URL}, "token_ref": {signIn("")}, "enabled": {"1"}}); rec.Code != http.StatusSeeOther {
-		t.Fatalf("add: %d %s", rec.Code, rec.Body.String())
-	}
-	original, _ := a.store.Snapshot().Server("jellyfin-1")
-
-	ref := signIn("jellyfin-1")
-	if got := lastDeviceID(); got != original.DeviceID {
-		t.Fatalf("re-sign-in sent device id %q, want %q", got, original.DeviceID)
-	}
-	if rec := a.form("/setup/servers/jellyfin-1", url.Values{"url": {fake.URL}, "token_ref": {ref}, "enabled": {"1"}}); rec.Code != http.StatusSeeOther {
-		t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
-	}
-	if again, _ := a.store.Snapshot().Server("jellyfin-1"); again.DeviceID != original.DeviceID {
-		t.Fatalf("device id changed from %q to %q", original.DeviceID, again.DeviceID)
-	}
-
-	signIn("")
-	if got := lastDeviceID(); got == "" || got == original.DeviceID {
-		t.Fatalf("a new server's sign-in sent device id %q", got)
-	}
-	signIn("plex-7")
-	if got := lastDeviceID(); got == "" || got == original.DeviceID {
-		t.Fatalf("an unknown slug's sign-in sent device id %q", got)
 	}
 }
 

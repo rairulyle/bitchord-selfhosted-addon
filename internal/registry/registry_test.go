@@ -405,7 +405,7 @@ func TestEveryJellyfinSignInGetsItsOwnDeviceID(t *testing.T) {
 	r := New(snapshot(), Options{Version: "1.2.3", Log: quiet})
 	var ids []string
 	for i := range 2 {
-		session, err := r.JellyfinSignIn(context.Background(), jellyfinFake.URL, "", fakes.JellyfinUser, fakes.JellyfinPassword)
+		session, err := r.JellyfinSignIn(context.Background(), jellyfinFake.URL, fakes.JellyfinUser, fakes.JellyfinPassword)
 		if err != nil || session.Token != fakes.JellyfinToken || session.Username != fakes.JellyfinUser || session.DeviceID == "" || session.DeviceID == "addon-uuid" {
 			t.Fatalf("session = %+v, %v", session, err)
 		}
@@ -416,13 +416,6 @@ func TestEveryJellyfinSignInGetsItsOwnDeviceID(t *testing.T) {
 	}
 	if ids[0] == ids[1] {
 		t.Fatalf("two sign-ins share the device id %q", ids[0])
-	}
-	session, err := r.JellyfinSignIn(context.Background(), jellyfinFake.URL, ids[0], fakes.JellyfinUser, fakes.JellyfinPassword)
-	if err != nil || session.DeviceID != ids[0] {
-		t.Fatalf("sign-in as a known device = %+v, %v", session, err)
-	}
-	if got := jellyfinFake.Requests()[2].Header.Get("Authorization"); !strings.Contains(got, `DeviceId="`+ids[0]+`"`) {
-		t.Errorf("Authorization = %q, want DeviceId %q", got, ids[0])
 	}
 }
 
