@@ -403,7 +403,7 @@ func TestTestConnectionEndpoint(t *testing.T) {
 		t.Fatalf("wrong token: %d %s", rec.Code, rec.Body.String())
 	}
 	rec, answer = a.json(http.MethodPost, "/setup/servers/test", testRequest{Kind: store.Plex, URL: fakes.DeadURL(t), Token: "x"})
-	if rec.Code != http.StatusBadGateway || !strings.Contains(answer["error"].(string), "connection refused") {
+	if message, _ := answer["error"].(string); rec.Code != http.StatusBadGateway || answer["ok"] != false || !strings.HasPrefix(message, "plex:") || strings.Contains(message, "rejected the credentials") {
 		t.Fatalf("dead server: %d %v", rec.Code, answer)
 	}
 	slug := a.addPlex(fake, "Home")

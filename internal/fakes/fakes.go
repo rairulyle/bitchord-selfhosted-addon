@@ -5,19 +5,34 @@ package fakes
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
-	"net/http/httptest"
 	"sync"
 	"testing"
 )
 
-// DeadURL is an address that refuses connections at once. A never-bound port
-// such as 127.0.0.1:1 can hang for the whole dial timeout on some hosts.
+// DeadURL is an address whose every connection is reset at once. It holds
+// its port until the test ends, so no other server can take it over; a
+// never-bound port such as 127.0.0.1:1 can hang for the whole dial timeout on
+// some hosts.
 func DeadURL(t testing.TB) string {
 	t.Helper()
-	server := httptest.NewServer(http.NotFoundHandler())
-	server.Close()
-	return server.URL
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { listener.Close() })
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			conn.(*net.TCPConn).SetLinger(0)
+			conn.Close()
+		}
+	}()
+	return "http://" + listener.Addr().String()
 }
 
 type Request struct {
