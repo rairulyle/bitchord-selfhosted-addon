@@ -354,8 +354,8 @@ type testRequest struct {
 	Slug     string     `json:"slug"`
 }
 
-// testServer probes with the pasted token, the referenced sign-in, or the
-// stored token of the server being edited, in that order.
+// testServer probes with the referenced sign-in, the pasted token, or the
+// stored token of the server being edited, in that order, as a save would.
 func (a *app) testServer(w http.ResponseWriter, r *http.Request) {
 	var req testRequest
 	if err := readJSON(r, &req); err != nil {
@@ -369,7 +369,6 @@ func (a *app) testServer(w http.ResponseWriter, r *http.Request) {
 	}
 	server := store.Server{Kind: req.Kind, URL: req.URL, Token: strings.TrimSpace(req.Token)}
 	switch {
-	case server.Token != "":
 	case req.TokenRef != "":
 		pending, ok := a.refs.peek(req.TokenRef)
 		if !ok || pending.kind != req.Kind {
@@ -377,6 +376,7 @@ func (a *app) testServer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		server.Token, server.DeviceID = pending.token, pending.deviceID
+	case server.Token != "":
 	case req.Slug != "":
 		existing, ok := a.Store.Snapshot().Server(req.Slug)
 		if !ok {

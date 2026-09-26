@@ -455,6 +455,10 @@ func TestPlexSignInEndToEnd(t *testing.T) {
 	if rec.Code != http.StatusOK || answer["ok"] != true {
 		t.Fatalf("test with the reference: %d %v", rec.Code, answer)
 	}
+	rec, answer = a.json(http.MethodPost, "/setup/servers/test", testRequest{Kind: store.Plex, URL: home.URL, TokenRef: ref, Token: "stale-pasted-token"})
+	if rec.Code != http.StatusOK || answer["ok"] != true {
+		t.Fatalf("test with a reference and a pasted token must use the reference, as a save does: %d %v", rec.Code, answer)
+	}
 	if rec := a.form("/setup/servers", url.Values{"kind": {"plex"}, "label": {"Home"}, "url": {home.URL}, "token_ref": {ref}, "enabled": {"1"}}); rec.Code != http.StatusSeeOther {
 		t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
 	}
