@@ -91,7 +91,7 @@ func healthcheck(url string) int {
 }
 
 func serve(ctx context.Context, cfg config.Config, log *slog.Logger, listening func(net.Addr)) error {
-	client := plex.New(plex.Options{BaseURL: cfg.PlexURL, Token: cfg.PlexToken})
+	client := plex.New(plex.Options{BaseURL: cfg.PlexURL, Token: cfg.PlexToken, Log: log})
 	lib := library.NewLibrary(client, cfg.Section, cfg.RefreshInterval, log)
 	runCtx, stopRun := context.WithCancel(ctx)
 	runDone := make(chan struct{})
@@ -111,7 +111,7 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger, listening f
 	srv := &http.Server{
 		Handler: server.New(server.Options{
 			Secret: cfg.Secret, PublicURL: cfg.PublicURL, AddonName: cfg.AddonName, Version: version,
-			Library: lib, Plex: client, Log: log,
+			Library: lib, Backend: client, Log: log,
 		}),
 		// WriteTimeout stays unset: a stream lasts as long as the song.
 		ReadHeaderTimeout: 10 * time.Second,

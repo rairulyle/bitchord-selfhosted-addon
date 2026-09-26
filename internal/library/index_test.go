@@ -3,10 +3,12 @@ package library
 import (
 	"reflect"
 	"testing"
+
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
 )
 
 func fixtureIndex() *Index {
-	return NewIndex([]Track{
+	return NewIndex([]media.Track{
 		{ID: "1", Title: "emo girl", Artist: "Machine Gun Kelly & WILLOW", AlbumArtist: "mgk", Album: "mainstream sellout (life in pink deluxe)"},
 		{ID: "2", Title: "One Step Closer", Artist: "Linkin Park", AlbumArtist: "Linkin Park", Album: "Hybrid Theory"},
 		{ID: "3", Title: "One Step Closer (live)", Artist: "Linkin Park", AlbumArtist: "Linkin Park", Album: "Underground 4.0"},
@@ -17,7 +19,7 @@ func fixtureIndex() *Index {
 	})
 }
 
-func ids(tracks []Track) []string {
+func ids(tracks []media.Track) []string {
 	out := make([]string, len(tracks))
 	for i, t := range tracks {
 		out[i] = t.ID
@@ -85,7 +87,7 @@ func TestGetAndLen(t *testing.T) {
 }
 
 func TestSearchAnswersTheWordFormsBitChordSends(t *testing.T) {
-	ix := NewIndex([]Track{
+	ix := NewIndex([]media.Track{
 		{ID: "1", Title: "Time‐Bomb", Artist: "All Time Low", AlbumArtist: "All Time Low", Album: "Dirty Work"},
 		{ID: "2", Title: "Naïve Orleans", Artist: "Anberlin", AlbumArtist: "Anberlin", Album: "Blueprints for the Black Market"},
 		{ID: "3", Title: "11:11 PM", Artist: "The All‐American Rejects", AlbumArtist: "The All‐American Rejects", Album: "Move Along"},

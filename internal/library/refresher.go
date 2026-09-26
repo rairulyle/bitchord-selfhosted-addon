@@ -6,31 +6,31 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
 )
 
 const maxBackoff = time.Minute
 
 type Source interface {
-	AllTracks(ctx context.Context, section string) ([]plex.Track, error)
+	AllTracks(ctx context.Context, library string) ([]media.Track, error)
 }
 
 type Library struct {
 	source   Source
-	section  string
+	filter   string
 	interval time.Duration
 	log      *slog.Logger
 	index    atomic.Pointer[Index]
 	sleep    func(context.Context, time.Duration) error
 }
 
-func NewLibrary(source Source, section string, interval time.Duration, log *slog.Logger) *Library {
-	return &Library{source: source, section: section, interval: interval, log: log, sleep: sleep}
+func NewLibrary(source Source, filter string, interval time.Duration, log *slog.Logger) *Library {
+	return &Library{source: source, filter: filter, interval: interval, log: log, sleep: sleep}
 }
 
 func (l *Library) Ready() bool { return l.index.Load() != nil }
 
-func (l *Library) Search(query string, limit int) []Track { return l.Find(query, limit).Tracks }
+func (l *Library) Search(query string, limit int) []media.Track { return l.Find(query, limit).Tracks }
 
 func (l *Library) Find(query string, limit int) Result {
 	ix := l.index.Load()
@@ -40,23 +40,23 @@ func (l *Library) Find(query string, limit int) Result {
 	return ix.Find(query, limit)
 }
 
-func (l *Library) Get(id string) (Track, bool) {
+func (l *Library) Get(id string) (media.Track, bool) {
 	ix := l.index.Load()
 	if ix == nil {
-		return Track{}, false
+		return media.Track{}, false
 	}
 	return ix.Get(id)
 }
 
 func (l *Library) Refresh(ctx context.Context) error {
 	started := time.Now()
-	raw, err := l.source.AllTracks(ctx, l.section)
+	all, err := l.source.AllTracks(ctx, l.filter)
 	if err != nil {
 		return err
 	}
-	tracks := make([]Track, 0, len(raw))
-	for _, item := range raw {
-		if track, ok := FromPlex(item); ok {
+	tracks := make([]media.Track, 0, len(all))
+	for _, track := range all {
+		if track.Playable() {
 			tracks = append(tracks, track)
 		}
 	}
@@ -67,7 +67,7 @@ func (l *Library) Refresh(ctx context.Context) error {
 		removed = previous.missingFrom(next)
 	}
 	l.log.Info("library indexed", "tracks", len(tracks), "added", next.missingFrom(previous), "removed", removed,
-		"skipped", len(raw)-len(tracks), "took", time.Since(started).String())
+		"skipped", len(all)-len(tracks), "took", time.Since(started).String())
 	return nil
 }
 
@@ -92,38 +92,6 @@ func (l *Library) Run(ctx context.Context) {
 			l.log.Error("library refresh failed, keeping the previous index", "error", err.Error())
 		}
 	}
-}
-
-func FromPlex(item plex.Track) (Track, bool) {
-	media, part, ok := item.FirstPart()
-	if !ok || item.RatingKey == "" {
-		return Track{}, false
-	}
-	container := media.Container
-	if container == "" {
-		container = part.Container
-	}
-	artist := item.OriginalTitle
-	if artist == "" {
-		artist = item.GrandparentTitle
-	}
-	thumb := item.Thumb
-	if thumb == "" {
-		thumb = item.ParentThumb
-	}
-	return Track{
-		ID:          item.RatingKey,
-		Title:       item.Title,
-		Artist:      artist,
-		AlbumArtist: item.GrandparentTitle,
-		Album:       item.ParentTitle,
-		DurationSec: (item.Duration + 500) / 1000,
-		Codec:       plex.AudioFormat(media.AudioCodec, container),
-		Container:   container,
-		BitrateKbps: media.Bitrate,
-		PartKey:     part.Key,
-		Thumb:       thumb,
-	}, true
 }
 
 func sleep(ctx context.Context, d time.Duration) error {

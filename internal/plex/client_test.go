@@ -8,22 +8,28 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plextest"
 )
+
+const flacBody = "0123456789abcdefghijklmnopqrstuvwxyz"
 
 func client(fake *plextest.Fake, pageSize int) *plex.Client {
 	return plex.New(plex.Options{BaseURL: fake.URL, Token: plextest.Token, PageSize: pageSize})
 }
 
-func keys(tracks []plex.Track) string {
+func keys(tracks []media.Track) string {
 	out := make([]string, len(tracks))
 	for i, t := range tracks {
-		out[i] = t.RatingKey
+		out[i] = t.ID
 	}
 	return strings.Join(out, ",")
 }
+
+func flac() media.Track { return media.Track{ID: "101", FileRef: "/library/parts/101/1/file.flac"} }
 
 func TestAllTracksPagesThroughEveryMusicSection(t *testing.T) {
 	fake := plextest.New(t)
@@ -42,6 +48,22 @@ func TestAllTracksPagesThroughEveryMusicSection(t *testing.T) {
 	}
 	if pages != 4 {
 		t.Errorf("section 3 was fetched in %d pages, want 4 (2+2+2+0)", pages)
+	}
+}
+
+func TestAllTracksKeepsUnplayableTracksForTheCount(t *testing.T) {
+	tracks, err := client(plextest.New(t), 1000).AllTracks(context.Background(), "Music")
+	if err != nil {
+		t.Fatalf("AllTracks: %v", err)
+	}
+	playable := 0
+	for _, track := range tracks {
+		if track.Playable() {
+			playable++
+		}
+	}
+	if len(tracks) != 6 || playable != 5 {
+		t.Fatalf("%d tracks, %d playable, want 6 and 5", len(tracks), playable)
 	}
 }
 
@@ -123,28 +145,23 @@ func TestTrackReturnsStreamDetails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Track: %v", err)
 	}
-	_, part, ok := track.FirstPart()
-	if !ok || part.Key != "/library/parts/101/1/file.flac" {
-		t.Fatalf("part = %+v, %v", part, ok)
-	}
-	stream, ok := part.AudioStream()
-	if !ok || stream.SamplingRate != 48000 || stream.BitDepth != 24 {
-		t.Fatalf("stream = %+v, %v", stream, ok)
+	if track.FileRef != "/library/parts/101/1/file.flac" || track.SampleRate != 48000 || track.BitDepth != 24 {
+		t.Fatalf("track = %+v", track)
 	}
 }
 
 func TestErrors(t *testing.T) {
 	t.Run("unknown track", func(t *testing.T) {
 		_, err := client(plextest.New(t), 1000).Track(context.Background(), "999")
-		if !errors.Is(err, plex.ErrNotFound) {
+		if !errors.Is(err, media.ErrNotFound) {
 			t.Fatalf("err = %v", err)
 		}
 	})
-	t.Run("rejected token", func(t *testing.T) {
+	t.Run("rejected token names the variable", func(t *testing.T) {
 		fake := plextest.New(t)
 		c := plex.New(plex.Options{BaseURL: fake.URL, Token: "wrong"})
 		_, err := c.AllTracks(context.Background(), "")
-		if !errors.Is(err, plex.ErrUnauthorized) {
+		if !errors.Is(err, media.ErrUnauthorized) || !strings.Contains(err.Error(), "PLEX_TOKEN") {
 			t.Fatalf("err = %v", err)
 		}
 	})
@@ -174,27 +191,6 @@ func TestErrors(t *testing.T) {
 	})
 }
 
-func TestAudioFormatAndLossless(t *testing.T) {
-	cases := []struct {
-		codec, container, format string
-		lossless                 bool
-	}{
-		{"flac", "flac", "flac", true},
-		{"pcm", "wav", "wav", true},
-		{"pcm", "aiff", "aiff", true},
-		{"alac", "mp4", "alac", true},
-		{"mp3", "mp3", "mp3", false},
-		{"aac", "mp4", "aac", false},
-		{"", "ogg", "ogg", false},
-	}
-	for _, tc := range cases {
-		format := plex.AudioFormat(tc.codec, tc.container)
-		if format != tc.format || plex.Lossless(format) != tc.lossless {
-			t.Errorf("%s/%s = %s lossless=%v", tc.codec, tc.container, format, plex.Lossless(format))
-		}
-	}
-}
-
 func TestArtPathEscapesTheThumb(t *testing.T) {
 	got := plex.ArtPath("/library/metadata/1/thumb/2?x=1")
 	want := "/photo/:/transcode?width=600&height=600&minSize=1&upscale=1&url=%2Flibrary%2Fmetadata%2F1%2Fthumb%2F2%3Fx%3D1"
@@ -203,12 +199,12 @@ func TestArtPathEscapesTheThumb(t *testing.T) {
 	}
 }
 
-func TestOpenStreamsAFileWithRangeAndIdentityEncoding(t *testing.T) {
+func TestOpenFileStreamsWithRangeAndIdentityEncoding(t *testing.T) {
 	fake := plextest.New(t)
 	c := client(fake, 1000)
-	res, err := c.Open(context.Background(), http.MethodGet, "/library/parts/101/1/file.flac", http.Header{"Range": {"bytes=10-19"}})
+	res, err := c.OpenFile(context.Background(), flac(), http.MethodGet, http.Header{"Range": {"bytes=10-19"}})
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("OpenFile: %v", err)
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusPartialContent {
@@ -232,10 +228,49 @@ func TestOpenStreamsAFileWithRangeAndIdentityEncoding(t *testing.T) {
 	if req.Header.Get("Range") != "bytes=10-19" {
 		t.Errorf("Range = %q, want %q", req.Header.Get("Range"), "bytes=10-19")
 	}
-	if strings.Contains(req.Path, plextest.Token) {
-		t.Errorf("token leaked into Path: %s", req.Path)
+	if strings.Contains(req.Path, plextest.Token) || strings.Contains(req.Query, plextest.Token) {
+		t.Errorf("token leaked into the URL: %s?%s", req.Path, req.Query)
 	}
-	if strings.Contains(req.Query, plextest.Token) {
-		t.Errorf("token leaked into Query: %s", req.Query)
+}
+
+func TestOpenFileRetriesAsADownloadWhenPlexRefusesDirectPlay(t *testing.T) {
+	fake := plextest.New(t)
+	fake.Extra[flac().FileRef] = func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("download") != "1" {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		http.ServeContent(w, r, "", time.Time{}, strings.NewReader(flacBody))
+	}
+	res, err := client(fake, 1000).OpenFile(context.Background(), flac(), http.MethodGet, http.Header{"Range": {"bytes=10-19"}})
+	if err != nil {
+		t.Fatalf("OpenFile: %v", err)
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	if res.StatusCode != http.StatusPartialContent || string(body) != "abcdefghij" {
+		t.Fatalf("status %d, body %q", res.StatusCode, body)
+	}
+}
+
+func TestOpenFileAndArtMapMissingAndRejected(t *testing.T) {
+	fake := plextest.New(t)
+	c := client(fake, 1000)
+	gone := media.Track{ID: "103", FileRef: "/library/parts/103/1/file.wav", ArtRef: "/library/metadata/103/thumb/1"}
+	if _, err := c.OpenFile(context.Background(), gone, http.MethodGet, nil); !errors.Is(err, media.ErrNotFound) {
+		t.Errorf("missing file: %v", err)
+	}
+	res, err := c.OpenArt(context.Background(), gone)
+	if err != nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("OpenArt = %v, %v", res, err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if string(body) != "jpeg:/library/metadata/103/thumb/1" {
+		t.Errorf("art body = %q", body)
+	}
+	wrong := plex.New(plex.Options{BaseURL: fake.URL, Token: "wrong"})
+	if _, err := wrong.OpenFile(context.Background(), flac(), http.MethodGet, nil); !errors.Is(err, media.ErrUnauthorized) {
+		t.Errorf("rejected token: %v", err)
 	}
 }

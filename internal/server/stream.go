@@ -6,11 +6,10 @@ import (
 	"net/http"
 	"regexp"
 
-	"github.com/rairulyle/bitchord-selfhosted-addon/internal/library"
-	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
 )
 
-var idPattern = regexp.MustCompile(`^[0-9]{1,20}$`)
+var idPattern = regexp.MustCompile(`^[0-9a-fA-F-]{1,36}$`)
 
 func trackID(r *http.Request) (string, bool) {
 	id := r.PathValue("id")
@@ -18,48 +17,53 @@ func trackID(r *http.Request) (string, bool) {
 }
 
 func (s *server) stream(w http.ResponseWriter, r *http.Request) {
-	id, ok := trackID(r)
-	if !ok {
-		quiet404(w, r)
-		return
-	}
-	item, status := s.lookup(r, id)
+	track, status := s.resolve(r)
 	if status != http.StatusOK {
 		w.WriteHeader(status)
 		return
 	}
-	descriptor, ok := toStreamJSON(s.base(), item)
-	if !ok {
-		quiet404(w, r)
-		return
-	}
-	if track, ok := library.FromPlex(item); ok {
-		s.Log.Info("stream", "id", id, "track", label(track), "quality", descriptor.Quality, "format", descriptor.Format)
-	}
+	descriptor := toStreamJSON(s.base(), track)
+	s.Log.Info("stream", "id", track.ID, "track", label(track), "quality", descriptor.Quality, "format", descriptor.Format)
 	writeJSON(w, descriptor)
 }
 
-func (s *server) lookup(r *http.Request, id string) (plex.Track, int) {
-	ctx, cancel := context.WithTimeout(r.Context(), s.lookupTimeout)
-	defer cancel()
-	item, err := s.Plex.Track(ctx, id)
-	switch {
-	case err == nil:
-		return item, http.StatusOK
-	case errors.Is(err, plex.ErrNotFound):
-		return plex.Track{}, http.StatusNotFound
+// resolve answers from the index and asks the backend only on a miss, so a
+// track that arrived after the last refresh still plays.
+func (s *server) resolve(r *http.Request) (media.Track, int) {
+	id, ok := trackID(r)
+	if !ok {
+		return media.Track{}, http.StatusNotFound
 	}
-	s.logPlexFailure(r, err)
-	return plex.Track{}, http.StatusBadGateway
+	track, found := s.Library.Get(id)
+	if !found {
+		var status int
+		if track, status = s.lookup(r, id); status != http.StatusOK {
+			return media.Track{}, status
+		}
+	}
+	if !track.Playable() {
+		return media.Track{}, http.StatusNotFound
+	}
+	return track, http.StatusOK
 }
 
-func (s *server) logPlexFailure(r *http.Request, err error) {
+func (s *server) lookup(r *http.Request, id string) (media.Track, int) {
+	ctx, cancel := context.WithTimeout(r.Context(), s.lookupTimeout)
+	defer cancel()
+	track, err := s.Backend.Track(ctx, id)
+	switch {
+	case err == nil:
+		return track, http.StatusOK
+	case errors.Is(err, media.ErrNotFound):
+		return media.Track{}, http.StatusNotFound
+	}
+	s.logFailure(r, err)
+	return media.Track{}, http.StatusBadGateway
+}
+
+func (s *server) logFailure(r *http.Request, err error) {
 	if r.Context().Err() != nil {
 		return
 	}
-	if errors.Is(err, plex.ErrUnauthorized) {
-		s.Log.Error("plex rejected the token, check PLEX_TOKEN")
-		return
-	}
-	s.Log.Error("plex request failed", "error", err.Error())
+	s.Log.Error("upstream request failed", "error", err.Error())
 }

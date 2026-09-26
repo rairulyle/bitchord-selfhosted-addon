@@ -98,28 +98,9 @@ func TestFileFallsBackToPlexOnAnIndexMiss(t *testing.T) {
 	}
 }
 
-func TestFileRetriesAsADownloadWhenPlexRefusesDirectPlay(t *testing.T) {
-	h := newHarness(t)
-	const part = "/library/parts/101/1/file.flac"
-	h.fake.Extra[part] = func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("download") != "1" {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		http.ServeContent(w, r, "", time.Time{}, strings.NewReader(flacBody))
-	}
-	rec := h.do(http.MethodGet, filePath("101"), http.Header{"Range": {"bytes=10-19"}})
-	if rec.Code != http.StatusPartialContent || rec.Body.String() != "abcdefghij" {
-		t.Fatalf("status %d, body %q", rec.Code, rec.Body.String())
-	}
-	if got := rec.Header().Get("Content-Disposition"); got != "" {
-		t.Errorf("Content-Disposition leaked: %q", got)
-	}
-}
-
 func TestFileMissesAndFailures(t *testing.T) {
 	h := newHarness(t)
-	for name, id := range map[string]string{"unknown id": "999", "file gone from plex": "103", "malformed id": "1x"} {
+	for name, id := range map[string]string{"unknown id": "999", "file gone from plex": "103", "malformed id": "1x", "track without media": "106"} {
 		if rec := h.get(filePath(id)); rec.Code != http.StatusNotFound || rec.Body.Len() != 0 {
 			t.Errorf("%s: status %d", name, rec.Code)
 		}
@@ -127,6 +108,20 @@ func TestFileMissesAndFailures(t *testing.T) {
 	h.fake.FailWith(http.StatusInternalServerError)
 	if rec := h.get(filePath("101")); rec.Code != http.StatusBadGateway {
 		t.Errorf("plex 500: status %d", rec.Code)
+	}
+	if logs := h.logs.String(); !strings.Contains(logs, `"msg":"upstream answered the byte request badly","status":500`) {
+		t.Errorf("logs lack the bad-answer line:\n%s", logs)
+	}
+}
+
+func TestFileAnswers502AndNamesTheVariableWhenTheTokenIsRejected(t *testing.T) {
+	h := newHarnessWith(t, plex.Options{Token: "wrong"}, false)
+	rec := h.get(filePath("101"))
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if logs := h.logs.String(); !strings.Contains(logs, "PLEX_TOKEN") || strings.Contains(logs, plextest.Token) {
+		t.Fatalf("logs = %s", logs)
 	}
 }
 

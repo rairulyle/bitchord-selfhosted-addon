@@ -47,10 +47,21 @@ func TestStreamDescriptors(t *testing.T) {
 	}
 }
 
-func TestStreamAsksPlexEvenWhenTheIndexIsEmpty(t *testing.T) {
-	h := newHarnessWith(t, plex.Options{}, false)
+func TestStreamAnswersFromTheIndexAndAsksPlexOnlyOnAMiss(t *testing.T) {
+	h := newHarness(t)
+	before := len(h.fake.Requests())
 	if rec := h.get("/" + testSecret + "/stream/101"); rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
+	}
+	if len(h.fake.Requests()) != before {
+		t.Error("an indexed track must not cost an upstream request")
+	}
+	cold := newHarnessWith(t, plex.Options{}, false)
+	if rec := cold.get("/" + testSecret + "/stream/101"); rec.Code != http.StatusOK {
+		t.Fatalf("index miss: status = %d", rec.Code)
+	}
+	if requests := cold.fake.Requests(); requests[len(requests)-1].Path != "/library/metadata/101" {
+		t.Errorf("index miss did not ask upstream: %v", requests)
 	}
 }
 
@@ -62,7 +73,7 @@ func TestStreamMisses(t *testing.T) {
 		}
 	}
 	before := len(h.fake.Requests())
-	h.get("/" + testSecret + "/stream/abc")
+	h.get("/" + testSecret + "/stream/xyz")
 	if len(h.fake.Requests()) != before {
 		t.Error("a malformed id must not reach Plex")
 	}
@@ -72,13 +83,12 @@ func TestStreamAnswers502WhenPlexFails(t *testing.T) {
 	t.Run("plex 500", func(t *testing.T) {
 		h := newHarness(t)
 		h.fake.FailWith(http.StatusInternalServerError)
-		if rec := h.get("/" + testSecret + "/stream/101"); rec.Code != http.StatusBadGateway {
+		if rec := h.get("/" + testSecret + "/stream/999"); rec.Code != http.StatusBadGateway {
 			t.Fatalf("status = %d", rec.Code)
 		}
 	})
 	t.Run("rejected token is named in the log", func(t *testing.T) {
-		h := newHarness(t)
-		h.server.Plex = plex.New(plex.Options{BaseURL: h.fake.URL, Token: "wrong"})
+		h := newHarnessWith(t, plex.Options{Token: "wrong"}, false)
 		rec := h.get("/" + testSecret + "/stream/101")
 		if rec.Code != http.StatusBadGateway {
 			t.Fatalf("status = %d", rec.Code)
@@ -89,7 +99,7 @@ func TestStreamAnswers502WhenPlexFails(t *testing.T) {
 	})
 	t.Run("slow plex hits the lookup timeout", func(t *testing.T) {
 		h := newHarness(t)
-		h.fake.Extra["/library/metadata/101"] = func(w http.ResponseWriter, r *http.Request) {
+		h.fake.Extra["/library/metadata/999"] = func(w http.ResponseWriter, r *http.Request) {
 			select {
 			case <-r.Context().Done():
 			case <-time.After(2 * time.Second):
@@ -97,7 +107,7 @@ func TestStreamAnswers502WhenPlexFails(t *testing.T) {
 		}
 		h.server.lookupTimeout = 50 * time.Millisecond
 		started := time.Now()
-		rec := h.get("/" + testSecret + "/stream/101")
+		rec := h.get("/" + testSecret + "/stream/999")
 		if rec.Code != http.StatusBadGateway || time.Since(started) > time.Second {
 			t.Fatalf("status %d after %v", rec.Code, time.Since(started))
 		}
