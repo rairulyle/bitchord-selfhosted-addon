@@ -20,6 +20,7 @@ const (
 type Plex struct {
 	recorder
 	URL          string
+	Token        string
 	Sections     []plex.Section
 	Tracks       map[string][]plex.Track
 	Files        map[string][]byte
@@ -29,6 +30,7 @@ type Plex struct {
 
 func NewPlex(t testing.TB) *Plex {
 	f := &Plex{
+		Token:    PlexToken,
 		Sections: PlexSections(),
 		Tracks:   PlexTracks(),
 		Files:    PlexFiles(),
@@ -42,7 +44,7 @@ func NewPlex(t testing.TB) *Plex {
 
 func (f *Plex) serve(w http.ResponseWriter, r *http.Request) {
 	status, rawBody := f.record(r)
-	if r.Header.Get("X-Plex-Token") != PlexToken {
+	if r.Header.Get("X-Plex-Token") != f.Token {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
