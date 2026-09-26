@@ -921,6 +921,20 @@ func TestAFailedRestartKeepsTheOldToken(t *testing.T) {
 	}
 }
 
+func TestASaveAfterCloseStartsNoSignOut(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	fake := fakes.NewJellyfin(t)
+	original, _ := addHeldJellyfin(t, a, fake, nil)
+	a.setup.Close()
+	a.resignJellyfin(fake)
+	a.reg.Stop()
+	a.setup.app.background.Wait()
+	if loggedOut(fake, original.Token) || !strings.Contains(a.logs.String(), "old jellyfin session left signed in") {
+		t.Fatal("a save after Close started a sign-out")
+	}
+}
+
 func TestJellyfinSignOutWaitsForTheHandover(t *testing.T) {
 	a := newTestApp(t)
 	a.signIn()

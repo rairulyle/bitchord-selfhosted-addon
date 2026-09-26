@@ -68,6 +68,8 @@ type app struct {
 	ctx        context.Context
 	shutdown   context.CancelFunc
 	background sync.WaitGroup
+	closeMu    sync.Mutex
+	closed     bool
 }
 
 // Handler is the setup page. Close ends the work a save left running in the
@@ -78,11 +80,21 @@ type Handler struct {
 }
 
 func (h *Handler) Close() {
+	h.app.closeMu.Lock()
+	h.app.closed = true
+	h.app.closeMu.Unlock()
 	h.app.shutdown()
 	h.app.background.Wait()
 }
 
+// goBackground runs work unless Close has begun, so no work starts while
+// Close waits.
 func (a *app) goBackground(work func()) bool {
+	a.closeMu.Lock()
+	defer a.closeMu.Unlock()
+	if a.closed {
+		return false
+	}
 	a.background.Add(1)
 	go func() {
 		defer a.background.Done()
