@@ -381,7 +381,7 @@ func TestServerLifecycleThroughTheForms(t *testing.T) {
 	if _, ok := a.store.Snapshot().Server("plex-1"); ok {
 		t.Fatal("deleted server still stored")
 	}
-	if rec := a.form("/setup/servers/plex-9/delete", url.Values{}); rec.Code != http.StatusInternalServerError {
+	if rec := a.form("/setup/servers/plex-9/delete", url.Values{}); rec.Code != http.StatusNotFound {
 		t.Fatalf("delete unknown: %d", rec.Code)
 	}
 	if rec := a.get("/setup/servers/plex-9/edit"); rec.Code != http.StatusNotFound {

@@ -324,7 +324,12 @@ func (a *app) renderServerError(w http.ResponseWriter, r *http.Request, view ser
 
 func (a *app) deleteServer(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
-	if err := a.Store.RemoveServer(slug); err != nil {
+	err := a.Store.RemoveServer(slug)
+	switch {
+	case errors.Is(err, store.ErrNoServer):
+		http.NotFound(w, r)
+		return
+	case err != nil:
 		a.fail(w, r, err)
 		return
 	}
