@@ -35,13 +35,18 @@ type Entry struct {
 	Backend media.Backend
 	Library *library.Library
 	Log     *slog.Logger
+	mu      sync.RWMutex
 	config  store.Server
 	cancel  context.CancelFunc
 	done    chan struct{}
 }
 
 // DisplayName is what BitChord shows: "Plex - Home", or "Plex" with no label.
-func (e *Entry) DisplayName() string { return DisplayName(e.Backend.Name(), e.Label) }
+func (e *Entry) DisplayName() string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return DisplayName(e.Backend.Name(), e.Label)
+}
 
 func DisplayName(kind, label string) string {
 	if label == "" {
@@ -133,7 +138,9 @@ func (r *Registry) Apply(snapshot store.Snapshot) {
 		wanted[server.Slug] = true
 		if existing, ok := r.entries[server.Slug]; ok {
 			if sameConnection(existing.config, server) {
+				existing.mu.Lock()
 				existing.Label = server.Label
+				existing.mu.Unlock()
 				existing.config = server
 				continue
 			}

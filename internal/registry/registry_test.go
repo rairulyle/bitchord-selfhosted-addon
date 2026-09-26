@@ -242,3 +242,36 @@ func TestSignInWrappersCarryTheClientID(t *testing.T) {
 		t.Errorf("Authorization = %q", got)
 	}
 }
+
+func TestDisplayNameIsSafeUnderConcurrentRelabel(t *testing.T) {
+	fake := fakes.NewPlex(t)
+	r := newRegistry(t, snapshot(plexServer(fake, "plex-1")))
+	waitHealthy(t, r)
+	entry, _ := r.Lookup("plex-1")
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				entry.DisplayName()
+			}
+		}
+	}()
+
+	for i := 0; i < 200; i++ {
+		relabelled := plexServer(fake, "plex-1")
+		if i%2 == 0 {
+			relabelled.Label = "Parents"
+		} else {
+			relabelled.Label = "Home"
+		}
+		r.Apply(snapshot(relabelled))
+	}
+	close(stop)
+	<-done
+}
