@@ -77,14 +77,13 @@ type Registry struct {
 
 // handover is a restarted server's new entry, waiting for its first refresh
 // before it replaces the entry that is still answering.
-// settled is closed once the handover has swapped or been cancelled.
 type handover struct {
-	next    *Entry
-	settled chan struct{}
+	next      *Entry
+	cancelled chan struct{}
 }
 
 func (h *handover) cancel() {
-	close(h.settled)
+	close(h.cancelled)
 	h.next.stop()
 }
 
@@ -209,7 +208,7 @@ func (r *Registry) Apply(snapshot store.Snapshot) {
 			continue
 		}
 		existing.setLabel(server.Label)
-		pending := &handover{next: entry, settled: make(chan struct{})}
+		pending := &handover{next: entry, cancelled: make(chan struct{})}
 		r.pending[server.Slug] = pending
 		r.handovers.Add(1)
 		go r.handOver(server.Slug, pending)
@@ -235,7 +234,7 @@ func (r *Registry) handOver(slug string, pending *handover) {
 	select {
 	case <-pending.next.Library.Tried():
 	case <-timer.C:
-	case <-pending.settled:
+	case <-pending.cancelled:
 		return
 	}
 	r.mu.Lock()
@@ -246,7 +245,6 @@ func (r *Registry) handOver(slug string, pending *handover) {
 	delete(r.pending, slug)
 	r.entries[slug].stop()
 	r.entries[slug] = pending.next
-	close(pending.settled)
 	r.announceChange()
 }
 
