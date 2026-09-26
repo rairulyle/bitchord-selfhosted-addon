@@ -125,7 +125,8 @@ func (c *Client) itemPage(ctx context.Context, parentID string, start int) ([]It
 	})
 }
 
-// GET /Items/{id} answers 405, so a single item is fetched as a filtered list.
+// GET /Items/{id} exists from 10.9 on and answers 405 before that, so a single
+// item is fetched as a filtered list, which every version serves.
 // An id that is not a GUID gets a 400, which is as good as not found.
 func (c *Client) Track(ctx context.Context, id string) (media.Track, error) {
 	items, err := c.items(ctx, url.Values{"Ids": {id}, "IncludeItemTypes": {"Audio"}})

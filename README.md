@@ -212,7 +212,8 @@ the addon and leave no `search miss` behind.
 
 **Privacy.** Search text is written to the log, so the log records what was
 listened to. It stays on your server. The secret, the Plex token and the
-Jellyfin API key are never logged. `LOG_LEVEL=debug` adds one line per HTTP request and per `HEAD` probe.
+Jellyfin API key are never logged. `LOG_LEVEL=debug` adds one line per HTTP
+request and per `HEAD` probe.
 
 ## 🛠️ Troubleshooting
 
