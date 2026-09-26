@@ -47,7 +47,7 @@
       {{else}}Building the index{{end}}
     </dd>
     <dt>BitChord URL</dt>
-    <dd>{{if .URL}}<code class="url">{{.MaskedURL}}</code> <button type="button" class="copy" data-copy="{{.URL}}" aria-label="Copy the BitChord URL for {{.Name}}">Copy</button>{{else}}Set the public URL first{{end}}</dd>
+    <dd class="row">{{if .URL}}<code class="url">{{.MaskedURL}}</code> <button type="button" class="copy" data-copy="{{.URL}}" aria-label="Copy the BitChord URL for {{.Name}}">Copy</button>{{else}}Set the public URL first{{end}}</dd>
   </dl>
   <div class="row actions">
     <a class="button secondary" href="/setup/servers/{{.Slug}}/edit">Edit</a>
