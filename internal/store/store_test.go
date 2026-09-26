@@ -68,6 +68,29 @@ func TestOpenNamesACorruptFile(t *testing.T) {
 	}
 }
 
+func TestOpenNamesAFileThatParsesButIsInvalid(t *testing.T) {
+	server := `{"slug":"plex-1","kind":"plex","url":"http://plex:32400","token":"t","auth":"token","enabled":true}`
+	cases := map[string]string{
+		"short secret":   `{"secret":"short","client_id":"c","servers":[]}`,
+		"repeated slug":  `{"secret":"abcdefghijklmnop","client_id":"c","servers":[` + server + `,` + server + `]}`,
+		"missing client": `{"secret":"abcdefghijklmnop","servers":[]}`,
+	}
+	for name, content := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, FileName)
+			os.WriteFile(path, []byte(content), 0o600)
+			_, err := Open(dir)
+			if err == nil || !strings.Contains(err.Error(), path) {
+				t.Fatalf("err = %v", err)
+			}
+			if raw, _ := os.ReadFile(path); string(raw) != content {
+				t.Error("invalid file was overwritten")
+			}
+		})
+	}
+}
+
 func TestRoundTripAndAtomicWrite(t *testing.T) {
 	s := open(t)
 	if err := s.SetPublicURL("https://music.example.com"); err != nil {

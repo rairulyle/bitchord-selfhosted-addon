@@ -91,7 +91,8 @@ type Store struct {
 }
 
 // Open reads dir/addon.json, or creates it with a fresh secret and client id
-// when it does not exist. A file that does not parse is an error naming it.
+// when it does not exist. A file that does not parse or validate is an error
+// naming it.
 func Open(dir string) (*Store, error) {
 	s := &Store{path: filepath.Join(dir, FileName)}
 	raw, err := os.ReadFile(s.path)
@@ -106,6 +107,9 @@ func Open(dir string) (*Store, error) {
 		return nil, err
 	}
 	if err := json.Unmarshal(raw, &s.data); err != nil {
+		return nil, fmt.Errorf("%s: %w", s.path, err)
+	}
+	if err := Validate(s.data); err != nil {
 		return nil, fmt.Errorf("%s: %w", s.path, err)
 	}
 	if s.data.Servers == nil {
