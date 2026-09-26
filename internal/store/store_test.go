@@ -224,8 +224,8 @@ func TestValidation(t *testing.T) {
 		"unknown kind":     {func(v *Server) { v.Kind = "emby" }, `unknown server kind "emby"`},
 		"unknown auth":     {func(v *Server) { v.Auth = "magic" }, `unknown auth "magic"`},
 		"auth kind clash":  {func(v *Server) { v.Auth = AuthJellyfinSignIn }, "only a Jellyfin server"},
-		"label too long":   {func(v *Server) { v.Label = strings.Repeat("é", 65) }, "at most 64 characters"},
-		"label at the cap": {func(v *Server) { v.Label = strings.Repeat("é", 64) }, ""},
+		"label too long":   {func(v *Server) { v.Label = strings.Repeat("é", 17) }, "at most 16 characters"},
+		"label at the cap": {func(v *Server) { v.Label = strings.Repeat("é", 16) }, ""},
 		"empty label":      {func(v *Server) { v.Label = "" }, ""},
 	}
 	for name, tc := range cases {

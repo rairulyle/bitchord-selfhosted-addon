@@ -8,7 +8,7 @@ import (
 	"unicode/utf8"
 )
 
-const LabelMaxLength = 64
+const LabelMaxLength = 16
 
 var secretPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{16,}$`)
 
