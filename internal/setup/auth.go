@@ -189,6 +189,17 @@ func (t *tokenRefs) put(kind store.Kind, token, account string) string {
 	return ref
 }
 
+// peek reads a reference without consuming it, for a connection test before save.
+func (t *tokenRefs) peek(ref string) (pendingToken, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	pending, ok := t.refs[ref]
+	if !ok || !t.now().Before(pending.expires) {
+		return pendingToken{}, false
+	}
+	return pending, true
+}
+
 // take returns a reference's credential once; a second take, or one after
 // the ttl, finds nothing.
 func (t *tokenRefs) take(ref string) (pendingToken, bool) {

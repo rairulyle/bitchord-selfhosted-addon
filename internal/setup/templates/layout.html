@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · BitChord addon</title>
+<link rel="stylesheet" href="/setup/static/style.css">
+</head>
+<body>
+<header>
+  <a class="brand" href="/setup">BitChord Selfhosted Addon</a>
+  {{if .SignedIn}}
+  <nav>
+    <a href="/setup">Servers</a>
+    <a href="/setup/password">Password</a>
+    <form method="post" action="/setup/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="link">Sign out</button></form>
+  </nav>
+  {{end}}
+</header>
+<main>
+  {{if .Notice}}<p class="notice">{{.Notice}}</p>{{end}}
+  {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+  {{template "content" .}}
+</main>
+<footer>version {{.Version}}</footer>
+</body>
+</html>

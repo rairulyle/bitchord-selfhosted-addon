@@ -38,12 +38,45 @@ func (r *Registry) clientIDNow() string {
 	return r.clientID
 }
 
-func (r *Registry) PlexSignIn() *plex.SignIn {
+func (r *Registry) plexSignIn() *plex.SignIn {
 	return &plex.SignIn{ClientID: r.clientIDNow(), Version: r.opts.Version, PlexTV: r.opts.PlexTV, HTTP: r.opts.HTTP}
 }
 
-func (r *Registry) JellyfinSignIn(ctx context.Context, serverURL, username, password string) (jellyfin.Session, error) {
-	return jellyfin.SignIn(ctx, r.opts.HTTP, serverURL, r.clientIDNow(), r.opts.Version, username, password)
+// PIN and Account are what the setup page needs from a sign-in; the adapter
+// types stay inside this package.
+type PIN struct {
+	ID      int
+	AuthURL string
+}
+
+type Account struct {
+	Token    string
+	Username string
+}
+
+func (r *Registry) PlexPIN(ctx context.Context) (PIN, error) {
+	pin, err := r.plexSignIn().NewPIN(ctx)
+	if err != nil {
+		return PIN{}, err
+	}
+	return PIN{ID: pin.ID, AuthURL: pin.AuthURL}, nil
+}
+
+// PlexClaim reports false until the user has signed in on app.plex.tv.
+func (r *Registry) PlexClaim(ctx context.Context, id int) (Account, bool, error) {
+	account, ok, err := r.plexSignIn().Claim(ctx, id)
+	if err != nil || !ok {
+		return Account{}, false, err
+	}
+	return Account{Token: account.Token, Username: account.Username}, true, nil
+}
+
+func (r *Registry) JellyfinSignIn(ctx context.Context, serverURL, username, password string) (Account, error) {
+	session, err := jellyfin.SignIn(ctx, r.opts.HTTP, serverURL, r.clientIDNow(), r.opts.Version, username, password)
+	if err != nil {
+		return Account{}, err
+	}
+	return Account{Token: session.Token, Username: session.Username}, nil
 }
 
 type PlexServer struct {
@@ -57,7 +90,7 @@ type PlexServer struct {
 // A server is reported on the first of its addresses, in plex.tv's local-first
 // order, that answers /identity.
 func (r *Registry) PlexServers(ctx context.Context, token string) ([]PlexServer, error) {
-	resources, err := r.PlexSignIn().Servers(ctx, token)
+	resources, err := r.plexSignIn().Servers(ctx, token)
 	if err != nil {
 		return nil, err
 	}

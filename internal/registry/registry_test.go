@@ -230,12 +230,20 @@ func TestPlexServersReportsWhichAddressesAnswer(t *testing.T) {
 func TestSignInWrappersCarryTheClientID(t *testing.T) {
 	plexTV, jellyfinFake := fakes.NewPlexTV(t), fakes.NewJellyfin(t)
 	r := New(snapshot(), Options{Version: "1.2.3", Log: quiet, PlexTV: plexTV.URL})
-	pin, err := r.PlexSignIn().NewPIN(context.Background())
-	if err != nil || !strings.Contains(pin.AuthURL, "clientID=addon-uuid") {
+	pin, err := r.PlexPIN(context.Background())
+	if err != nil || pin.ID != 1 || !strings.Contains(pin.AuthURL, "clientID=addon-uuid") {
 		t.Fatalf("pin = %+v, %v", pin, err)
 	}
+	if _, ok, err := r.PlexClaim(context.Background(), pin.ID); ok || err != nil {
+		t.Fatalf("claimed early: %v, %v", ok, err)
+	}
+	plexTV.Claim(pin.ID)
+	account, ok, err := r.PlexClaim(context.Background(), pin.ID)
+	if err != nil || !ok || account != (Account{Token: fakes.PlexTVToken, Username: fakes.PlexTVUsername}) {
+		t.Fatalf("claim = %+v, %v, %v", account, ok, err)
+	}
 	session, err := r.JellyfinSignIn(context.Background(), jellyfinFake.URL, fakes.JellyfinUser, fakes.JellyfinPassword)
-	if err != nil || session.Token != fakes.JellyfinToken {
+	if err != nil || session != (Account{Token: fakes.JellyfinToken, Username: fakes.JellyfinUser}) {
 		t.Fatalf("session = %+v, %v", session, err)
 	}
 	if got := jellyfinFake.Requests()[0].Header.Get("Authorization"); !strings.Contains(got, `DeviceId="addon-uuid"`) {
