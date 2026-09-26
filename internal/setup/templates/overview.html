@@ -15,7 +15,8 @@
   <h2>Secret</h2>
   <p>Every server URL carries this secret. Regenerating it changes every URL at once.</p>
   <div class="row">
-    <code id="secret">{{.Secret}}</code>
+    <code id="secret" data-secret="{{.Secret}}">••••••••••••••••••••</code>
+    <button type="button" class="link" id="secret-toggle">Show</button>
     <button type="button" class="copy" data-copy="{{.Secret}}">Copy</button>
     <form method="post" action="/setup/secret/regenerate" onsubmit="return confirm('Regenerate the secret? Every server URL changes and each client must be updated.')">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
@@ -65,6 +66,13 @@
 {{end}}
 
 <script>
+var secret = document.getElementById('secret');
+var secretToggle = document.getElementById('secret-toggle');
+secretToggle.addEventListener('click', function () {
+  var hidden = secret.textContent !== secret.dataset.secret;
+  secret.textContent = hidden ? secret.dataset.secret : '••••••••••••••••••••';
+  secretToggle.textContent = hidden ? 'Hide' : 'Show';
+});
 document.querySelectorAll('button.copy').forEach(function (button) {
   button.addEventListener('click', function () {
     navigator.clipboard.writeText(button.dataset.copy).then(function () {
