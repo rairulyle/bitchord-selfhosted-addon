@@ -197,7 +197,8 @@ func (t *tokenRefs) put(kind store.Kind, token, account, deviceID string) string
 	return ref
 }
 
-// peek reads a reference without consuming it, for a connection test before save.
+// peek reads a reference without consuming it, for a connection test or a
+// save that has not succeeded yet.
 func (t *tokenRefs) peek(ref string) (pendingToken, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()

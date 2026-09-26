@@ -229,6 +229,7 @@ func (a *app) createServer(w http.ResponseWriter, r *http.Request) {
 		a.renderServerError(w, r, view, form, err)
 		return
 	}
+	a.refs.take(form.tokenRef)
 	a.apply()
 	a.Log.Info("server added", "server", added.Slug, "source", string(added.Kind), "host", hostOf(added.URL), "auth", string(added.Auth))
 	redirectNotice(w, r, registry.DisplayName(kindName(added.Kind), added.Label)+" added. Copy its URL into BitChord.")
@@ -261,6 +262,7 @@ func (a *app) updateServer(w http.ResponseWriter, r *http.Request) {
 		a.renderServerError(w, r, view, form, err)
 		return
 	}
+	a.refs.take(form.tokenRef)
 	a.apply()
 	a.Log.Info("server updated", "server", slug, "source", string(server.Kind), "host", hostOf(server.URL), "auth", string(server.Auth))
 	redirectNotice(w, r, registry.DisplayName(kindName(server.Kind), server.Label)+" saved.")
@@ -280,7 +282,7 @@ func (a *app) resolveServer(ctx context.Context, form submitted, existing store.
 	}
 	switch {
 	case form.tokenRef != "":
-		pending, ok := a.refs.take(form.tokenRef)
+		pending, ok := a.refs.peek(form.tokenRef)
 		if !ok || pending.kind != server.Kind {
 			return server, errors.New("the sign-in has expired, sign in again")
 		}

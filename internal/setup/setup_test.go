@@ -676,6 +676,26 @@ func TestConcurrentWritesApplyTheLatestSnapshotLast(t *testing.T) {
 	}
 }
 
+func TestAFailedSaveKeepsTheSignIn(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	fake := fakes.NewJellyfin(t)
+	rec, answer := a.json(http.MethodPost, "/setup/jellyfin/signin", jellyfinSignInRequest{URL: fake.URL, Username: fakes.JellyfinUser, Password: fakes.JellyfinPassword})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sign-in: %d %v", rec.Code, answer)
+	}
+	ref := answer["ref"].(string)
+	if rec := a.form("/setup/servers", url.Values{"kind": {"jellyfin"}, "url": {fake.URL}, "token_ref": {ref}, "library": {"Movies"}, "enabled": {"1"}}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("save with an unknown library: %d", rec.Code)
+	}
+	if rec := a.form("/setup/servers", url.Values{"kind": {"jellyfin"}, "url": {fake.URL}, "token_ref": {ref}, "library": {"Music"}, "enabled": {"1"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("save after fixing the form: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := a.form("/setup/servers", url.Values{"kind": {"jellyfin"}, "url": {fake.URL}, "token_ref": {ref}, "enabled": {"1"}}); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "sign-in has expired") {
+		t.Fatalf("a saved sign-in was reused: %d", rec.Code)
+	}
+}
+
 func TestTwoJellyfinSignInsKeepTheirOwnDeviceIDs(t *testing.T) {
 	a := newTestApp(t)
 	a.signIn()
