@@ -8,14 +8,16 @@
 </head>
 <body>
 <header>
-  <a class="brand" href="/setup">BitChord Selfhosted Addon</a>
-  {{if .SignedIn}}
-  <nav>
-    <a href="/setup">Servers</a>
-    <a href="/setup/password">Password</a>
-    <form method="post" action="/setup/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="link">Sign out</button></form>
-  </nav>
-  {{end}}
+  <div class="bar">
+    <a class="brand" href="/setup">BitChord Selfhosted Addon</a>
+    {{if .SignedIn}}
+    <nav>
+      <a href="/setup">Servers</a>
+      <a href="/setup/password">Password</a>
+      <form method="post" action="/setup/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="link">Sign out</button></form>
+    </nav>
+    {{end}}
+  </div>
 </header>
 <main>
   {{if .Notice}}<p class="notice">{{.Notice}}</p>{{end}}

@@ -49,11 +49,11 @@
     <dd>{{if .URL}}<code class="url">{{.URL}}</code> <button type="button" class="copy" data-copy="{{.URL}}">Copy</button>{{else}}set the public URL first{{end}}</dd>
   </dl>
   <div class="row actions">
-    <a class="button" href="/setup/servers/{{.Slug}}/edit">Edit</a>
+    <a class="button secondary" href="/setup/servers/{{.Slug}}/edit">Edit</a>
     <form method="post" action="/setup/servers/{{.Slug}}/enabled">
       <input type="hidden" name="csrf" value="{{$.CSRF}}">
       <input type="hidden" name="enabled" value="{{if .Enabled}}false{{else}}true{{end}}">
-      <button>{{if .Enabled}}Disable{{else}}Enable{{end}}</button>
+      <button class="secondary">{{if .Enabled}}Disable{{else}}Enable{{end}}</button>
     </form>
     <form method="post" action="/setup/servers/{{.Slug}}/delete" onsubmit="return confirm('Remove {{.Name}}? Its URL stops answering.')">
       <input type="hidden" name="csrf" value="{{$.CSRF}}">

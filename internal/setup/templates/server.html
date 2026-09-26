@@ -30,14 +30,14 @@
     <div class="panel" data-panel="signin">
       {{if .Account}}<p class="ok" id="signed-in">Signed in as {{.Account}}. Save keeps this sign-in{{if eq .Kind "jellyfin"}} unless the URL changes{{end}}.</p>{{else}}<p class="ok" id="signed-in" hidden></p>{{end}}
       <div data-kind-panel="plex" {{if ne .Kind "plex"}}hidden{{end}}>
-        <button type="button" id="plex-signin">Sign in with Plex</button>
+        <button type="button" id="plex-signin" class="secondary">Sign in with Plex</button>
         <p class="hint">Opens app.plex.tv in a new tab. The addon container must be able to reach plex.tv.</p>
         <label id="plex-servers-label" hidden>Server <select id="plex-servers"></select></label>
       </div>
       <div data-kind-panel="jellyfin" {{if ne .Kind "jellyfin"}}hidden{{end}}>
         <label>Username <input type="text" id="jf-username" autocomplete="off"></label>
         <label>Password <input type="password" id="jf-password" autocomplete="off"></label>
-        <button type="button" id="jf-signin">Sign in</button>
+        <button type="button" id="jf-signin" class="secondary">Sign in</button>
         <p class="hint">The password is used once and never stored. The addon appears under this user's devices in Jellyfin, and this user's libraries are the ones it can see.</p>
       </div>
     </div>
@@ -50,7 +50,7 @@
   </fieldset>
 
   <div class="row">
-    <button type="button" id="test">Test connection</button>
+    <button type="button" id="test" class="secondary">Test connection</button>
     <span id="test-result" class="hint"></span>
   </div>
 
