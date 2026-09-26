@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"cmp"
 	"net/http"
 	"net/url"
 
@@ -81,7 +82,7 @@ func (a *app) overviewView(r *http.Request, snapshot store.Snapshot) overviewVie
 	for _, server := range snapshot.Ordered() {
 		card := serverCard{
 			Slug: server.Slug, Name: registry.DisplayName(kindName(server.Kind), server.Label), Kind: kindName(server.Kind),
-			Host: hostOf(server.URL), Library: server.Library, Account: server.Account, Auth: server.Auth, Enabled: server.Enabled,
+			Host: hostOf(server.URL), Library: cmp.Or(server.LibraryName, server.Library), Account: server.Account, Auth: server.Auth, Enabled: server.Enabled,
 		}
 		if card.Library == "" {
 			card.Library = "all music"
@@ -99,19 +100,20 @@ func (a *app) overviewView(r *http.Request, snapshot store.Snapshot) overviewVie
 
 type serverFormView struct {
 	page
-	Editing   bool
-	Slug      string
-	Kind      store.Kind
-	KindName  string
-	Label     string
-	URL       string
-	Library   string
-	Account   string
-	Auth      store.Auth
-	Enabled   bool
-	Libraries []media.Library
-	Kinds     []kindOption
-	Action    string
+	Editing     bool
+	Slug        string
+	Kind        store.Kind
+	KindName    string
+	Label       string
+	URL         string
+	Library     string
+	LibraryName string
+	Account     string
+	Auth        store.Auth
+	Enabled     bool
+	Libraries   []media.Library
+	Kinds       []kindOption
+	Action      string
 }
 
 func (a *app) formView(r *http.Request, title string) serverFormView {

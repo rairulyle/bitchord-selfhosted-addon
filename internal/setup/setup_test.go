@@ -314,7 +314,7 @@ func TestServerLifecycleThroughTheForms(t *testing.T) {
 	}
 	slug := a.addPlex(fake, "Home")
 	server, _ := a.store.Snapshot().Server(slug)
-	if slug != "plex-1" || server.Token != fakes.PlexToken || server.Auth != store.AuthToken || server.Library != "3" || !server.Enabled {
+	if slug != "plex-1" || server.Token != fakes.PlexToken || server.Auth != store.AuthToken || server.Library != "3" || server.LibraryName != "Music" || !server.Enabled {
 		t.Fatalf("stored = %+v", server)
 	}
 	deadline := time.Now().Add(5 * time.Second)
@@ -324,13 +324,20 @@ func TestServerLifecycleThroughTheForms(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if rec := a.get("/setup"); !strings.Contains(rec.Body.String(), "5 tracks") {
-		t.Fatalf("overview lacks the track count:\n%s", rec.Body.String())
+	if rec := a.get("/setup"); !strings.Contains(rec.Body.String(), "5 tracks") || !strings.Contains(rec.Body.String(), "<dt>Library</dt><dd>Music</dd>") {
+		t.Fatalf("overview lacks the track count or the library name:\n%s", rec.Body.String())
 	}
 
 	edit := a.get("/setup/servers/plex-1/edit")
-	if edit.Code != http.StatusOK || !strings.Contains(edit.Body.String(), `value="Home"`) || !strings.Contains(edit.Body.String(), "leave empty to keep") {
+	if edit.Code != http.StatusOK || !strings.Contains(edit.Body.String(), `value="Home"`) || !strings.Contains(edit.Body.String(), "leave empty to keep") || !strings.Contains(edit.Body.String(), `<option value="3" selected>Music</option>`) {
 		t.Fatalf("edit form: %d %s", edit.Code, edit.Body.String())
+	}
+	a.store.UpdateServer(slug, func(server *store.Server) error {
+		server.LibraryName = ""
+		return nil
+	})
+	if !strings.Contains(a.get("/setup").Body.String(), "<dt>Library</dt><dd>3</dd>") || !strings.Contains(a.get("/setup/servers/plex-1/edit").Body.String(), `<option value="3" selected>3</option>`) {
+		t.Fatal("a server saved without a library name does not fall back to its id")
 	}
 	rec := a.form("/setup/servers/plex-1", url.Values{"label": {"Parents"}, "url": {fake.URL}, "library": {""}, "enabled": {"1"}})
 	if rec.Code != http.StatusSeeOther {

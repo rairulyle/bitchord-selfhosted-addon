@@ -188,7 +188,7 @@ func (a *app) editServerForm(w http.ResponseWriter, r *http.Request) {
 	}
 	view := a.formView(r, "Edit "+registry.DisplayName(kindName(server.Kind), server.Label))
 	view.Editing, view.Slug, view.Kind, view.KindName = true, server.Slug, server.Kind, kindName(server.Kind)
-	view.Label, view.URL, view.Library, view.Account, view.Auth, view.Enabled = server.Label, server.URL, server.Library, server.Account, server.Auth, server.Enabled
+	view.Label, view.URL, view.Library, view.LibraryName, view.Account, view.Auth, view.Enabled = server.Label, server.URL, server.Library, server.LibraryName, server.Account, server.Auth, server.Enabled
 	view.Action = "/setup/servers/" + server.Slug
 	a.render(w, r, http.StatusOK, "server", view)
 }
@@ -245,6 +245,9 @@ func (a *app) updateServer(w http.ResponseWriter, r *http.Request) {
 	form.kind = existing.Kind
 	view := a.formView(r, "Edit "+registry.DisplayName(kindName(existing.Kind), existing.Label))
 	view.Editing, view.Slug, view.Action, view.Account = true, slug, "/setup/servers/"+slug, existing.Account
+	if form.library == existing.Library {
+		view.LibraryName = existing.LibraryName
+	}
 	server, err := a.resolveServer(r.Context(), form, existing)
 	if err != nil {
 		a.renderServerError(w, r, view, form, err)
@@ -296,12 +299,12 @@ func (a *app) resolveServer(ctx context.Context, form submitted, existing store.
 	if err != nil {
 		return server, describe(err)
 	}
-	server.Library = ""
+	server.Library, server.LibraryName = "", ""
 	if form.library != "" {
 		match := false
 		for _, library := range probe.Libraries {
 			if form.library == library.ID || form.library == library.Name {
-				server.Library, match = library.ID, true
+				server.Library, server.LibraryName, match = library.ID, library.Name, true
 			}
 		}
 		if !match {

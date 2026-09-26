@@ -57,7 +57,7 @@
   <label>Library
     <select name="library" id="library">
       <option value="">All music libraries</option>
-      {{if .Library}}<option value="{{.Library}}" selected>{{.Library}}</option>{{end}}
+      {{if .Library}}<option value="{{.Library}}" selected>{{or .LibraryName .Library}}</option>{{end}}
     </select>
   </label>
   <p class="hint">Test the connection to list the server's music libraries.</p>
