@@ -164,7 +164,7 @@
           if (reachable.length === 0) { document.getElementById('url').focus(); result.textContent = 'Signed in, but the addon cannot reach any of your servers. Type the address it should use.'; result.className = 'error'; return; }
           result.textContent = 'Signed in as ' + answer.username + '. Choose a server, then test the connection.';
           result.className = 'ok';
-        }).catch(function () { failed('The addon did not answer. Start over.'); });
+        }, function () { failed('The addon did not answer. Start over.'); });
       };
       setTimeout(poll, 2000);
     });
