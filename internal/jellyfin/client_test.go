@@ -159,6 +159,9 @@ func TestTrackFetchesOneItemAsAFilteredList(t *testing.T) {
 	if err != nil || dashed.ID != fakes.DashedID || dashed.FileRef != "/Items/"+fakes.DashedID+"/File" {
 		t.Fatalf("dashed id: %+v, %v", dashed, err)
 	}
+	if _, err := c.Track(context.Background(), fakes.MovieID); !errors.Is(err, media.ErrNotFound) {
+		t.Fatalf("movie id: %v, want %v", err, media.ErrNotFound)
+	}
 }
 
 func TestErrors(t *testing.T) {

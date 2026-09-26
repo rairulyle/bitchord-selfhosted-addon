@@ -106,7 +106,7 @@ func TestJellyfinStreamDescriptors(t *testing.T) {
 			}
 		})
 	}
-	for name, id := range map[string]string{"unknown": "f999", "no media": "f106"} {
+	for name, id := range map[string]string{"unknown": "f999", "no media": "f106", "movie": fakes.MovieID} {
 		if rec := h.get("/" + testSecret + "/stream/" + id); rec.Code != http.StatusNotFound {
 			t.Errorf("%s: status %d", name, rec.Code)
 		}

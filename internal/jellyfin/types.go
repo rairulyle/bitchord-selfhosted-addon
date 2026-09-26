@@ -16,6 +16,7 @@ type Folder struct {
 
 type Item struct {
 	ID                   string            `json:"Id"`
+	Type                 string            `json:"Type"`
 	Name                 string            `json:"Name"`
 	RunTimeTicks         int64             `json:"RunTimeTicks"`
 	Artists              []string          `json:"Artists"`
