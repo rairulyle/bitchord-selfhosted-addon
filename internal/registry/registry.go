@@ -72,6 +72,7 @@ type Registry struct {
 	entries   map[string]*Entry
 	pending   map[string]*handover
 	handovers sync.WaitGroup
+	changed   chan struct{}
 }
 
 // handover is a restarted server's new entry, waiting for its first refresh
@@ -87,22 +88,21 @@ func (h *handover) cancel() {
 	h.next.stop()
 }
 
-var alreadySettled = func() chan struct{} {
-	ch := make(chan struct{})
-	close(ch)
-	return ch
-}()
-
-// Settled is closed once slug has no handover pending: its restarted entry
-// has taken over, or the handover was cancelled by a later Apply, a removal
-// or Stop. It is closed already when no handover is pending.
-func (r *Registry) Settled(slug string) <-chan struct{} {
+// TokenInUse reports whether the running or the starting entry for slug
+// sends token, and returns a channel closed at the registry's next change, so
+// a caller can wait and ask again without missing one.
+func (r *Registry) TokenInUse(slug, token string) (bool, <-chan struct{}) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if pending, ok := r.pending[slug]; ok {
-		return pending.settled
-	}
-	return alreadySettled
+	entry, running := r.entries[slug]
+	pending, starting := r.pending[slug]
+	used := running && entry.config.Token == token || starting && pending.next.config.Token == token
+	return used, r.changed
+}
+
+func (r *Registry) announceChange() {
+	close(r.changed)
+	r.changed = make(chan struct{})
 }
 
 func New(snapshot store.Snapshot, o Options) *Registry {
@@ -118,7 +118,7 @@ func New(snapshot store.Snapshot, o Options) *Registry {
 	if o.HandoverTimeout <= 0 {
 		o.HandoverTimeout = 30 * time.Second
 	}
-	r := &Registry{opts: o, clientID: snapshot.ClientID, entries: map[string]*Entry{}, pending: map[string]*handover{}}
+	r := &Registry{opts: o, clientID: snapshot.ClientID, entries: map[string]*Entry{}, pending: map[string]*handover{}, changed: make(chan struct{})}
 	r.Apply(snapshot)
 	return r
 }
@@ -174,6 +174,7 @@ func (r *Registry) Healthy() bool {
 func (r *Registry) Apply(snapshot store.Snapshot) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	defer r.announceChange()
 	r.clientID = snapshot.ClientID
 	wanted := map[string]bool{}
 	for _, server := range snapshot.Servers {
@@ -246,6 +247,7 @@ func (r *Registry) handOver(slug string, pending *handover) {
 	r.entries[slug].stop()
 	r.entries[slug] = pending.next
 	close(pending.settled)
+	r.announceChange()
 }
 
 func (e *Entry) follow(server store.Server) {
@@ -299,6 +301,7 @@ func (r *Registry) Stop() {
 		entry.stop()
 		delete(r.entries, slug)
 	}
+	r.announceChange()
 	r.mu.Unlock()
 	r.handovers.Wait()
 }

@@ -49,6 +49,7 @@ type testApp struct {
 	reg     *registry.Registry
 	plexTV  *fakes.PlexTV
 	logs    *syncBuffer
+	log     *slog.Logger
 	now     time.Time
 	cookie  string
 	headers http.Header
@@ -62,7 +63,7 @@ func newTestApp(t *testing.T) *testApp {
 	}
 	logs := &syncBuffer{}
 	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	a := &testApp{t: t, store: s, plexTV: fakes.NewPlexTV(t), logs: logs, now: time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC), headers: http.Header{}}
+	a := &testApp{t: t, store: s, plexTV: fakes.NewPlexTV(t), logs: logs, log: log, now: time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC), headers: http.Header{}}
 	a.reg = registry.New(s.Snapshot(), registry.Options{Interval: time.Hour, Version: "1.2.3", Log: log, PlexTV: a.plexTV.URL, ProbeTimeout: time.Second})
 	t.Cleanup(a.reg.Stop)
 	a.setup = New(Options{Store: s, Registry: a.reg, Version: "1.2.3", Log: log, Now: func() time.Time { return a.now }})
@@ -808,6 +809,13 @@ func TestJellyfinReSignInSignsTheOldSessionOutOnlyOnceSaved(t *testing.T) {
 // refresh of whatever entry starts next, and saves a new sign-in for it.
 func replaceJellyfinSignIn(t *testing.T, a *testApp, fake *fakes.Jellyfin, release <-chan struct{}) (original store.Server, old *registry.Entry) {
 	t.Helper()
+	original, old = addHeldJellyfin(t, a, fake, release)
+	a.resignJellyfin(fake)
+	return original, old
+}
+
+func addHeldJellyfin(t *testing.T, a *testApp, fake *fakes.Jellyfin, release <-chan struct{}) (original store.Server, old *registry.Entry) {
+	t.Helper()
 	if rec := a.form("/setup/servers", url.Values{"kind": {"jellyfin"}, "url": {fake.URL}, "token_ref": {a.jellyfinSignIn(fake)}, "enabled": {"1"}}); rec.Code != http.StatusSeeOther {
 		t.Fatalf("add: %d %s", rec.Code, rec.Body.String())
 	}
@@ -827,10 +835,90 @@ func replaceJellyfinSignIn(t *testing.T, a *testApp, fake *fakes.Jellyfin, relea
 		case <-r.Context().Done():
 		}
 	}
-	if rec := a.form("/setup/servers/jellyfin-1", url.Values{"url": {fake.URL}, "token_ref": {a.jellyfinSignIn(fake)}, "enabled": {"1"}}); rec.Code != http.StatusSeeOther {
-		t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
-	}
 	return original, old
+}
+
+func (a *testApp) resignJellyfin(fake *fakes.Jellyfin) {
+	a.t.Helper()
+	if rec := a.form("/setup/servers/jellyfin-1", url.Values{"url": {fake.URL}, "token_ref": {a.jellyfinSignIn(fake)}, "enabled": {"1"}}); rec.Code != http.StatusSeeOther {
+		a.t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func loggedOut(fake *fakes.Jellyfin, token string) bool {
+	return slices.ContainsFunc(logouts(fake), func(request fakes.Request) bool {
+		return strings.Contains(request.Header.Get("Authorization"), `Token="`+token+`"`)
+	})
+}
+
+func playsThrough(t *testing.T, entry *registry.Entry) {
+	t.Helper()
+	track, ok := entry.Library.Get("f101")
+	if !ok {
+		t.Fatal("the old index lost its track")
+	}
+	res, err := entry.Backend.OpenFile(context.Background(), track, http.MethodGet, http.Header{})
+	if err != nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("audio through the old entry: %v %v", res, err)
+	}
+	res.Body.Close()
+}
+
+func TestASecondSaveDuringAHandoverKeepsTheOldTokenUntilItIsUnused(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	fake := fakes.NewJellyfin(t)
+	release := make(chan struct{})
+	original, old := replaceJellyfinSignIn(t, a, fake, release)
+	first, _ := a.store.Snapshot().Server("jellyfin-1")
+	a.resignJellyfin(fake)
+	second, _ := a.store.Snapshot().Server("jellyfin-1")
+
+	deadline := time.Now().Add(5 * time.Second)
+	for !loggedOut(fake, first.Token) {
+		if time.Now().After(deadline) {
+			t.Fatal("the cancelled sign-in was never signed out")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if loggedOut(fake, original.Token) {
+		t.Fatal("the running entry's token was signed out while it still serves")
+	}
+	if entry, _ := a.reg.Lookup("jellyfin-1"); entry != old {
+		t.Fatal("the old entry stopped serving while both new ones were held")
+	}
+	playsThrough(t, old)
+
+	close(release)
+	a.setup.app.background.Wait()
+	if !loggedOut(fake, original.Token) || loggedOut(fake, second.Token) {
+		t.Fatalf("logouts after the swap = %+v", logouts(fake))
+	}
+}
+
+type stuckRuntime struct {
+	Runtime
+}
+
+func (stuckRuntime) Apply(store.Snapshot) {}
+
+func TestAFailedRestartKeepsTheOldToken(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	fake := fakes.NewJellyfin(t)
+	original, old := addHeldJellyfin(t, a, fake, nil)
+	a.setup = New(Options{Store: a.store, Registry: stuckRuntime{a.reg}, Log: a.log, Now: func() time.Time { return a.now }, SignOutWait: 50 * time.Millisecond})
+	t.Cleanup(a.setup.Close)
+	a.handler = a.setup
+	a.resignJellyfin(fake)
+	a.setup.app.background.Wait()
+	if loggedOut(fake, original.Token) {
+		t.Fatal("signed out the token the running entry still uses")
+	}
+	playsThrough(t, old)
+	if logs := a.logs.String(); !strings.Contains(logs, "old jellyfin session left signed in") || strings.Contains(logs, fakes.JellyfinSessionPrefix) {
+		t.Fatalf("logs:\n%s", logs)
+	}
 }
 
 func TestJellyfinSignOutWaitsForTheHandover(t *testing.T) {
@@ -846,15 +934,7 @@ func TestJellyfinSignOutWaitsForTheHandover(t *testing.T) {
 	if entry, _ := a.reg.Lookup("jellyfin-1"); entry != old {
 		t.Fatal("the new entry took over while its first refresh was held")
 	}
-	track, ok := old.Library.Get("f101")
-	if !ok {
-		t.Fatal("old index lost its track")
-	}
-	res, err := old.Backend.OpenFile(context.Background(), track, http.MethodGet, http.Header{})
-	if err != nil || res.StatusCode != http.StatusOK {
-		t.Fatalf("audio through the old entry: %v %v", res, err)
-	}
-	res.Body.Close()
+	playsThrough(t, old)
 
 	close(release)
 	a.setup.app.background.Wait()
@@ -874,6 +954,7 @@ func TestShutdownStillSignsOutAReplacedSession(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
 	original, _ := replaceJellyfinSignIn(t, a, fake, release)
+	a.reg.Stop()
 	a.setup.Close()
 	if sent := logouts(fake); len(sent) != 1 || !strings.Contains(sent[0].Header.Get("Authorization"), `Token="`+original.Token+`"`) {
 		t.Fatalf("logouts after shutdown = %+v", sent)

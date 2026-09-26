@@ -20,6 +20,7 @@ import (
 const (
 	probeTimeout   = 15 * time.Second
 	signOutTimeout = 3 * time.Second
+	signOutWait    = time.Minute
 )
 
 func (a *app) render(w http.ResponseWriter, r *http.Request, status int, name string, data any) {
@@ -524,27 +525,41 @@ func (a *app) jellyfinSignIn(w http.ResponseWriter, r *http.Request) {
 
 // signOutReplaced revokes the token a Jellyfin sign-in replaced, so the old
 // session does not linger in Jellyfin. A pasted API key is left alone: the
-// user made it by hand. It waits in the background until the registry has
-// stopped using the old token, or the app shuts down, and never fails the
+// user made it by hand. It waits in the background until no running or
+// starting entry for the server sends the old token any more, and leaves the
+// session alone if one still does when the wait ends. It never fails the
 // save.
 func (a *app) signOutReplaced(old, saved store.Server) {
 	if old.Kind != store.Jellyfin || old.Auth != store.AuthJellyfinSignIn || old.Token == saved.Token {
 		return
 	}
-	settled := a.Registry.Settled(old.Slug)
-	a.background.Add(1)
-	go func() {
-		defer a.background.Done()
+	if !a.goBackground(func() { a.signOutWhenUnused(old) }) {
+		a.Log.Info("old jellyfin session left signed in", "server", old.Slug, "host", hostOf(old.URL))
+	}
+}
+
+func (a *app) signOutWhenUnused(old store.Server) {
+	timer := time.NewTimer(a.SignOutWait)
+	defer timer.Stop()
+	used, changed := a.Registry.TokenInUse(old.Slug, old.Token)
+	for waiting := true; used && waiting; used, changed = a.Registry.TokenInUse(old.Slug, old.Token) {
 		select {
-		case <-settled:
+		case <-changed:
+		case <-timer.C:
+			waiting = false
 		case <-a.ctx.Done():
+			waiting = false
 		}
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(a.ctx), signOutTimeout)
-		defer cancel()
-		if err := a.Registry.JellyfinSignOut(ctx, old.URL, old.DeviceID, old.Token); err != nil {
-			a.Log.Warn("old jellyfin session not signed out", "server", old.Slug, "host", hostOf(old.URL))
-		}
-	}()
+	}
+	if used {
+		a.Log.Info("old jellyfin session left signed in", "server", old.Slug, "host", hostOf(old.URL))
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(a.ctx), signOutTimeout)
+	defer cancel()
+	if err := a.Registry.JellyfinSignOut(ctx, old.URL, old.DeviceID, old.Token); err != nil {
+		a.Log.Warn("old jellyfin session not signed out", "server", old.Slug, "host", hostOf(old.URL))
+	}
 }
 
 // describe turns an adapter error into a sentence for the page.

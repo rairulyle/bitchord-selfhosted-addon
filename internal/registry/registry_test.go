@@ -65,22 +65,9 @@ func waitReplaced(t *testing.T, r *Registry, slug string, before *Entry) *Entry 
 	}
 }
 
-func settled(r *Registry, slug string) bool {
-	select {
-	case <-r.Settled(slug):
-		return true
-	default:
-		return false
-	}
-}
-
-func waitSettled(t *testing.T, r *Registry, slug string) {
-	t.Helper()
-	select {
-	case <-r.Settled(slug):
-	case <-time.After(5 * time.Second):
-		t.Fatalf("%s never settled", slug)
-	}
+func inUse(r *Registry, slug, token string) bool {
+	used, _ := r.TokenInUse(slug, token)
+	return used
 }
 
 func stopped(t *testing.T, entry *Entry, what string) {
@@ -129,14 +116,17 @@ func TestAChangedServerAnswersFromTheOldIndexUntilTheNewOneLoads(t *testing.T) {
 	waitHealthy(t, r)
 	before, _ := r.Lookup("plex-1")
 
-	if !settled(r, "plex-1") || !settled(r, "plex-9") {
-		t.Fatal("a slug with no handover is not settled")
+	if !inUse(r, "plex-1", fakes.PlexToken) || inUse(r, "plex-1", "next-token") || inUse(r, "plex-9", fakes.PlexToken) {
+		t.Fatal("token use before the change is wrong")
 	}
-	r.Apply(snapshot(plexServer(next, "plex-1")))
-	waiting := r.Settled("plex-1")
+	next.Token = "next-token"
+	moved := plexServer(next, "plex-1")
+	moved.Token = "next-token"
+	r.Apply(snapshot(moved))
 	<-held
-	if settled(r, "plex-1") {
-		t.Fatal("settled while the handover is pending")
+	used, changed := r.TokenInUse("plex-1", fakes.PlexToken)
+	if !used || !inUse(r, "plex-1", "next-token") {
+		t.Fatal("both tokens must count as in use while the handover is pending")
 	}
 	if entry, _ := r.Lookup("plex-1"); entry != before || len(entry.Library.Search("Closer", 5)) == 0 {
 		t.Fatal("search stopped answering from the old index during the restart")
@@ -145,10 +135,10 @@ func TestAChangedServerAnswersFromTheOldIndexUntilTheNewOneLoads(t *testing.T) {
 		t.Fatal("unhealthy during the restart")
 	}
 	close(release)
-	<-waiting
+	<-changed
 	after, _ := r.Lookup("plex-1")
-	if after == before {
-		t.Fatal("settled before the swap")
+	if after == before || inUse(r, "plex-1", fakes.PlexToken) {
+		t.Fatal("the change was announced before the swap, or the old token still counts")
 	}
 	if !after.Library.Ready() || len(after.Library.Search("Closer", 5)) != 0 || len(after.Library.Search("New Religion", 5)) == 0 {
 		t.Fatal("the new entry does not answer from the new index")
@@ -181,8 +171,7 @@ func TestAChangedServerSwapsWhenItsFirstRefreshTakesTooLong(t *testing.T) {
 	before, _ := r.Lookup("plex-1")
 	r.Apply(snapshot(plexServer(next, "plex-1")))
 	<-held
-	waitSettled(t, r, "plex-1")
-	if after, _ := r.Lookup("plex-1"); after == before || after.Library.Ready() {
+	if after := waitReplaced(t, r, "plex-1", before); after.Library.Ready() {
 		t.Fatal("swapped only after the refresh finished")
 	}
 	stopped(t, before, "old refresher")
@@ -198,9 +187,8 @@ func TestALaterChangeCancelsAPendingHandover(t *testing.T) {
 
 	r.Apply(snapshot(plexServer(next, "plex-1")))
 	<-held
-	pending, waiting := r.pendingEntry("plex-1"), r.Settled("plex-1")
+	pending := r.pendingEntry("plex-1")
 	r.Apply(snapshot(plexServer(old, "plex-1")))
-	<-waiting
 	stopped(t, pending, "cancelled refresher")
 	close(release)
 	time.Sleep(50 * time.Millisecond)
@@ -211,13 +199,26 @@ func TestALaterChangeCancelsAPendingHandover(t *testing.T) {
 	again := fakes.NewPlex(t)
 	holdSections(again, make(chan struct{}))
 	r.Apply(snapshot(plexServer(again, "plex-1")))
-	pending, waiting = r.pendingEntry("plex-1"), r.Settled("plex-1")
+	pending = r.pendingEntry("plex-1")
 	r.Apply(snapshot())
-	<-waiting
 	stopped(t, pending, "refresher of a removed server")
 	stopped(t, before, "old refresher of a removed server")
 	if _, ok := r.Lookup("plex-1"); ok {
 		t.Fatal("removed server still listed")
+	}
+}
+
+func TestAServerThatFailsToRestartKeepsUsingItsToken(t *testing.T) {
+	fake := fakes.NewPlex(t)
+	r := newRegistry(t, snapshot(plexServer(fake, "plex-1")))
+	waitHealthy(t, r)
+	_, changed := r.TokenInUse("plex-1", fakes.PlexToken)
+	broken := plexServer(fake, "plex-1")
+	broken.Kind, broken.Token = "emby", "next-token"
+	r.Apply(snapshot(broken))
+	<-changed
+	if !inUse(r, "plex-1", fakes.PlexToken) || inUse(r, "plex-1", "next-token") {
+		t.Fatal("a failed start must leave the old entry, and its token, in use")
 	}
 }
 
@@ -229,9 +230,13 @@ func TestStopDuringAHandoverEndsBothRefreshers(t *testing.T) {
 	before, _ := r.Lookup("plex-1")
 	r.Apply(snapshot(plexServer(next, "plex-1")))
 	<-held
-	pending, waiting := r.pendingEntry("plex-1"), r.Settled("plex-1")
+	pending := r.pendingEntry("plex-1")
+	_, changed := r.TokenInUse("plex-1", fakes.PlexToken)
 	r.Stop()
-	<-waiting
+	<-changed
+	if inUse(r, "plex-1", fakes.PlexToken) {
+		t.Fatal("a stopped registry still uses the token")
+	}
 	stopped(t, before, "old refresher")
 	stopped(t, pending, "pending refresher")
 	if _, ok := r.Lookup("plex-1"); ok {

@@ -43,7 +43,7 @@ type Runtime interface {
 	PlexServers(ctx context.Context, token string) ([]registry.PlexServer, error)
 	JellyfinSignIn(ctx context.Context, serverURL, username, password string) (registry.Account, error)
 	JellyfinSignOut(ctx context.Context, serverURL, deviceID, token string) error
-	Settled(slug string) <-chan struct{}
+	TokenInUse(slug, token string) (bool, <-chan struct{})
 }
 
 type Options struct {
@@ -52,6 +52,9 @@ type Options struct {
 	Version  string
 	Log      *slog.Logger
 	Now      func() time.Time
+	// SignOutWait caps how long a replaced Jellyfin token waits for the
+	// registry to stop using it before it is signed out.
+	SignOutWait time.Duration
 }
 
 type app struct {
@@ -79,12 +82,24 @@ func (h *Handler) Close() {
 	h.app.background.Wait()
 }
 
+func (a *app) goBackground(work func()) bool {
+	a.background.Add(1)
+	go func() {
+		defer a.background.Done()
+		work()
+	}()
+	return true
+}
+
 func New(o Options) *Handler {
 	if o.Log == nil {
 		o.Log = slog.New(slog.DiscardHandler)
 	}
 	if o.Now == nil {
 		o.Now = time.Now
+	}
+	if o.SignOutWait <= 0 {
+		o.SignOutWait = signOutWait
 	}
 	a := &app{
 		Options:   o,
