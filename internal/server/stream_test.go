@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/fakes"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
-	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plextest"
 )
 
 func TestStreamDescriptors(t *testing.T) {
@@ -93,7 +93,7 @@ func TestStreamAnswers502WhenPlexFails(t *testing.T) {
 		if rec.Code != http.StatusBadGateway {
 			t.Fatalf("status = %d", rec.Code)
 		}
-		if logs := h.logs.String(); !strings.Contains(logs, "PLEX_TOKEN") || strings.Contains(logs, plextest.Token) {
+		if logs := h.logs.String(); !strings.Contains(logs, "PLEX_TOKEN") || strings.Contains(logs, fakes.PlexToken) {
 			t.Fatalf("logs = %s", logs)
 		}
 	})

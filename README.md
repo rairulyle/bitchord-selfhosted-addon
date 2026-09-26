@@ -243,8 +243,8 @@ go test -race ./...
 gofmt -l . && go vet ./...
 ```
 
-Tests run against in-process fake servers in `internal/plextest` and
-`internal/jellyfintest`. No real Plex or Jellyfin server is needed.
+Tests run against in-process fake Plex and Jellyfin servers in
+`internal/fakes`. No real Plex or Jellyfin server is needed.
 
 Each media server is an adapter behind the `Backend` interface in
 `internal/media`. `cmd/addon` picks the adapter from the configuration, and

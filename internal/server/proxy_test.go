@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/fakes"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
-	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plextest"
 )
 
 const flacBody = "0123456789abcdefghijklmnopqrstuvwxyz"
@@ -85,7 +85,7 @@ func TestFileForwardsOnlyWhitelistedHeaders(t *testing.T) {
 		t.Error("a Plex response header outside the whitelist reached the client")
 	}
 	for name, values := range rec.Header() {
-		if strings.Contains(strings.Join(values, ","), plextest.Token) {
+		if strings.Contains(strings.Join(values, ","), fakes.PlexToken) {
 			t.Errorf("token leaked in response header %s", name)
 		}
 	}
@@ -120,7 +120,7 @@ func TestFileAnswers502AndNamesTheVariableWhenTheTokenIsRejected(t *testing.T) {
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	if logs := h.logs.String(); !strings.Contains(logs, "PLEX_TOKEN") || strings.Contains(logs, plextest.Token) {
+	if logs := h.logs.String(); !strings.Contains(logs, "PLEX_TOKEN") || strings.Contains(logs, fakes.PlexToken) {
 		t.Fatalf("logs = %s", logs)
 	}
 }
@@ -257,7 +257,7 @@ func TestArt(t *testing.T) {
 	if last.Path != "/photo/:/transcode" || !strings.Contains(last.Query, "width=600&height=600") {
 		t.Errorf("upstream = %s?%s", last.Path, last.Query)
 	}
-	if strings.Contains(last.Query, plextest.Token) {
+	if strings.Contains(last.Query, fakes.PlexToken) {
 		t.Error("token leaked into the artwork URL")
 	}
 }

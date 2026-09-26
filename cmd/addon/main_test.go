@@ -15,8 +15,7 @@ import (
 	"time"
 
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/config"
-	"github.com/rairulyle/bitchord-selfhosted-addon/internal/jellyfintest"
-	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plextest"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/fakes"
 )
 
 type syncBuffer struct {
@@ -36,16 +35,16 @@ func (b *syncBuffer) String() string {
 	return b.buf.String()
 }
 
-func plexConfig(fake *plextest.Fake) config.Config {
+func plexConfig(fake *fakes.Plex) config.Config {
 	return config.Config{
-		Backend: config.Plex, ServerURL: fake.URL, ServerToken: plextest.Token, Secret: "abcdefghijklmnop",
+		Backend: config.Plex, ServerURL: fake.URL, ServerToken: fakes.PlexToken, Secret: "abcdefghijklmnop",
 		PublicURL: "https://music.example.com", RefreshInterval: time.Hour, Port: 0,
 	}
 }
 
-func jellyfinConfig(fake *jellyfintest.Fake) config.Config {
+func jellyfinConfig(fake *fakes.Jellyfin) config.Config {
 	return config.Config{
-		Backend: config.Jellyfin, ServerURL: fake.URL, ServerToken: jellyfintest.Token, Secret: "abcdefghijklmnop",
+		Backend: config.Jellyfin, ServerURL: fake.URL, ServerToken: fakes.JellyfinToken, Secret: "abcdefghijklmnop",
 		PublicURL: "https://music.example.com", RefreshInterval: time.Hour, Port: 0,
 	}
 }
@@ -110,8 +109,8 @@ func TestServeAnswersOverHTTPAndShutsDownOnCancel(t *testing.T) {
 		cfg    config.Config
 		wantID string
 	}{
-		"plex":     {plexConfig(plextest.New(t)), `"id":"101"`},
-		"jellyfin": {jellyfinConfig(jellyfintest.New(t)), `"id":"f101"`},
+		"plex":     {plexConfig(fakes.NewPlex(t)), `"id":"101"`},
+		"jellyfin": {jellyfinConfig(fakes.NewJellyfin(t)), `"id":"f101"`},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -159,7 +158,7 @@ func TestServeAnswersOverHTTPAndShutsDownOnCancel(t *testing.T) {
 }
 
 func TestServeStopsTheRefreshLoopBeforeShuttingDown(t *testing.T) {
-	fake := plextest.New(t)
+	fake := fakes.NewPlex(t)
 	sectionsBlocked := make(chan struct{})
 	refreshCancelledAt := make(chan time.Time, 1)
 	fake.Extra["/library/sections"] = func(w http.ResponseWriter, r *http.Request) {
@@ -233,7 +232,7 @@ func TestServeStopsTheRefreshLoopBeforeShuttingDown(t *testing.T) {
 }
 
 func TestServeStopsTheRefreshLoopWhenThePortIsTaken(t *testing.T) {
-	fake := plextest.New(t)
+	fake := fakes.NewPlex(t)
 	taken, err := net.Listen("tcp", ":0")
 	if err != nil {
 		t.Fatal(err)

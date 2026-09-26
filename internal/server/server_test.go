@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/fakes"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/library"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
-	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plextest"
 )
 
 const (
@@ -42,7 +42,7 @@ func (b *syncBuffer) String() string {
 }
 
 type harness struct {
-	fake    *plextest.Fake
+	fake    *fakes.Plex
 	server  *server
 	handler http.Handler
 	logs    *syncBuffer
@@ -54,10 +54,10 @@ func newHarness(t *testing.T) *harness {
 
 func newHarnessWith(t *testing.T, options plex.Options, load bool) *harness {
 	t.Helper()
-	fake := plextest.New(t)
+	fake := fakes.NewPlex(t)
 	options.BaseURL = fake.URL
 	if options.Token == "" {
-		options.Token = plextest.Token
+		options.Token = fakes.PlexToken
 	}
 	logs := &syncBuffer{}
 	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -271,7 +271,7 @@ func TestLogsRedactTheSecretAndNeverCarryTheToken(t *testing.T) {
 	h.get("//" + testSecret + "/manifest.json")
 	h.get("/./" + testSecret + "/search?q=closer")
 	logs := h.logs.String()
-	if strings.Contains(logs, testSecret) || strings.Contains(logs, plextest.Token) {
+	if strings.Contains(logs, testSecret) || strings.Contains(logs, fakes.PlexToken) {
 		t.Fatalf("logs leak a credential:\n%s", logs)
 	}
 	for _, want := range []string{`"path":"/***/search"`, `"path":"/***/stream/101"`, `"path":"/health"`, `"status":200`} {
@@ -314,8 +314,8 @@ func TestSearchesAreLoggedWithTheirOutcome(t *testing.T) {
 }
 
 func TestRequestLinesAreDebugOnly(t *testing.T) {
-	fake := plextest.New(t)
-	client := plex.New(plex.Options{BaseURL: fake.URL, Token: plextest.Token})
+	fake := fakes.NewPlex(t)
+	client := plex.New(plex.Options{BaseURL: fake.URL, Token: fakes.PlexToken})
 	logs := &syncBuffer{}
 	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	lib := library.NewLibrary(client, "Music", time.Hour, log)

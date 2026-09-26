@@ -10,13 +10,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/fakes"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/jellyfin"
-	"github.com/rairulyle/bitchord-selfhosted-addon/internal/jellyfintest"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/library"
 )
 
 type jellyfinHarness struct {
-	fake    *jellyfintest.Fake
+	fake    *fakes.Jellyfin
 	server  *server
 	handler http.Handler
 	logs    *syncBuffer
@@ -24,7 +24,7 @@ type jellyfinHarness struct {
 
 func newJellyfinHarness(t *testing.T, key string, load bool) *jellyfinHarness {
 	t.Helper()
-	fake := jellyfintest.New(t)
+	fake := fakes.NewJellyfin(t)
 	client := jellyfin.New(jellyfin.Options{BaseURL: fake.URL, APIKey: key, Version: "1.2.3"})
 	logs := &syncBuffer{}
 	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -47,7 +47,7 @@ func (h *jellyfinHarness) get(path string) *httptest.ResponseRecorder {
 }
 
 func TestJellyfinManifestUsesTheBackendName(t *testing.T) {
-	h := newJellyfinHarness(t, jellyfintest.Token, true)
+	h := newJellyfinHarness(t, fakes.JellyfinToken, true)
 	got := decode[map[string]any](t, h.get("/"+testSecret+"/manifest.json"))
 	want := map[string]any{
 		"id": "app.bitchord-selfhosted-addon.jellyfin", "name": "Jellyfin", "version": "1.2.3",
@@ -64,7 +64,7 @@ func TestJellyfinManifestUsesTheBackendName(t *testing.T) {
 }
 
 func TestJellyfinSearchMapsTracks(t *testing.T) {
-	h := newJellyfinHarness(t, jellyfintest.Token, true)
+	h := newJellyfinHarness(t, fakes.JellyfinToken, true)
 	rec := h.get("/" + testSecret + "/search?q=New+Religion+Teddy+Swims")
 	got := decode[map[string]any](t, rec)
 	want := map[string]any{
@@ -80,7 +80,7 @@ func TestJellyfinSearchMapsTracks(t *testing.T) {
 }
 
 func TestJellyfinStreamDescriptors(t *testing.T) {
-	h := newJellyfinHarness(t, jellyfintest.Token, true)
+	h := newJellyfinHarness(t, fakes.JellyfinToken, true)
 	cases := map[string]struct {
 		id   string
 		want map[string]any
@@ -114,7 +114,7 @@ func TestJellyfinStreamDescriptors(t *testing.T) {
 }
 
 func TestJellyfinFileWithRangeAndDashedID(t *testing.T) {
-	h := newJellyfinHarness(t, jellyfintest.Token, true)
+	h := newJellyfinHarness(t, fakes.JellyfinToken, true)
 	rec := h.do(http.MethodGet, "/"+testSecret+"/file/f101", http.Header{"Range": {"bytes=10-19"}})
 	if rec.Code != http.StatusPartialContent || rec.Body.String() != "abcdefghij" || rec.Header().Get("Content-Range") != "bytes 10-19/36" {
 		t.Fatalf("status %d, body %q, headers %v", rec.Code, rec.Body.String(), rec.Header())
@@ -126,14 +126,14 @@ func TestJellyfinFileWithRangeAndDashedID(t *testing.T) {
 	if last := requests[len(requests)-1]; last.Path != "/Items/f101/File" {
 		t.Errorf("file fetched through %s", last.Path)
 	}
-	dashed := h.get("/" + testSecret + "/file/" + jellyfintest.DashedID)
+	dashed := h.get("/" + testSecret + "/file/" + fakes.DashedID)
 	if dashed.Code != http.StatusOK || dashed.Body.String() != "dashed-bytes" {
 		t.Fatalf("dashed id: status %d, body %q", dashed.Code, dashed.Body.String())
 	}
 	if gone := h.get("/" + testSecret + "/file/f103"); gone.Code != http.StatusNotFound {
 		t.Errorf("file gone from jellyfin: status %d", gone.Code)
 	}
-	cold := newJellyfinHarness(t, jellyfintest.Token, false)
+	cold := newJellyfinHarness(t, fakes.JellyfinToken, false)
 	if rec := cold.get("/" + testSecret + "/file/f102"); rec.Code != http.StatusOK || rec.Body.String() != "mp3-bytes" {
 		t.Errorf("index miss: status %d, body %q", rec.Code, rec.Body.String())
 	}
@@ -148,7 +148,7 @@ func TestJellyfinFileWithRangeAndDashedID(t *testing.T) {
 }
 
 func TestJellyfinArtCarriesTheTag(t *testing.T) {
-	h := newJellyfinHarness(t, jellyfintest.Token, true)
+	h := newJellyfinHarness(t, fakes.JellyfinToken, true)
 	own := h.get("/" + testSecret + "/art/f101")
 	if own.Code != http.StatusOK || own.Body.String() != "jpeg:/Items/f101/Images/Primary?fillWidth=600&fillHeight=600&quality=90&tag=tf101" {
 		t.Fatalf("own art: status %d, body %q", own.Code, own.Body.String())
@@ -170,13 +170,13 @@ func TestJellyfinRejectedKeyIsNamedInTheLog(t *testing.T) {
 	if rec := cold.get("/" + testSecret + "/stream/f101"); rec.Code != http.StatusBadGateway {
 		t.Fatalf("stream: status = %d", rec.Code)
 	}
-	revoked := newJellyfinHarness(t, jellyfintest.Token, true)
+	revoked := newJellyfinHarness(t, fakes.JellyfinToken, true)
 	revoked.server.Backend = jellyfin.New(jellyfin.Options{BaseURL: revoked.fake.URL, APIKey: "wrong"})
 	if rec := revoked.get("/" + testSecret + "/file/f101"); rec.Code != http.StatusBadGateway {
 		t.Fatalf("file after the key was revoked: status = %d", rec.Code)
 	}
 	for _, logs := range []string{cold.logs.String(), revoked.logs.String()} {
-		if !strings.Contains(logs, "JELLYFIN_API_KEY") || strings.Contains(logs, jellyfintest.Token) || strings.Contains(logs, "wrong") {
+		if !strings.Contains(logs, "JELLYFIN_API_KEY") || strings.Contains(logs, fakes.JellyfinToken) || strings.Contains(logs, "wrong") {
 			t.Fatalf("logs = %s", logs)
 		}
 	}
