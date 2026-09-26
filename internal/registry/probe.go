@@ -73,11 +73,14 @@ func (r *Registry) PlexClaim(ctx context.Context, id int) (Account, bool, error)
 	return Account{Token: account.Token, Username: account.Username}, true, nil
 }
 
-// JellyfinSignIn signs in as a new device each time: Jellyfin ends the other
-// sessions of a device when it signs in again, so two servers added with the
-// same account must not share one.
-func (r *Registry) JellyfinSignIn(ctx context.Context, serverURL, username, password string) (Account, error) {
-	deviceID := rand.Text()
+// JellyfinSignIn signs in as deviceID, or as a new device when it is empty:
+// Jellyfin ends the other sessions of a device when it signs in again, so two
+// servers added with the same account must not share one, while signing a
+// server in again under its own device replaces its old session.
+func (r *Registry) JellyfinSignIn(ctx context.Context, serverURL, deviceID, username, password string) (Account, error) {
+	if deviceID == "" {
+		deviceID = rand.Text()
+	}
 	session, err := jellyfin.SignIn(ctx, r.opts.HTTP, serverURL, deviceID, r.opts.Version, username, password)
 	if err != nil {
 		return Account{}, err

@@ -41,7 +41,7 @@ type Runtime interface {
 	PlexPIN(ctx context.Context) (registry.PIN, error)
 	PlexClaim(ctx context.Context, id int) (registry.Account, bool, error)
 	PlexServers(ctx context.Context, token string) ([]registry.PlexServer, error)
-	JellyfinSignIn(ctx context.Context, serverURL, username, password string) (registry.Account, error)
+	JellyfinSignIn(ctx context.Context, serverURL, deviceID, username, password string) (registry.Account, error)
 }
 
 type Options struct {

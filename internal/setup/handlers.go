@@ -460,6 +460,7 @@ type jellyfinSignInRequest struct {
 	URL      string `json:"url"`
 	Username string `json:"username"`
 	Password string `json:"password"`
+	Slug     string `json:"slug"`
 }
 
 func (a *app) jellyfinSignIn(w http.ResponseWriter, r *http.Request) {
@@ -479,7 +480,7 @@ func (a *app) jellyfinSignIn(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), probeTimeout)
 	defer cancel()
-	account, err := a.Registry.JellyfinSignIn(ctx, req.URL, req.Username, req.Password)
+	account, err := a.Registry.JellyfinSignIn(ctx, req.URL, a.jellyfinDeviceID(req.Slug), req.Username, req.Password)
 	switch {
 	case errors.Is(err, media.ErrUnauthorized):
 		a.Log.Warn("jellyfin sign-in rejected", "host", hostOf(req.URL), "username", req.Username)
@@ -493,6 +494,17 @@ func (a *app) jellyfinSignIn(w http.ResponseWriter, r *http.Request) {
 	ref := a.refs.put(store.Jellyfin, account.Token, account.Username, account.DeviceID)
 	a.Log.Info("jellyfin sign-in completed", "host", hostOf(req.URL), "username", account.Username)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "username": account.Username, "ref": ref})
+}
+
+// jellyfinDeviceID is the stored device of the signed-in Jellyfin server
+// being edited, so signing it in again replaces its session instead of
+// adding a device. Anything else signs in as a new device.
+func (a *app) jellyfinDeviceID(slug string) string {
+	server, ok := a.Store.Snapshot().Server(slug)
+	if !ok || server.Kind != store.Jellyfin || server.Auth != store.AuthJellyfinSignIn {
+		return ""
+	}
+	return server.DeviceID
 }
 
 // describe turns an adapter error into a sentence for the page.
