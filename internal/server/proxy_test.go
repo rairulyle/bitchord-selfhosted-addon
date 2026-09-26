@@ -120,7 +120,7 @@ func TestFileAnswers502AndNamesTheVariableWhenTheTokenIsRejected(t *testing.T) {
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	if logs := h.logs.String(); !strings.Contains(logs, "PLEX_TOKEN") || strings.Contains(logs, fakes.PlexToken) {
+	if logs := h.logs.String(); !strings.Contains(logs, "the Plex token") || strings.Contains(logs, fakes.PlexToken) {
 		t.Fatalf("logs = %s", logs)
 	}
 }

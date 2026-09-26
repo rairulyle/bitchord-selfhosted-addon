@@ -176,7 +176,7 @@ func TestJellyfinRejectedKeyIsNamedInTheLog(t *testing.T) {
 		t.Fatalf("file after the key was revoked: status = %d", rec.Code)
 	}
 	for _, logs := range []string{cold.logs.String(), revoked.logs.String()} {
-		if !strings.Contains(logs, "JELLYFIN_API_KEY") || strings.Contains(logs, fakes.JellyfinToken) || strings.Contains(logs, "wrong") {
+		if !strings.Contains(logs, "the Jellyfin API key") || strings.Contains(logs, fakes.JellyfinToken) || strings.Contains(logs, "wrong") {
 			t.Fatalf("logs = %s", logs)
 		}
 	}

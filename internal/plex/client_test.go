@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -140,6 +141,40 @@ func TestEveryRequestCarriesTheTokenAsAHeaderOnly(t *testing.T) {
 	}
 }
 
+func TestLibrariesListsEveryMusicSection(t *testing.T) {
+	got, err := client(fakes.NewPlex(t), 1000).Libraries(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []media.Library{{ID: "3", Name: "Music"}, {ID: "5", Name: "Audiobooks"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Libraries = %v", got)
+	}
+}
+
+func TestVersionComesFromIdentity(t *testing.T) {
+	got, err := client(fakes.NewPlex(t), 1000).Version(context.Background())
+	if err != nil || got != "1.42.0.9999" {
+		t.Fatalf("Version = %q, %v", got, err)
+	}
+}
+
+func TestClientIdentifierIsSentWhenSet(t *testing.T) {
+	fake := fakes.NewPlex(t)
+	c := plex.New(plex.Options{BaseURL: fake.URL, Token: fakes.PlexToken, ClientID: "addon-uuid"})
+	if _, err := c.Version(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := fake.Requests()[0].Header.Get("X-Plex-Client-Identifier"); got != "addon-uuid" {
+		t.Fatalf("X-Plex-Client-Identifier = %q", got)
+	}
+	without := fakes.NewPlex(t)
+	client(without, 1000).Version(context.Background())
+	if got := without.Requests()[0].Header.Get("X-Plex-Client-Identifier"); got != "" {
+		t.Fatalf("identifier sent without ClientID: %q", got)
+	}
+}
+
 func TestTrackReturnsStreamDetails(t *testing.T) {
 	track, err := client(fakes.NewPlex(t), 1000).Track(context.Background(), "101")
 	if err != nil {
@@ -169,7 +204,7 @@ func TestErrors(t *testing.T) {
 		fake := fakes.NewPlex(t)
 		c := plex.New(plex.Options{BaseURL: fake.URL, Token: "wrong"})
 		_, err := c.AllTracks(context.Background(), "")
-		if !errors.Is(err, media.ErrUnauthorized) || !strings.Contains(err.Error(), "PLEX_TOKEN") {
+		if !errors.Is(err, media.ErrUnauthorized) || !strings.Contains(err.Error(), "the Plex token") {
 			t.Fatalf("err = %v", err)
 		}
 	})

@@ -12,7 +12,10 @@ import (
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
 )
 
-const PlexToken = "fake-plex-token"
+const (
+	PlexToken     = "fake-plex-token"
+	PlexMachineID = "abc123machine"
+)
 
 type Plex struct {
 	recorder
@@ -51,6 +54,8 @@ func (f *Plex) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch path := r.URL.Path; {
+	case path == "/identity":
+		writeJSON(w, map[string]any{"MediaContainer": map[string]any{"version": "1.42.0.9999", "machineIdentifier": PlexMachineID}})
 	case path == "/library/sections":
 		writeJSON(w, map[string]any{"MediaContainer": map[string]any{"Directory": f.Sections}})
 	case strings.HasPrefix(path, "/library/sections/") && strings.HasSuffix(path, "/all"):

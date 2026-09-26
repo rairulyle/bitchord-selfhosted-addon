@@ -52,6 +52,8 @@ func (f *Jellyfin) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch path := r.URL.Path; {
+	case path == "/System/Info":
+		writeJSON(w, map[string]any{"Version": "10.10.7", "ServerName": "fake"})
 	case path == "/Library/MediaFolders":
 		writeJSON(w, map[string]any{"Items": f.Folders})
 	case path == "/Items" && r.URL.Query().Has("Ids"):

@@ -84,6 +84,35 @@ func TestRefreshSwapsTheIndexAndSkipsUnplayableTracks(t *testing.T) {
 	}
 }
 
+func TestStatsFollowEveryRefresh(t *testing.T) {
+	source := &scriptedSource{answers: []func() ([]media.Track, error){
+		ok(track("1", "First Song"), media.Track{ID: "2", Title: "Broken"}),
+		fails("server down"),
+		ok(track("1", "First Song"), track("3", "Third Song")),
+	}}
+	lib := NewLibrary(source, "", time.Minute, quiet)
+	if got := lib.Stats(); got != (Stats{}) {
+		t.Fatalf("stats before any load = %+v", got)
+	}
+	before := time.Now()
+	if err := lib.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := lib.Stats()
+	if got.Tracks != 1 || got.Refreshed.Before(before) || got.LastError != "" {
+		t.Fatalf("stats after a load = %+v", got)
+	}
+	lib.Refresh(context.Background())
+	failed := lib.Stats()
+	if failed.Tracks != 1 || failed.Refreshed != got.Refreshed || failed.LastError != "server down" {
+		t.Fatalf("stats after a failure = %+v", failed)
+	}
+	lib.Refresh(context.Background())
+	if recovered := lib.Stats(); recovered.Tracks != 2 || recovered.LastError != "" || !recovered.Refreshed.After(got.Refreshed) {
+		t.Fatalf("stats after recovery = %+v", recovered)
+	}
+}
+
 func TestFailedRefreshKeepsThePreviousIndex(t *testing.T) {
 	source := &scriptedSource{answers: []func() ([]media.Track, error){ok(track("1", "First Song")), fails("server down")}}
 	lib := NewLibrary(source, "", time.Minute, quiet)

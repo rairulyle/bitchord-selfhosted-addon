@@ -48,7 +48,7 @@ func New(o Options) *Client {
 		http: media.NewClient(media.ClientOptions{
 			BaseURL:       o.BaseURL,
 			Name:          "jellyfin",
-			TokenVar:      "JELLYFIN_API_KEY",
+			TokenVar:      "the Jellyfin API key",
 			Authorize:     func(r *http.Request) { r.Header.Set("Authorization", authorization) },
 			HeaderTimeout: o.HeaderTimeout,
 			CallTimeout:   o.CallTimeout,
@@ -59,7 +59,29 @@ func New(o Options) *Client {
 
 func (c *Client) Name() string { return "Jellyfin" }
 
-func (c *Client) musicFolders(ctx context.Context, filter string) ([]Folder, error) {
+func (c *Client) Version(ctx context.Context) (string, error) {
+	var answer struct {
+		Version string `json:"Version"`
+	}
+	if err := c.http.GetJSON(ctx, "/System/Info", nil, &answer); err != nil {
+		return "", err
+	}
+	return answer.Version, nil
+}
+
+func (c *Client) Libraries(ctx context.Context) ([]media.Library, error) {
+	folders, err := c.folders(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]media.Library, len(folders))
+	for i, folder := range folders {
+		out[i] = media.Library{ID: folder.ID, Name: folder.Name}
+	}
+	return out, nil
+}
+
+func (c *Client) folders(ctx context.Context) ([]Folder, error) {
 	var answer struct {
 		Items []Folder `json:"Items"`
 	}
@@ -68,9 +90,20 @@ func (c *Client) musicFolders(ctx context.Context, filter string) ([]Folder, err
 	}
 	var out []Folder
 	for _, folder := range answer.Items {
-		if !strings.EqualFold(folder.CollectionType, "music") {
-			continue
+		if strings.EqualFold(folder.CollectionType, "music") {
+			out = append(out, folder)
 		}
+	}
+	return out, nil
+}
+
+func (c *Client) musicFolders(ctx context.Context, filter string) ([]Folder, error) {
+	folders, err := c.folders(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []Folder
+	for _, folder := range folders {
 		if filter == "" || filter == folder.ID || filter == folder.Name {
 			out = append(out, folder)
 		}

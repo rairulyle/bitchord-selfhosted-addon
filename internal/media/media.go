@@ -32,8 +32,16 @@ type Track struct {
 
 func (t Track) Playable() bool { return t.ID != "" && t.FileRef != "" }
 
+// Library is one music library on a server, as the setup page lists them.
+type Library struct {
+	ID   string
+	Name string
+}
+
 type Backend interface {
 	Name() string
+	Version(ctx context.Context) (string, error)
+	Libraries(ctx context.Context) ([]Library, error)
 	AllTracks(ctx context.Context, library string) ([]Track, error)
 	Track(ctx context.Context, id string) (Track, error)
 	OpenFile(ctx context.Context, track Track, method string, header http.Header) (*http.Response, error)

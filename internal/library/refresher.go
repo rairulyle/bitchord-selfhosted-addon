@@ -3,6 +3,7 @@ package library
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -15,6 +16,12 @@ type Source interface {
 	AllTracks(ctx context.Context, library string) ([]media.Track, error)
 }
 
+type Stats struct {
+	Tracks    int
+	Refreshed time.Time
+	LastError string
+}
+
 type Library struct {
 	source   Source
 	filter   string
@@ -22,6 +29,8 @@ type Library struct {
 	log      *slog.Logger
 	index    atomic.Pointer[Index]
 	sleep    func(context.Context, time.Duration) error
+	mu       sync.Mutex
+	stats    Stats
 }
 
 func NewLibrary(source Source, filter string, interval time.Duration, log *slog.Logger) *Library {
@@ -29,6 +38,18 @@ func NewLibrary(source Source, filter string, interval time.Duration, log *slog.
 }
 
 func (l *Library) Ready() bool { return l.index.Load() != nil }
+
+func (l *Library) Stats() Stats {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.stats
+}
+
+func (l *Library) note(update func(*Stats)) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	update(&l.stats)
+}
 
 func (l *Library) Search(query string, limit int) []media.Track { return l.Find(query, limit).Tracks }
 
@@ -52,6 +73,7 @@ func (l *Library) Refresh(ctx context.Context) error {
 	started := time.Now()
 	all, err := l.source.AllTracks(ctx, l.filter)
 	if err != nil {
+		l.note(func(s *Stats) { s.LastError = err.Error() })
 		return err
 	}
 	tracks := make([]media.Track, 0, len(all))
@@ -62,6 +84,7 @@ func (l *Library) Refresh(ctx context.Context) error {
 	}
 	next := NewIndex(tracks)
 	previous := l.index.Swap(next)
+	l.note(func(s *Stats) { *s = Stats{Tracks: len(tracks), Refreshed: time.Now()} })
 	removed := 0
 	if previous != nil {
 		removed = previous.missingFrom(next)
