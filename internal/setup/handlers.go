@@ -268,7 +268,7 @@ func (a *app) updateServer(w http.ResponseWriter, r *http.Request) {
 	}
 	a.apply()
 	a.Log.Info("server updated", "server", slug, "source", string(server.Kind), "host", hostOf(server.URL), "auth", string(server.Auth))
-	a.signOutReplaced(r.Context(), existing, server)
+	a.signOutReplaced(existing, server)
 	redirectNotice(w, r, registry.DisplayName(kindName(server.Kind), server.Label)+" saved.")
 }
 
@@ -524,16 +524,27 @@ func (a *app) jellyfinSignIn(w http.ResponseWriter, r *http.Request) {
 
 // signOutReplaced revokes the token a Jellyfin sign-in replaced, so the old
 // session does not linger in Jellyfin. A pasted API key is left alone: the
-// user made it by hand. It is best effort and never fails the save.
-func (a *app) signOutReplaced(ctx context.Context, old, saved store.Server) {
+// user made it by hand. It waits in the background until the registry has
+// stopped using the old token, or the app shuts down, and never fails the
+// save.
+func (a *app) signOutReplaced(old, saved store.Server) {
 	if old.Kind != store.Jellyfin || old.Auth != store.AuthJellyfinSignIn || old.Token == saved.Token {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), signOutTimeout)
-	defer cancel()
-	if err := a.Registry.JellyfinSignOut(ctx, old.URL, old.DeviceID, old.Token); err != nil {
-		a.Log.Warn("old jellyfin session not signed out", "server", old.Slug, "host", hostOf(old.URL))
-	}
+	settled := a.Registry.Settled(old.Slug)
+	a.background.Add(1)
+	go func() {
+		defer a.background.Done()
+		select {
+		case <-settled:
+		case <-a.ctx.Done():
+		}
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(a.ctx), signOutTimeout)
+		defer cancel()
+		if err := a.Registry.JellyfinSignOut(ctx, old.URL, old.DeviceID, old.Token); err != nil {
+			a.Log.Warn("old jellyfin session not signed out", "server", old.Slug, "host", hostOf(old.URL))
+		}
+	}()
 }
 
 // describe turns an adapter error into a sentence for the page.

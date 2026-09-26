@@ -2,6 +2,7 @@ package setup
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -43,6 +44,7 @@ func (b *syncBuffer) String() string {
 type testApp struct {
 	t       *testing.T
 	handler http.Handler
+	setup   *Handler
 	store   *store.Store
 	reg     *registry.Registry
 	plexTV  *fakes.PlexTV
@@ -63,7 +65,9 @@ func newTestApp(t *testing.T) *testApp {
 	a := &testApp{t: t, store: s, plexTV: fakes.NewPlexTV(t), logs: logs, now: time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC), headers: http.Header{}}
 	a.reg = registry.New(s.Snapshot(), registry.Options{Interval: time.Hour, Version: "1.2.3", Log: log, PlexTV: a.plexTV.URL, ProbeTimeout: time.Second})
 	t.Cleanup(a.reg.Stop)
-	a.handler = New(Options{Store: s, Registry: a.reg, Version: "1.2.3", Log: log, Now: func() time.Time { return a.now }})
+	a.setup = New(Options{Store: s, Registry: a.reg, Version: "1.2.3", Log: log, Now: func() time.Time { return a.now }})
+	t.Cleanup(a.setup.Close)
+	a.handler = a.setup
 	return a
 }
 
@@ -783,6 +787,7 @@ func TestJellyfinReSignInSignsTheOldSessionOutOnlyOnceSaved(t *testing.T) {
 	if rec := a.form("/setup/servers/jellyfin-1", url.Values{"url": {fake.URL}, "token_ref": {a.jellyfinSignIn(fake)}, "enabled": {"1"}}); rec.Code != http.StatusSeeOther {
 		t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
 	}
+	a.setup.app.background.Wait()
 	saved, _ := a.store.Snapshot().Server("jellyfin-1")
 	if saved.Token == original.Token || saved.DeviceID == original.DeviceID || saved.DeviceID == "" {
 		t.Fatalf("after the save = %+v, before = %+v", saved, original)
@@ -796,6 +801,82 @@ func TestJellyfinReSignInSignsTheOldSessionOutOnlyOnceSaved(t *testing.T) {
 	}
 	if strings.Contains(a.logs.String(), fakes.JellyfinSessionPrefix) {
 		t.Fatal("a token reached the logs")
+	}
+}
+
+// replaceJellyfinSignIn adds a signed-in Jellyfin server, holds the first
+// refresh of whatever entry starts next, and saves a new sign-in for it.
+func replaceJellyfinSignIn(t *testing.T, a *testApp, fake *fakes.Jellyfin, release <-chan struct{}) (original store.Server, old *registry.Entry) {
+	t.Helper()
+	if rec := a.form("/setup/servers", url.Values{"kind": {"jellyfin"}, "url": {fake.URL}, "token_ref": {a.jellyfinSignIn(fake)}, "enabled": {"1"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("add: %d %s", rec.Code, rec.Body.String())
+	}
+	original, _ = a.store.Snapshot().Server("jellyfin-1")
+	deadline := time.Now().Add(5 * time.Second)
+	for !a.reg.Healthy() {
+		if time.Now().After(deadline) {
+			t.Fatal("registry never indexed the server")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	old, _ = a.reg.Lookup("jellyfin-1")
+	fake.Extra["/Items"] = func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+			w.WriteHeader(http.StatusServiceUnavailable)
+		case <-r.Context().Done():
+		}
+	}
+	if rec := a.form("/setup/servers/jellyfin-1", url.Values{"url": {fake.URL}, "token_ref": {a.jellyfinSignIn(fake)}, "enabled": {"1"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
+	}
+	return original, old
+}
+
+func TestJellyfinSignOutWaitsForTheHandover(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	fake := fakes.NewJellyfin(t)
+	release := make(chan struct{})
+	original, old := replaceJellyfinSignIn(t, a, fake, release)
+
+	if len(logouts(fake)) != 0 {
+		t.Fatal("the old session was signed out before the new entry took over")
+	}
+	if entry, _ := a.reg.Lookup("jellyfin-1"); entry != old {
+		t.Fatal("the new entry took over while its first refresh was held")
+	}
+	track, ok := old.Library.Get("f101")
+	if !ok {
+		t.Fatal("old index lost its track")
+	}
+	res, err := old.Backend.OpenFile(context.Background(), track, http.MethodGet, http.Header{})
+	if err != nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("audio through the old entry: %v %v", res, err)
+	}
+	res.Body.Close()
+
+	close(release)
+	a.setup.app.background.Wait()
+	sent := logouts(fake)
+	if len(sent) != 1 || !strings.Contains(sent[0].Header.Get("Authorization"), `Token="`+original.Token+`"`) {
+		t.Fatalf("logouts = %+v", sent)
+	}
+	if entry, _ := a.reg.Lookup("jellyfin-1"); entry == old {
+		t.Fatal("signed out before the swap")
+	}
+}
+
+func TestShutdownStillSignsOutAReplacedSession(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	fake := fakes.NewJellyfin(t)
+	release := make(chan struct{})
+	defer close(release)
+	original, _ := replaceJellyfinSignIn(t, a, fake, release)
+	a.setup.Close()
+	if sent := logouts(fake); len(sent) != 1 || !strings.Contains(sent[0].Header.Get("Authorization"), `Token="`+original.Token+`"`) {
+		t.Fatalf("logouts after shutdown = %+v", sent)
 	}
 }
 

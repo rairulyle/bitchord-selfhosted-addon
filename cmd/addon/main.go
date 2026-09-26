@@ -110,6 +110,7 @@ func serve(ctx context.Context, cfg config.Config, st *store.Store, log *slog.Lo
 	}
 	mux := http.NewServeMux()
 	admin := setup.New(setup.Options{Store: st, Registry: reg, Version: version, Log: log})
+	defer admin.Close()
 	mux.Handle("/setup", admin)
 	mux.Handle("/setup/", admin)
 	mux.Handle("/", server.New(server.Options{

@@ -43,6 +43,7 @@ type Runtime interface {
 	PlexServers(ctx context.Context, token string) ([]registry.PlexServer, error)
 	JellyfinSignIn(ctx context.Context, serverURL, username, password string) (registry.Account, error)
 	JellyfinSignOut(ctx context.Context, serverURL, deviceID, token string) error
+	Settled(slug string) <-chan struct{}
 }
 
 type Options struct {
@@ -55,15 +56,30 @@ type Options struct {
 
 type app struct {
 	Options
-	pages     map[string]*template.Template
-	logins    *limiter
-	signins   *limiter
-	refs      *tokenRefs
-	verifySem chan struct{}
-	applyMu   sync.Mutex
+	pages      map[string]*template.Template
+	logins     *limiter
+	signins    *limiter
+	refs       *tokenRefs
+	verifySem  chan struct{}
+	applyMu    sync.Mutex
+	ctx        context.Context
+	shutdown   context.CancelFunc
+	background sync.WaitGroup
 }
 
-func New(o Options) http.Handler {
+// Handler is the setup page. Close ends the work a save left running in the
+// background and waits for it.
+type Handler struct {
+	http.Handler
+	app *app
+}
+
+func (h *Handler) Close() {
+	h.app.shutdown()
+	h.app.background.Wait()
+}
+
+func New(o Options) *Handler {
 	if o.Log == nil {
 		o.Log = slog.New(slog.DiscardHandler)
 	}
@@ -78,7 +94,8 @@ func New(o Options) http.Handler {
 		refs:      newTokenRefs(o.Now, tokenRefTTL),
 		verifySem: make(chan struct{}, verifyPasswords),
 	}
-	return a.handler()
+	a.ctx, a.shutdown = context.WithCancel(context.Background())
+	return &Handler{Handler: a.handler(), app: a}
 }
 
 func parsePages() map[string]*template.Template {
