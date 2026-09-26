@@ -18,11 +18,9 @@ import (
 	"time"
 
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/config"
-	"github.com/rairulyle/bitchord-selfhosted-addon/internal/jellyfin"
-	"github.com/rairulyle/bitchord-selfhosted-addon/internal/library"
-	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
-	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/registry"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/server"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/store"
 )
 
 var version = "dev"
@@ -92,33 +90,23 @@ func healthcheck(url string) int {
 	return 0
 }
 
-func newBackend(cfg config.Config, log *slog.Logger) (media.Backend, error) {
-	switch cfg.Backend {
-	case config.Plex:
-		return plex.New(plex.Options{BaseURL: cfg.ServerURL, Token: cfg.ServerToken, Log: log}), nil
-	case config.Jellyfin:
-		return jellyfin.New(jellyfin.Options{BaseURL: cfg.ServerURL, APIKey: cfg.ServerToken, Version: version}), nil
-	default:
-		return nil, fmt.Errorf("unknown backend %q", cfg.Backend)
+// The environment still names one server until the store takes over; it is
+// run as <kind>-1 so the routes already carry the slug.
+func snapshotFromConfig(cfg config.Config) store.Snapshot {
+	kind := store.Kind(cfg.Backend)
+	return store.Snapshot{
+		PublicURL: cfg.PublicURL, Secret: cfg.Secret, ClientID: "env",
+		Servers: []store.Server{{
+			Slug: string(kind) + "-1", Kind: kind, Label: cfg.AddonName, URL: cfg.ServerURL, Token: cfg.ServerToken,
+			Auth: store.AuthToken, Library: cfg.Library, Enabled: true,
+		}},
 	}
 }
 
 func serve(ctx context.Context, cfg config.Config, log *slog.Logger, listening func(net.Addr)) error {
-	backend, err := newBackend(cfg, log)
-	if err != nil {
-		return err
-	}
-	lib := library.NewLibrary(backend, cfg.Library, cfg.RefreshInterval, log)
-	runCtx, stopRun := context.WithCancel(ctx)
-	runDone := make(chan struct{})
-	go func() {
-		defer close(runDone)
-		lib.Run(runCtx)
-	}()
-	defer func() {
-		stopRun()
-		<-runDone
-	}()
+	snapshot := snapshotFromConfig(cfg)
+	reg := registry.New(snapshot, registry.Options{Interval: cfg.RefreshInterval, Version: version, Log: log})
+	defer reg.Stop()
 
 	listener, err := net.Listen("tcp", ":"+strconv.Itoa(cfg.Port))
 	if err != nil {
@@ -126,8 +114,8 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger, listening f
 	}
 	srv := &http.Server{
 		Handler: server.New(server.Options{
-			Secret: cfg.Secret, PublicURL: cfg.PublicURL, AddonName: cfg.AddonName, Version: version,
-			Library: lib, Backend: backend, Log: log,
+			Site:     func() server.Site { return server.Site{PublicURL: snapshot.PublicURL, Secret: snapshot.Secret} },
+			Registry: reg, Version: version, Log: log,
 		}),
 		// WriteTimeout stays unset: a stream lasts as long as the song.
 		ReadHeaderTimeout: 10 * time.Second,
@@ -142,7 +130,7 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger, listening f
 	case err := <-failed:
 		return err
 	case <-ctx.Done():
-		stopRun()
+		reg.Stop()
 	}
 	log.Info("shutting down")
 	grace, cancel := context.WithTimeout(context.Background(), shutdownGrace)

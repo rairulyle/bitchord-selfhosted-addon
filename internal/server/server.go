@@ -7,52 +7,63 @@ import (
 	"log/slog"
 	"net/http"
 	"path"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/library"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/registry"
 )
 
 const searchLimit = 50
 
-type Library interface {
-	Ready() bool
-	Find(query string, limit int) library.Result
-	Get(id string) (media.Track, bool)
+type Registry interface {
+	Lookup(slug string) (*registry.Entry, bool)
+	Healthy() bool
+}
+
+// Site is read per request so a public URL or secret changed on the setup
+// page takes effect at once.
+type Site struct {
+	PublicURL string
+	Secret    string
 }
 
 type Options struct {
-	Secret    string
-	PublicURL string
-	AddonName string
-	Version   string
-	Library   Library
-	Backend   media.Backend
-	Log       *slog.Logger
+	Site     func() Site
+	Registry Registry
+	Version  string
+	Log      *slog.Logger
 }
 
 type server struct {
 	Options
-	secretSum     [sha256.Size]byte
 	lookupTimeout time.Duration
+}
+
+// source is one server resolved from the request path, with the base of its
+// own URLs.
+type source struct {
+	*registry.Entry
+	base string
 }
 
 func New(o Options) http.Handler { return newServer(o).handler() }
 
 func newServer(o Options) *server {
-	return &server{Options: o, secretSum: sha256.Sum256([]byte(o.Secret)), lookupTimeout: 2500 * time.Millisecond}
+	return &server{Options: o, lookupTimeout: 2500 * time.Millisecond}
 }
 
 func (s *server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.health)
-	mux.HandleFunc("GET /{secret}/manifest.json", s.guard(s.manifest))
-	mux.HandleFunc("GET /{secret}/search", s.guard(s.search))
-	mux.HandleFunc("GET /{secret}/stream/{id}", s.guard(s.stream))
-	mux.HandleFunc("GET /{secret}/file/{id}", s.guard(s.file))
-	mux.HandleFunc("GET /{secret}/art/{id}", s.guard(s.art))
-	mux.HandleFunc("OPTIONS /{secret}/{rest...}", s.guard(s.preflight))
+	mux.HandleFunc("GET /{slug}/{secret}/manifest.json", s.guard(s.manifest))
+	mux.HandleFunc("GET /{slug}/{secret}/search", s.guard(s.search))
+	mux.HandleFunc("GET /{slug}/{secret}/stream/{id}", s.guard(s.stream))
+	mux.HandleFunc("GET /{slug}/{secret}/file/{id}", s.guard(s.file))
+	mux.HandleFunc("GET /{slug}/{secret}/art/{id}", s.guard(s.art))
+	mux.HandleFunc("OPTIONS /{slug}/{secret}/{rest...}", s.guard(s.preflight))
 	mux.HandleFunc("/", quiet404)
 	return s.logged(cors(cleanOnly(mux)))
 }
@@ -67,17 +78,23 @@ func cleanOnly(next http.Handler) http.Handler {
 	})
 }
 
-func (s *server) base() string { return s.PublicURL + "/" + s.Secret }
-
-func (s *server) guard(next http.HandlerFunc) http.HandlerFunc {
+// guard checks the secret before looking at the slug, so the answer time
+// tells a caller nothing about which slugs exist until the secret is known.
+// Digests are compared because ConstantTimeCompare returns early on a length mismatch.
+func (s *server) guard(next func(http.ResponseWriter, *http.Request, source)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Digests are compared because ConstantTimeCompare returns early on a length mismatch.
-		given := sha256.Sum256([]byte(r.PathValue("secret")))
-		if subtle.ConstantTimeCompare(given[:], s.secretSum[:]) != 1 {
+		site := s.Site()
+		given, want := sha256.Sum256([]byte(r.PathValue("secret"))), sha256.Sum256([]byte(site.Secret))
+		if subtle.ConstantTimeCompare(given[:], want[:]) != 1 {
 			quiet404(w, r)
 			return
 		}
-		next(w, r)
+		entry, ok := s.Registry.Lookup(r.PathValue("slug"))
+		if !ok {
+			quiet404(w, r)
+			return
+		}
+		next(w, r, source{Entry: entry, base: site.PublicURL + "/" + entry.Slug + "/" + site.Secret})
 	}
 }
 
@@ -91,7 +108,7 @@ func cors(next http.Handler) http.Handler {
 	})
 }
 
-func (s *server) preflight(w http.ResponseWriter, _ *http.Request) {
+func (s *server) preflight(w http.ResponseWriter, _ *http.Request, _ source) {
 	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Range, If-Range, Content-Type")
 	w.Header().Set("Access-Control-Max-Age", "86400")
@@ -99,45 +116,40 @@ func (s *server) preflight(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *server) health(w http.ResponseWriter, _ *http.Request) {
-	if !s.Library.Ready() {
+	if !s.Registry.Healthy() {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
 }
 
-func (s *server) manifest(w http.ResponseWriter, _ *http.Request) {
-	source := s.Backend.Name()
-	name := s.AddonName
-	if name == "" {
-		name = source
-	}
+func (s *server) manifest(w http.ResponseWriter, _ *http.Request, src source) {
 	writeJSON(w, manifestJSON{
-		ID:          "app.bitchord-selfhosted-addon." + strings.ToLower(source),
-		Name:        name,
+		ID:          "app.bitchord-selfhosted-addon." + src.Slug,
+		Name:        src.DisplayName(),
 		Version:     s.Version,
-		Description: "Your " + source + " music library",
+		Description: "Your " + src.Backend.Name() + " music library",
 		Resources:   []string{"search", "stream"},
 		Types:       []string{"track"},
 		ContentType: "music",
 	})
 }
 
-func (s *server) search(w http.ResponseWriter, r *http.Request) {
+func (s *server) search(w http.ResponseWriter, r *http.Request, src source) {
 	started := time.Now()
 	query := r.URL.Query().Get("q")
-	found := s.Library.Find(query, searchLimit)
+	found := src.Library.Find(query, searchLimit)
 	tracks := make([]trackJSON, len(found.Tracks))
 	for i, track := range found.Tracks {
-		tracks[i] = toTrackJSON(s.base(), track)
+		tracks[i] = toTrackJSON(src.base, track)
 	}
-	s.logSearch(query, found, time.Since(started))
+	logSearch(src.Log, query, found, time.Since(started))
 	writeJSON(w, searchJSON{Tracks: tracks, Albums: []any{}, Artists: []any{}, Playlists: []any{}})
 }
 
 const loggedQueryRunes = 200
 
-func (s *server) logSearch(query string, found library.Result, took time.Duration) {
+func logSearch(log *slog.Logger, query string, found library.Result, took time.Duration) {
 	if strings.TrimSpace(query) == "" {
 		return
 	}
@@ -146,10 +158,10 @@ func (s *server) logSearch(query string, found library.Result, took time.Duratio
 	}
 	attrs := []any{"q", query, "strict", found.Strict, "fallback", found.Fallback, "returned", len(found.Tracks)}
 	if len(found.Tracks) == 0 {
-		s.Log.Info("search miss", append(attrs, "took", took.String())...)
+		log.Info("search miss", append(attrs, "took", took.String())...)
 		return
 	}
-	s.Log.Info("search", append(attrs, "top", label(found.Tracks[0]), "took", took.String())...)
+	log.Info("search", append(attrs, "top", label(found.Tracks[0]), "took", took.String())...)
 }
 
 func label(track media.Track) string { return track.Title + " — " + track.Artist }
@@ -194,6 +206,10 @@ func (s *server) logged(next http.Handler) http.Handler {
 	})
 }
 
+var slugPattern = regexp.MustCompile(`^(plex|jellyfin)-[0-9]+$`)
+
+// redact keeps a slug and masks the segment after it. A first segment that
+// is not a slug is masked too, since a client on a 0.4 URL sends the secret there.
 func redact(p string) string {
 	if p == "/health" || p == "/" {
 		return p
@@ -201,9 +217,11 @@ func redact(p string) string {
 	if path.Clean(p) != p {
 		return "/***"
 	}
-	rest := strings.TrimPrefix(p, "/")
-	if i := strings.IndexByte(rest, '/'); i >= 0 {
-		return "/***" + rest[i:]
+	segments := strings.Split(strings.TrimPrefix(p, "/"), "/")
+	if len(segments) > 1 && slugPattern.MatchString(segments[0]) {
+		segments[1] = "***"
+	} else {
+		segments[0] = "***"
 	}
-	return "/***"
+	return "/" + strings.Join(segments, "/")
 }

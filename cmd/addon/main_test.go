@@ -109,8 +109,8 @@ func TestServeAnswersOverHTTPAndShutsDownOnCancel(t *testing.T) {
 		cfg    config.Config
 		wantID string
 	}{
-		"plex":     {plexConfig(fakes.NewPlex(t)), `"id":"101"`},
-		"jellyfin": {jellyfinConfig(fakes.NewJellyfin(t)), `"id":"f101"`},
+		"plex-1":     {plexConfig(fakes.NewPlex(t)), `"id":"101"`},
+		"jellyfin-1": {jellyfinConfig(fakes.NewJellyfin(t)), `"id":"f101"`},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -120,7 +120,7 @@ func TestServeAnswersOverHTTPAndShutsDownOnCancel(t *testing.T) {
 			log := newLogger("text", slog.LevelInfo, logs).With("source", string(tc.cfg.Backend))
 			base, done := start(ctx, t, tc.cfg, log)
 			waitHealthy(t, base)
-			res, err := http.Get(base + "/abcdefghijklmnop/search?q=new+religion")
+			res, err := http.Get(base + "/" + name + "/abcdefghijklmnop/search?q=new+religion")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -129,7 +129,7 @@ func TestServeAnswersOverHTTPAndShutsDownOnCancel(t *testing.T) {
 			if res.StatusCode != http.StatusOK || !strings.Contains(string(body), tc.wantID) {
 				t.Fatalf("status %d, body %s", res.StatusCode, body)
 			}
-			manifest, err := http.Get(base + "/abcdefghijklmnop/manifest.json")
+			manifest, err := http.Get(base + "/" + name + "/abcdefghijklmnop/manifest.json")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -148,7 +148,7 @@ func TestServeAnswersOverHTTPAndShutsDownOnCancel(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("serve did not return after cancel")
 			}
-			for _, want := range []string{"msg=listening", "msg=\"library indexed\"", "source=" + name} {
+			for _, want := range []string{"msg=listening", "msg=\"library indexed\"", "server=" + name} {
 				if !strings.Contains(logs.String(), want) {
 					t.Errorf("logs lack %s:\n%s", want, logs.String())
 				}
@@ -184,7 +184,7 @@ func TestServeStopsTheRefreshLoopBeforeShuttingDown(t *testing.T) {
 	streamDone := make(chan struct{})
 	go func() {
 		defer close(streamDone)
-		res, err := http.Get(base + "/abcdefghijklmnop/file/102")
+		res, err := http.Get(base + "/plex-1/abcdefghijklmnop/file/102")
 		if err != nil {
 			return
 		}
@@ -253,19 +253,6 @@ func TestServeStopsTheRefreshLoopWhenThePortIsTaken(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("serve did not return")
-	}
-}
-
-func TestNewBackendPicksByKind(t *testing.T) {
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	for kind, name := range map[config.Backend]string{config.Plex: "Plex", config.Jellyfin: "Jellyfin"} {
-		backend, err := newBackend(config.Config{Backend: kind}, log)
-		if err != nil || backend.Name() != name {
-			t.Errorf("%s: %v, %v", kind, backend, err)
-		}
-	}
-	if _, err := newBackend(config.Config{Backend: "emby"}, log); err == nil || !strings.Contains(err.Error(), "emby") {
-		t.Errorf("unknown kind: %v", err)
 	}
 }
 
