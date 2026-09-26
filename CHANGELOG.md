@@ -6,6 +6,24 @@ Entries are written **one line per paragraph and bullet** (no hard-wrapping) so 
 
 ## [Unreleased]
 
+### Added
+
+- Several servers in one container. Each Plex or Jellyfin server is its own BitChord source with its own URL, `https://<public url>/<server id>/<secret>`, so sources are ordered and toggled in BitChord. Server ids are `plex-1`, `plex-2`, `jellyfin-1` and so on, and the name in BitChord is the kind plus a label you choose, such as `Plex - Home`.
+- A setup page at `/setup`. Choose a password on first visit, then set the public URL, add servers, test each connection, pick a library, copy each server's URL, and regenerate the secret. Changes apply at once; nothing needs a restart.
+- Sign in with Plex on the setup page, through plex.tv, with a list of the account's servers marked reachable or `Unreachable` from the addon. Pasting a token still works.
+- Sign in to Jellyfin with a username and password on the setup page. Only the access token Jellyfin returns is kept; the password is never stored. Pasting an API key still works.
+- State lives in `/data/addon.json` on a volume. `compose.example.yml` mounts one.
+
+### Changed
+
+- Every log line about a server names it under `server`, next to `source`.
+- `/health` answers `200` with no servers configured, so a fresh container passes its healthcheck before it is set up.
+- A malformed or unknown server URL segment answers the same empty `404` as a wrong secret.
+
+### Removed
+
+- `ADDON_SECRET`, `PUBLIC_URL`, `ADDON_NAME`, `PLEX_URL`, `PLEX_TOKEN`, `PLEX_SECTION`, `JELLYFIN_URL`, `JELLYFIN_API_KEY` and `JELLYFIN_LIBRARY` are no longer read. The log names any that are still set. **Upgrading from 0.4:** start the container, open `/setup`, set a password and the public URL, add your server, and replace the URL in BitChord with the one on its card. The old `/<secret>/manifest.json` URL no longer answers.
+
 ## [0.4.0] - 2026-09-27
 
 ### Added
