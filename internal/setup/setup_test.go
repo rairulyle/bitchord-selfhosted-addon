@@ -3,6 +3,7 @@ package setup
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -525,6 +526,54 @@ func TestJellyfinSignInStoresTheTokenAndNeverThePassword(t *testing.T) {
 		t.Fatalf("logs carry a credential:\n%s", logs)
 	}
 	_ = plexURLs
+}
+
+func TestConcurrentLoginAttemptsAreLimitedAtomically(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	a.cookie = ""
+
+	var wg sync.WaitGroup
+	for range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req := httptest.NewRequest(http.MethodPost, "/setup/login", strings.NewReader(url.Values{"password": {"wrong"}}.Encode()))
+			req.RemoteAddr = "10.0.0.9:5555"
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			a.handler.ServeHTTP(httptest.NewRecorder(), req)
+		}()
+	}
+	wg.Wait()
+
+	req := httptest.NewRequest(http.MethodPost, "/setup/login", strings.NewReader(url.Values{"password": {password}}.Encode()))
+	req.RemoteAddr = "10.0.0.9:5555"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	a.handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("after 20 concurrent attempts: %d", rec.Code)
+	}
+	if failures := strings.Count(a.logs.String(), `"msg":"setup login failed"`); failures > 5 {
+		t.Fatalf("VerifyPassword ran %d times, want at most 5", failures)
+	}
+}
+
+func TestLoginLockoutIgnoresXForwardedFor(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	a.cookie = ""
+	for i := range 6 {
+		a.headers.Set("X-Forwarded-For", fmt.Sprintf("203.0.113.%d", i))
+		rec := a.form("/setup/login", url.Values{"password": {"wrong"}})
+		switch {
+		case i < 5 && rec.Code != http.StatusUnauthorized:
+			t.Fatalf("attempt %d: %d", i, rec.Code)
+		case i == 5 && rec.Code != http.StatusTooManyRequests:
+			t.Fatalf("sixth attempt with rotated X-Forwarded-For: %d", rec.Code)
+		}
+	}
+	a.headers.Del("X-Forwarded-For")
 }
 
 func TestStaticAndUnknownSetupPaths(t *testing.T) {

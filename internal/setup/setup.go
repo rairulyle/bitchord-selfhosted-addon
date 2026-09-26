@@ -24,11 +24,12 @@ var templateFiles embed.FS
 var staticFiles embed.FS
 
 const (
-	cookieName    = "addon_setup"
-	maxFormBytes  = 64 << 10
-	loginAttempts = 5
-	lockoutWindow = time.Minute
-	tokenRefTTL   = 10 * time.Minute
+	cookieName      = "addon_setup"
+	maxFormBytes    = 64 << 10
+	loginAttempts   = 5
+	lockoutWindow   = time.Minute
+	tokenRefTTL     = 10 * time.Minute
+	verifyPasswords = 2
 )
 
 type Runtime interface {
@@ -51,10 +52,11 @@ type Options struct {
 
 type app struct {
 	Options
-	pages   map[string]*template.Template
-	logins  *limiter
-	signins *limiter
-	refs    *tokenRefs
+	pages     map[string]*template.Template
+	logins    *limiter
+	signins   *limiter
+	refs      *tokenRefs
+	verifySem chan struct{}
 }
 
 func New(o Options) http.Handler {
@@ -65,11 +67,12 @@ func New(o Options) http.Handler {
 		o.Now = time.Now
 	}
 	a := &app{
-		Options: o,
-		pages:   parsePages(),
-		logins:  newLimiter(o.Now, loginAttempts, lockoutWindow),
-		signins: newLimiter(o.Now, loginAttempts, lockoutWindow),
-		refs:    newTokenRefs(o.Now, tokenRefTTL),
+		Options:   o,
+		pages:     parsePages(),
+		logins:    newLimiter(o.Now, loginAttempts, lockoutWindow),
+		signins:   newLimiter(o.Now, loginAttempts, lockoutWindow),
+		refs:      newTokenRefs(o.Now, tokenRefTTL),
+		verifySem: make(chan struct{}, verifyPasswords),
 	}
 	return a.handler()
 }
@@ -209,12 +212,18 @@ func overHTTPS(r *http.Request) bool {
 }
 
 // clientAddress is the first hop of X-Forwarded-For when a proxy sets it,
-// else the peer address.
+// else the peer address. It is for logging only: it is client-supplied and
+// must never key a rate limit.
 func clientAddress(r *http.Request) string {
 	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
 		first, _, _ := strings.Cut(forwarded, ",")
 		return strings.TrimSpace(first)
 	}
+	return peerAddress(r)
+}
+
+// peerAddress is the TCP connection's address, which a client cannot spoof.
+func peerAddress(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr

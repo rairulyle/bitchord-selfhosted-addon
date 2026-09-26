@@ -68,24 +68,36 @@ func (a *app) createPassword(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) login(w http.ResponseWriter, r *http.Request, admin *store.Admin) {
-	address := clientAddress(r)
-	if a.logins.blocked(address) {
+	peer := peerAddress(r)
+	if !a.logins.attempt(peer) {
 		view := loginView{page: a.page(r, "Sign in")}
 		view.Error = "too many failed attempts, try again in a minute"
 		a.render(w, r, http.StatusTooManyRequests, "login", view)
 		return
 	}
-	if !VerifyPassword(admin.PasswordHash, r.PostFormValue("password")) {
-		a.logins.fail(address)
-		a.Log.Warn("setup login failed", "from", address)
+	if !a.verifyPassword(r.Context(), admin.PasswordHash, r.PostFormValue("password")) {
+		a.Log.Warn("setup login failed", "from", clientAddress(r))
 		view := loginView{page: a.page(r, "Sign in")}
 		view.Error = "wrong password"
 		a.render(w, r, http.StatusUnauthorized, "login", view)
 		return
 	}
-	a.logins.reset(address)
+	a.logins.reset(peer)
 	a.setSessionCookie(w, r, admin)
 	http.Redirect(w, r, "/setup", http.StatusSeeOther)
+}
+
+// verifyPassword caps concurrent argon2id verifications, each of which
+// allocates a fixed amount of memory, so a burst of requests cannot exhaust
+// it. It gives up if ctx ends first.
+func (a *app) verifyPassword(ctx context.Context, hash, password string) bool {
+	select {
+	case a.verifySem <- struct{}{}:
+	case <-ctx.Done():
+		return false
+	}
+	defer func() { <-a.verifySem }()
+	return VerifyPassword(hash, password)
 }
 
 func (a *app) logout(w http.ResponseWriter, r *http.Request) {
@@ -103,7 +115,7 @@ func (a *app) changePassword(w http.ResponseWriter, r *http.Request) {
 	snapshot := a.Store.Snapshot()
 	view := passwordView{page: a.page(r, "Change the password")}
 	switch password := r.PostFormValue("password"); {
-	case !VerifyPassword(snapshot.Admin.PasswordHash, r.PostFormValue("current")):
+	case !a.verifyPassword(r.Context(), snapshot.Admin.PasswordHash, r.PostFormValue("current")):
 		view.Error = "the current password is wrong"
 	case utf8.RuneCountInString(password) < MinPasswordLength:
 		view.Error = fmt.Sprintf("the new password must be at least %d characters", MinPasswordLength)
@@ -450,7 +462,7 @@ func (a *app) jellyfinSignIn(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if a.signins.blocked(req.URL) {
+	if !a.signins.attempt(req.URL) {
 		jsonError(w, http.StatusTooManyRequests, "too many failed sign-ins for this server, try again in a minute")
 		return
 	}
@@ -459,7 +471,6 @@ func (a *app) jellyfinSignIn(w http.ResponseWriter, r *http.Request) {
 	account, err := a.Registry.JellyfinSignIn(ctx, req.URL, req.Username, req.Password)
 	switch {
 	case errors.Is(err, media.ErrUnauthorized):
-		a.signins.fail(req.URL)
 		a.Log.Warn("jellyfin sign-in rejected", "host", hostOf(req.URL), "username", req.Username)
 		jsonError(w, http.StatusUnauthorized, "jellyfin rejected the sign-in")
 		return

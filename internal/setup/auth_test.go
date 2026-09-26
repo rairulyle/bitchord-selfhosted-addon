@@ -1,7 +1,10 @@
 package setup
 
 import (
+	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,9 +25,19 @@ func TestPasswordHashRoundTrip(t *testing.T) {
 	if HashPassword("same") == HashPassword("same") {
 		t.Error("two hashes of one password share a salt")
 	}
-	for _, bad := range []string{"", "plain", "$argon2id$v=19$m=x$salt$hash", "$bcrypt$a$b$c$d"} {
-		if VerifyPassword(bad, "anything") {
-			t.Errorf("malformed hash %q verified", bad)
+	parts := strings.Split(hash, "$")
+	salt, key := parts[4], parts[5]
+	bad := []string{
+		"", "plain", "$argon2id$v=19$m=x$salt$hash", "$bcrypt$a$b$c$d",
+		fmt.Sprintf("$argon2id$v=19$m=65536,t=0,p=4$%s$%s", salt, key),
+		fmt.Sprintf("$argon2id$v=19$m=65536,t=1,p=0$%s$%s", salt, key),
+		fmt.Sprintf("$argon2id$v=19$m=1073741824,t=1,p=4$%s$%s", salt, key),
+		fmt.Sprintf("$argon2id$v=19$m=65536,t=1,p=4$$%s", key),
+		fmt.Sprintf("$argon2id$v=18$m=65536,t=1,p=4$%s$%s", salt, key),
+	}
+	for _, hash := range bad {
+		if VerifyPassword(hash, "anything") {
+			t.Errorf("malformed hash %q verified", hash)
 		}
 	}
 }
@@ -61,32 +74,56 @@ func TestSessionsAreSignedAndExpire(t *testing.T) {
 	}
 }
 
-func TestLimiterBlocksAfterFiveFailuresInsideTheWindow(t *testing.T) {
+func TestLimiterAllowsFiveAttemptsThenBlocksInsideTheWindow(t *testing.T) {
 	now := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
 	clock := func() time.Time { return now }
 	l := newLimiter(clock, 5, time.Minute)
-	for range 4 {
-		l.fail("1.2.3.4")
+	for i := range 4 {
+		if !l.attempt("1.2.3.4") {
+			t.Fatalf("attempt %d blocked", i)
+		}
 	}
-	if l.blocked("1.2.3.4") {
-		t.Fatal("blocked after four failures")
+	if !l.attempt("1.2.3.4") {
+		t.Fatal("blocked on the fifth attempt")
 	}
-	l.fail("1.2.3.4")
-	if !l.blocked("1.2.3.4") || l.blocked("5.6.7.8") {
+	if l.attempt("1.2.3.4") {
+		t.Fatal("allowed a sixth attempt inside the window")
+	}
+	if !l.attempt("5.6.7.8") {
 		t.Fatal("block not keyed by address")
 	}
 	now = now.Add(59 * time.Second)
-	if !l.blocked("1.2.3.4") {
+	if l.attempt("1.2.3.4") {
 		t.Fatal("released early")
 	}
 	now = now.Add(2 * time.Second)
-	if l.blocked("1.2.3.4") {
+	if !l.attempt("1.2.3.4") {
 		t.Fatal("not released after the window")
 	}
-	l.fail("1.2.3.4")
 	l.reset("1.2.3.4")
-	if len(l.failures) != 0 {
+	if _, kept := l.failures["1.2.3.4"]; kept {
 		t.Fatal("reset left failures behind")
+	}
+}
+
+func TestLimiterAttemptIsAtomicUnderConcurrency(t *testing.T) {
+	now := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+	l := newLimiter(clock, 5, time.Minute)
+	var wg sync.WaitGroup
+	var allowed atomic.Int32
+	for range 50 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if l.attempt("1.2.3.4") {
+				allowed.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := allowed.Load(); got != 5 {
+		t.Fatalf("allowed = %d, want exactly 5", got)
 	}
 }
 

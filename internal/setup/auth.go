@@ -34,9 +34,11 @@ func HashPassword(password string) string {
 		base64.RawStdEncoding.EncodeToString(salt), base64.RawStdEncoding.EncodeToString(key))
 }
 
+const argonMaxMemory = 1 << 20
+
 func VerifyPassword(encoded, password string) bool {
 	parts := strings.Split(encoded, "$")
-	if len(parts) != 6 || parts[1] != "argon2id" {
+	if len(parts) != 6 || parts[1] != "argon2id" || parts[2] != fmt.Sprintf("v=%d", argon2.Version) {
 		return false
 	}
 	var memory, iterations uint32
@@ -44,12 +46,15 @@ func VerifyPassword(encoded, password string) bool {
 	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &iterations, &threads); err != nil {
 		return false
 	}
+	if iterations < 1 || threads < 1 || memory > argonMaxMemory {
+		return false
+	}
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
-	if err != nil {
+	if err != nil || len(salt) < 8 {
 		return false
 	}
 	want, err := base64.RawStdEncoding.DecodeString(parts[5])
-	if err != nil {
+	if err != nil || len(want) < 16 {
 		return false
 	}
 	got := argon2.IDKey([]byte(password), salt, iterations, memory, threads, uint32(len(want)))
@@ -118,16 +123,18 @@ func newLimiter(now func() time.Time, max int, window time.Duration) *limiter {
 	return &limiter{now: now, max: max, window: window, failures: map[string][]time.Time{}}
 }
 
-func (l *limiter) blocked(key string) bool {
+// attempt reports whether key may proceed: it checks and records the
+// attempt under one lock, so concurrent callers cannot all pass the check
+// before any of them is recorded.
+func (l *limiter) attempt(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return len(l.recent(key)) >= l.max
-}
-
-func (l *limiter) fail(key string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.failures[key] = append(l.recent(key), l.now())
+	recent := l.recent(key)
+	if len(recent) >= l.max {
+		return false
+	}
+	l.failures[key] = append(recent, l.now())
+	return true
 }
 
 func (l *limiter) reset(key string) {
