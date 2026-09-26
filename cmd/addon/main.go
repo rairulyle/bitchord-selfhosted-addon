@@ -57,10 +57,9 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 		log.Error("cannot open the data file", "error", err.Error())
 		return 1
 	}
-	warnRemoved(log, config.Removed(getenv))
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
-	if err := serve(ctx, cfg, st, log, func(net.Addr) {}); err != nil {
+	if err := serve(ctx, cfg, st, log, config.Removed(getenv), func(net.Addr) {}); err != nil {
 		log.Error("server stopped", "error", err.Error())
 		return 1
 	}
@@ -94,10 +93,11 @@ func healthcheck(url string) int {
 	return 0
 }
 
-func serve(ctx context.Context, cfg config.Config, st *store.Store, log *slog.Logger, listening func(net.Addr)) error {
+func serve(ctx context.Context, cfg config.Config, st *store.Store, log *slog.Logger, removed []string, listening func(net.Addr)) error {
 	snapshot := st.Snapshot()
 	log.Info("starting", "version", version, "data", st.Path(), "servers", len(snapshot.Servers),
 		"public_url", snapshot.PublicURL, "refresh", cfg.RefreshInterval.String(), "log_level", cfg.LogLevel.String())
+	warnRemoved(log, removed)
 	if snapshot.Admin == nil {
 		log.Warn("the setup page has no password yet; open /setup on your public URL and set one before anyone else does")
 	}

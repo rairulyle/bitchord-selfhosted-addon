@@ -78,7 +78,7 @@ func start(ctx context.Context, t *testing.T, cfg config.Config, st *store.Store
 	t.Helper()
 	addrs := make(chan net.Addr, 1)
 	done := make(chan error, 1)
-	go func() { done <- serve(ctx, cfg, st, log, func(addr net.Addr) { addrs <- addr }) }()
+	go func() { done <- serve(ctx, cfg, st, log, nil, func(addr net.Addr) { addrs <- addr }) }()
 	select {
 	case addr := <-addrs:
 		return "http://127.0.0.1:" + strconv.Itoa(addr.(*net.TCPAddr).Port), done
@@ -147,6 +147,23 @@ func TestRemovedVariablesAreWarnedAboutByName(t *testing.T) {
 	}
 	if strings.Contains(logs.String(), "s3cr3t") {
 		t.Error("a removed variable's value was logged")
+	}
+}
+
+func TestRemovedVariablesAreWarnedAboutAfterStarting(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	logs := &syncBuffer{}
+	if err := serve(ctx, testConfig(), st, newLogger("text", slog.LevelInfo, logs), []string{"PLEX_URL"}, func(net.Addr) { cancel() }); err != nil {
+		t.Fatal(err)
+	}
+	starting, warned := strings.Index(logs.String(), "msg=starting"), strings.Index(logs.String(), "PLEX_URL is no longer read")
+	if starting < 0 || warned < starting {
+		t.Fatalf("the warning must follow the starting line:\n%s", logs.String())
 	}
 }
 
@@ -308,7 +325,7 @@ func TestServeStopsTheRefreshLoopWhenThePortIsTaken(t *testing.T) {
 	done := make(chan error, 1)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	go func() {
-		done <- serve(context.Background(), cfg, newStore(t, plexServer(fake)), log, func(net.Addr) {})
+		done <- serve(context.Background(), cfg, newStore(t, plexServer(fake)), log, nil, func(net.Addr) {})
 	}()
 
 	select {
