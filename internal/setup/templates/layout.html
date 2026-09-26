@@ -7,24 +7,15 @@
 <link rel="stylesheet" href="/setup/static/style.css">
 </head>
 <body>
-<svg width="0" height="0" style="position:absolute" aria-hidden="true">
-  <filter id="glass-lens" x="-10%" y="-10%" width="120%" height="120%" color-interpolation-filters="sRGB">
-    <feTurbulence type="fractalNoise" baseFrequency="0.006 0.006" numOctaves="2" seed="7" result="noise"/>
-    <feGaussianBlur in="noise" stdDeviation="2" result="soft"/>
-    <feDisplacementMap in="SourceGraphic" in2="soft" scale="26" xChannelSelector="R" yChannelSelector="G"/>
-  </filter>
-</svg>
 <header>
-  <div class="bar">
-    <a class="brand" href="/setup">BitChord Selfhosted Addon</a>
-    {{if .SignedIn}}
-    <nav>
-      <a href="/setup">Servers</a>
-      <a href="/setup/password">Password</a>
-      <form method="post" action="/setup/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="link">Sign out</button></form>
-    </nav>
-    {{end}}
-  </div>
+  <a class="brand" href="/setup">BitChord Selfhosted Addon</a>
+  {{if .SignedIn}}
+  <nav>
+    <a href="/setup">Servers</a>
+    <a href="/setup/password">Password</a>
+    <form method="post" action="/setup/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="link">Sign out</button></form>
+  </nav>
+  {{end}}
 </header>
 <main>
   {{if .Notice}}<p class="notice">{{.Notice}}</p>{{end}}
