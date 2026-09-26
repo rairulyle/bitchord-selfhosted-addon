@@ -350,11 +350,16 @@ func TestLogsRedactTheSecretAndNeverCarryTheToken(t *testing.T) {
 	h.get("//plex-1/" + testSecret + "/manifest.json")
 	h.get("/./plex-1/" + testSecret + "/search?q=closer")
 	h.get("/" + testSecret + "/search?q=closer")
+	h.get("/health/" + testSecret + "/manifest.json")
+	h.get("/Plex-1/" + testSecret + "/search")
 	logs := h.logs.String()
 	if strings.Contains(logs, testSecret) || strings.Contains(logs, fakes.PlexToken) {
 		t.Fatalf("logs leak a credential:\n%s", logs)
 	}
-	for _, want := range []string{`"path":"/plex-1/***/search"`, `"path":"/plex-1/***/stream/101"`, `"path":"/***/search"`, `"path":"/health"`, `"status":200`} {
+	for _, want := range []string{
+		`"path":"/plex-1/***/search"`, `"path":"/plex-1/***/stream/101"`, `"path":"/***/search"`, `"path":"/health"`, `"status":200`,
+		`"path":"/***/***/manifest.json"`, `"path":"/***/***/search"`,
+	} {
 		if !strings.Contains(logs, want) {
 			t.Errorf("logs lack %s:\n%s", want, logs)
 		}
@@ -369,8 +374,21 @@ func TestRedact(t *testing.T) {
 		"/plex-1/abc": "/plex-1/***", "/plex-1": "/***", "/setup/login": "/***/login",
 	}
 	for in, want := range cases {
-		if got := redact(in); got != want {
-			t.Errorf("redact(%q) = %q, want %q", in, got, want)
+		if got := redact(in, ""); got != want {
+			t.Errorf("redact(%q, \"\") = %q, want %q", in, got, want)
+		}
+	}
+
+	const secret = "topsecret"
+	withSecret := map[string]string{
+		"/health/" + secret + "/manifest.json": "/***/***/manifest.json",
+		"/setup/" + secret + "/login":          "/***/***/login",
+		"/Plex-1/" + secret + "/search":        "/***/***/search",
+		"/plex/" + secret + "/search":          "/***/***/search",
+	}
+	for in, want := range withSecret {
+		if got := redact(in, secret); got != want || strings.Contains(got, secret) {
+			t.Errorf("redact(%q, %q) = %q, want %q", in, secret, got, want)
 		}
 	}
 }

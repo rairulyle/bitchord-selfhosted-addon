@@ -201,16 +201,18 @@ func (s *server) logged(next http.Handler) http.Handler {
 		rec := &recorder{ResponseWriter: w}
 		next.ServeHTTP(rec, r)
 		s.Log.Debug("request",
-			"method", r.Method, "path", redact(r.URL.Path), "status", rec.status,
+			"method", r.Method, "path", redact(r.URL.Path, s.Site().Secret), "status", rec.status,
 			"bytes", rec.bytes, "took", time.Since(started).String())
 	})
 }
 
-var slugPattern = regexp.MustCompile(`^(plex|jellyfin)-[0-9]+$`)
+var slugPattern = regexp.MustCompile(`^(plex|jellyfin)-[1-9][0-9]*$`)
 
 // redact keeps a slug and masks the segment after it. A first segment that
-// is not a slug is masked too, since a client on a 0.4 URL sends the secret there.
-func redact(p string) string {
+// is not a slug is masked too, since a client on a 0.4 URL sends the secret
+// there. A segment matching the live secret is masked wherever it lands,
+// since a non-slug first segment shifts the secret one place to the right.
+func redact(p, secret string) string {
 	if p == "/health" || p == "/" {
 		return p
 	}
@@ -222,6 +224,13 @@ func redact(p string) string {
 		segments[1] = "***"
 	} else {
 		segments[0] = "***"
+	}
+	if secret != "" {
+		for i, segment := range segments {
+			if segment == secret {
+				segments[i] = "***"
+			}
+		}
 	}
 	return "/" + strings.Join(segments, "/")
 }
