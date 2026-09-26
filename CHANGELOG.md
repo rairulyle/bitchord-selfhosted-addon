@@ -6,6 +6,8 @@ Entries are written **one line per paragraph and bullet** (no hard-wrapping) so 
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-27
+
 ### Added
 
 - Jellyfin support. Set `JELLYFIN_URL` and `JELLYFIN_API_KEY` instead of the Plex variables, and optionally `JELLYFIN_LIBRARY`, to serve a Jellyfin music library the same way. Each container talks to one server. The source shows up in the client as "Jellyfin", the manifest id is `app.bitchord-selfhosted-addon.jellyfin`, and the API key travels only in the `Authorization` header. Jellyfin 10.9 or newer is required.

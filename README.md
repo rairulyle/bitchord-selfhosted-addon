@@ -82,7 +82,7 @@ track also exists in your library, your own copy plays instead.
 
 - The image is `ghcr.io/rairulyle/bitchord-selfhosted-addon:latest`, built for
   `linux/amd64` and `linux/arm64`.
-- **Pin a version** with a tag such as `:0.3` or `:0.3.0`.
+- **Pin a version** with a tag such as `:0.4` or `:0.4.0`.
 - **Update** with `docker compose pull`, then `docker compose up -d`.
 - **Build from source** by replacing the `image:` line in `compose.yml` with
   `build: .` and running `docker compose up -d --build`.
