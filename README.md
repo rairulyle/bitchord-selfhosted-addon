@@ -139,10 +139,10 @@ If a client asks for a manifest URL instead, append `/manifest.json`.
 
 ### Using it with other sources
 
-BitChord tries your sources from top to bottom for every track. With Plex
-first, the order looks like this:
+BitChord tries your sources from top to bottom for every track. With this
+addon first, the order looks like this:
 
-1. **Plex** (this addon). If the track is in your library, your own file plays.
+1. **This addon.** If the track is in your library, your own file plays.
 2. **Your other addons**, in the order listed.
 3. **Built-in sources**, ending with YouTube Music, which is always on.
 
@@ -160,7 +160,7 @@ right. Use the toggle to switch a source off without removing it.
 ## 🔀 Reverse proxy notes
 
 Turn off response buffering for the addon, so seeking stays fast and a
-skipped track stops downloading from Plex at once.
+skipped track stops downloading from your server at once.
 
 - **Caddy** and **Traefik** stream responses by default. No change needed.
 - **nginx:**
