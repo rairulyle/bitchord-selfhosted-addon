@@ -1006,6 +1006,42 @@ func TestAPastedJellyfinKeyIsNotSignedOut(t *testing.T) {
 	}
 }
 
+func TestDeletingASignedInJellyfinServerSignsItOut(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	fake := fakes.NewJellyfin(t)
+	if rec := a.form("/setup/servers", url.Values{"kind": {"jellyfin"}, "url": {fake.URL}, "token_ref": {a.jellyfinSignIn(fake)}, "enabled": {"1"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("add: %d %s", rec.Code, rec.Body.String())
+	}
+	original, _ := a.store.Snapshot().Server("jellyfin-1")
+	if rec := a.form("/setup/servers/jellyfin-1/delete", url.Values{}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("delete: %d", rec.Code)
+	}
+	a.setup.app.background.Wait()
+	if !loggedOut(fake, original.Token) {
+		t.Fatalf("logouts = %+v", logouts(fake))
+	}
+	if strings.Contains(a.logs.String(), fakes.JellyfinSessionPrefix) {
+		t.Fatal("a token reached the logs")
+	}
+}
+
+func TestDeletingAPastedJellyfinKeySignsNothingOut(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	fake := fakes.NewJellyfin(t)
+	if rec := a.form("/setup/servers", url.Values{"kind": {"jellyfin"}, "url": {fake.URL}, "token": {fakes.JellyfinToken}, "enabled": {"1"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("add: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := a.form("/setup/servers/jellyfin-1/delete", url.Values{}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("delete: %d", rec.Code)
+	}
+	a.setup.app.background.Wait()
+	if len(logouts(fake)) != 0 {
+		t.Fatal("the pasted API key was signed out")
+	}
+}
+
 func TestTwoJellyfinSignInsKeepTheirOwnDeviceIDs(t *testing.T) {
 	a := newTestApp(t)
 	a.signIn()

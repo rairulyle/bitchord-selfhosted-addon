@@ -340,6 +340,7 @@ func (a *app) renderServerError(w http.ResponseWriter, r *http.Request, view ser
 
 func (a *app) deleteServer(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
+	existing, _ := a.Store.Snapshot().Server(slug)
 	err := a.Store.RemoveServer(slug)
 	switch {
 	case errors.Is(err, store.ErrNoServer):
@@ -351,6 +352,7 @@ func (a *app) deleteServer(w http.ResponseWriter, r *http.Request) {
 	}
 	a.apply()
 	a.Log.Info("server removed", "server", slug)
+	a.signOutReplaced(existing, store.Server{})
 	redirectNotice(w, r, slug+" removed. Its URL no longer answers.")
 }
 
@@ -523,8 +525,9 @@ func (a *app) jellyfinSignIn(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "username": account.Username, "ref": ref})
 }
 
-// signOutReplaced revokes the token a Jellyfin sign-in replaced, so the old
-// session does not linger in Jellyfin. A pasted API key is left alone: the
+// signOutReplaced revokes the token a Jellyfin sign-in replaced, or the token
+// of a removed server, so the old session does not linger in Jellyfin. A
+// pasted API key is left alone: the
 // user made it by hand. It waits in the background until no running or
 // starting entry for the server sends the old token any more, and leaves the
 // session alone if one still does when the wait ends. It never fails the
