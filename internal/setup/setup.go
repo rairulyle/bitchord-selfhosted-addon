@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -223,9 +224,19 @@ func (a *app) gate(next http.Handler) http.Handler {
 	})
 }
 
+// crossSite trusts Sec-Fetch-Site when the browser sends it, and otherwise
+// falls back to comparing Origin against the request host, so a legacy
+// browser that omits Sec-Fetch-Site still cannot post here cross-site.
 func crossSite(r *http.Request) bool {
-	site := r.Header.Get("Sec-Fetch-Site")
-	return site != "" && site != "same-origin" && site != "none"
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" {
+		return site != "same-origin" && site != "none"
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return false
+	}
+	parsed, err := url.Parse(origin)
+	return err != nil || !strings.EqualFold(parsed.Host, r.Host)
 }
 
 func (a *app) csrfOK(r *http.Request, key []byte, cookie string) bool {

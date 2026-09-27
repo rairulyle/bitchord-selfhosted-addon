@@ -251,6 +251,19 @@ func TestCSRFAndCrossSitePostsAreRefused(t *testing.T) {
 	if rec := a.form("/setup/public-url", url.Values{"public_url": {"https://music.example.com"}}); rec.Code != http.StatusSeeOther {
 		t.Errorf("same-origin: %d", rec.Code)
 	}
+	a.headers.Set("Origin", "https://evil.example")
+	if rec := a.form("/setup/public-url", url.Values{"public_url": {"https://music.example.com"}}); rec.Code != http.StatusSeeOther {
+		t.Errorf("sec-fetch-site must win over origin, proxies may rewrite the host: %d", rec.Code)
+	}
+	a.headers.Del("Sec-Fetch-Site")
+	if rec := a.form("/setup/public-url", url.Values{"public_url": {"https://music.example.com"}}); rec.Code != http.StatusForbidden {
+		t.Errorf("foreign origin without sec-fetch-site: %d", rec.Code)
+	}
+	a.headers.Set("Origin", "http://example.com")
+	if rec := a.form("/setup/public-url", url.Values{"public_url": {"https://music.example.com"}}); rec.Code != http.StatusSeeOther {
+		t.Errorf("matching origin without sec-fetch-site: %d", rec.Code)
+	}
+	a.headers.Del("Origin")
 }
 
 func TestChangePasswordSignsOtherBrowsersOut(t *testing.T) {
