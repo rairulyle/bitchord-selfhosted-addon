@@ -6,6 +6,8 @@ Entries are written **one line per paragraph and bullet** (no hard-wrapping) so 
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-27
+
 **Breaking:** servers are now set up on a password-protected page at `/setup` instead of in `.env`, state needs a `/data` volume, and every BitChord URL changes. Follow the upgrade steps under Removed, or "Upgrading from v0.4" in the README.
 
 ### Added
