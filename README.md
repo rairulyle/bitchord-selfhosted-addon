@@ -49,12 +49,34 @@ track also exists in your library, your own copy plays instead.
 - For **Sign in with Plex**, the container must reach `plex.tv`. Pasting a
   token works without it.
 
+## 🗺️ Roadmap
+
+- **Emby support.** Emby and Jellyfin share most of their API, so this
+  follows the Jellyfin adapter: one more kind on the setup page, shown as
+  "Emby".
+- **Navidrome support.** Through the Subsonic API, which also opens the door
+  to other Subsonic-compatible servers.
+
 ## 🚀 Setup
 
-1. **Copy the example compose file.**
+1. **Add the service to your docker compose file**.
 
-   ```bash
-   cp compose.example.yml compose.yml
+   ```yaml
+   services:
+     bitchord-selfhosted-addon:
+       image: ghcr.io/rairulyle/bitchord-selfhosted-addon:latest
+       ports:
+         - "8080:8080"
+       volumes:
+         - </path/to/your/data>:/data
+       restart: unless-stopped
+       networks:
+         - proxy
+
+   networks:
+     proxy:
+       external: true
+       name: replace-with-your-reverse-proxy-network
    ```
 
 2. **Connect it to HTTPS.** In `compose.yml`, set the network name to the
@@ -74,32 +96,17 @@ track also exists in your library, your own copy plays instead.
 
 5. **Set the public URL** to the HTTPS origin from step 2, then **add a
    server**: pick Plex or Jellyfin, sign in or paste a token, test the
-   connection, choose a library if you want to limit it, and save. See
-   [Adding a server](#-adding-a-server) for the sign-in options.
+   connection, choose a library if you want to limit it, and save.
 
 6. **Copy the server's URL into BitChord.** Each server card shows its URL
    with a copy button. In BitChord, open **Sources**, add an addon, and paste
    it. See [Adding it to a client](#-adding-it-to-a-client).
 
-`/health` answers `200` once every enabled server has loaded its index, and
-`503` while one is still loading. Changing a server's address, credentials or
-library keeps it answering from its current index until the new one has
-loaded, or for 30 seconds at most.
-
-### Image tags and updates
-
-- The image is `ghcr.io/rairulyle/bitchord-selfhosted-addon:latest`, built for
-  `linux/amd64` and `linux/arm64`.
-- **Pin a version** with a tag such as `:0.5` or `:0.5.0`.
-- **Update** with `docker compose pull`, then `docker compose up -d`.
-- **Build from source** by replacing the `image:` line in `compose.yml` with
-  `build: .` and running `docker compose up -d --build`.
-
-### Upgrading from 0.4
+### Upgrading from v0.4
 
 Servers, the public URL and the secret moved from `.env` to the setup page,
-and the addon now keeps them in `/data`. A 0.4 `compose.yml` has no volume, so
-edit it before pulling 0.5:
+and the addon now keeps them in `/data`. A v0.4 `compose.yml` has no volume, so
+edit it before pulling the latest image:
 
 1. **Add the data volume.** Give the service a `volumes:` entry and declare
    the volume at the top level, as `compose.example.yml` does:
@@ -108,18 +115,16 @@ edit it before pulling 0.5:
    services:
      bitchord-selfhosted-addon:
        volumes:
-         - data:/data
-
-   volumes:
-     data:
+         - </path/to/your/data>:/data:/data
    ```
 
    Without it, `docker compose down` loses the password, the secret and every
    server, and the setup page is open again to whoever reaches it first.
+
 2. **Remove `env_file: .env`** from the service, then delete `.env`. Or keep
    both, with `.env` holding only the settings listed below; Compose refuses
    to start while `env_file:` names a file that does not exist.
-3. **Set it up.** Pull 0.5, start the container, open `/setup`, set a password
+3. **Set it up.** Pull latest image, start the container, open `/setup`, set a password
    and the public URL, add your server, and replace the URL in BitChord with
    the new one from the server card. The old variables are ignored; the log
    names any that are still set.
@@ -133,68 +138,12 @@ every server with its token, so keep the volume private. With a bind mount,
 
 The environment holds process settings only. None is required.
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `REFRESH_INTERVAL` | `15m` | Index refresh period for every server, such as `5m` or `1h` |
-| `PORT` | `8080` | Listen port |
-| `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
-| `LOG_FORMAT` | `text` | `text` for reading in `docker logs`, `json` for a log shipper |
-
-A bad value prints every problem at once and exits.
-
-## ➕ Adding a server
-
-Each server is added on the setup page with a name, an address and a
-credential. The name in BitChord is the kind followed by what you type, such
-as `Plex - Home`; leave it empty for plain `Plex`. The address is the one the
-addon container uses to reach the server, such as `http://plex:32400` on a
-shared Docker network.
-
-### Sign in with Plex
-
-Click **Sign in with Plex**. A new tab opens on plex.tv; sign in there and
-come back. The page then lists the servers on your account, marks the ones
-the addon can reach, and fills the address of the one you pick. A server the
-addon cannot reach is listed as `Unreachable`; type its address by hand if
-you know one the container can use. The token Plex issues is stored, your
-Plex password never reaches the addon.
-
-### Pasting a Plex token
-
-In Plex Web, open any item, choose **Get Info**, then **View XML**. The
-address bar of the new tab ends with `X-Plex-Token=...`. That value is the
-token. Plex documents this under "Finding an authentication token".
-
-### Signing in to Jellyfin
-
-Type the Jellyfin username and password and click **Sign in**. The password
-is used for that one request and never stored; Jellyfin hands back an access
-token, which is what the addon keeps. The addon then appears under that
-user's devices in the Jellyfin dashboard, where it can be revoked, and it
-sees the libraries that user can see. Changing the server address later
-means signing in again. When a server signs in again from its edit form, the
-old session is signed out once the new one is saved and has taken over.
-
-### Pasting a Jellyfin API key
-
-In Jellyfin Web, open the **Dashboard**, then **API Keys** under
-**Advanced**, and add a key with any app name, such as `bitchord`. An API key
-sees every library. The addon sends it in the `Authorization` header on every
-request and shows up in the dashboard as `bitchord-selfhosted-addon`.
-Jellyfin 12 turns the older `X-Emby-Token` header and `api_key` parameter off
-by default, and the addon uses neither.
-
-### The secret
-
-Every server URL carries one secret. **Regenerate** on the setup page changes
-every URL at once; update each client afterwards. To take one server offline
-without changing the others, disable or remove it instead.
-
-### Forgotten password
-
-Stop the container, delete the `admin` entry from `/data/addon.json` (or the
-whole file to start over), and start it again. The setup page asks for a new
-password on the next visit.
+| Variable           | Default | Meaning                                                       |
+| ------------------ | ------- | ------------------------------------------------------------- |
+| `REFRESH_INTERVAL` | `15m`   | Index refresh period for every server, such as `5m` or `1h`   |
+| `PORT`             | `8080`  | Listen port                                                   |
+| `LOG_LEVEL`        | `info`  | `debug`, `info`, `warn` or `error`                            |
+| `LOG_FORMAT`       | `text`  | `text` for reading in `docker logs`, `json` for a log shipper |
 
 ## 📱 Adding it to a client
 
@@ -279,14 +228,14 @@ Every line about a server names it under `server` and its kind under
 removed, the public URL, a regenerated secret, and failed logins with the
 client address.
 
-| Line | Meaning |
-|---|---|
-| `search` | How many tracks matched every word (`strict`), how many matched on the title alone (`fallback`), and the first row returned |
-| `search miss` | A query that returned nothing |
-| `stream` | The client accepted one of the rows and is about to play it |
-| `play` | One line per file request. `ended` is `complete`, `client left` (a skip, or the player closing the connection) or `upstream error` |
-| `library indexed` | An index refresh finished |
-| `server started` / `server stopped` | A server's refresher started or stopped, on startup and after a change on the setup page |
+| Line                                | Meaning                                                                                                                            |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `search`                            | How many tracks matched every word (`strict`), how many matched on the title alone (`fallback`), and the first row returned        |
+| `search miss`                       | A query that returned nothing                                                                                                      |
+| `stream`                            | The client accepted one of the rows and is about to play it                                                                        |
+| `play`                              | One line per file request. `ended` is `complete`, `client left` (a skip, or the player closing the connection) or `upstream error` |
+| `library indexed`                   | An index refresh finished                                                                                                          |
+| `server started` / `server stopped` | A server's refresher started or stopped, on startup and after a change on the setup page                                           |
 
 A `search` that returned rows with no `stream` after it means the client
 turned them down. BitChord does that when the title, the version (live,
@@ -303,29 +252,21 @@ request and per `HEAD` probe.
 
 ## 🛠️ Troubleshooting
 
-| Symptom | Cause |
-|---|---|
-| The setup page asks for a password I never set | Someone else reached it first, or the volume was reused. Delete the `admin` entry from `/data/addon.json` and restart |
-| `/health` stays `503` | A server has not loaded its index yet. Its card on the setup page shows the last error, and the logs have `first library load failed` |
-| The container came up with no servers | State lives on the `/data` volume. Check `compose.yml` mounts it, and that the volume is the same one as before |
-| Log says `cannot open the data file` | `/data` is not writable by the container's `nonroot` user, or `addon.json` is not valid JSON. Fix the mount or the file and restart |
-| Log says `plex rejected the Plex token` | The token is wrong, or the Plex account signed out of all devices. Open the server on the setup page and sign in again or paste a new token |
-| Log says `jellyfin rejected the Jellyfin API key` | The key was deleted in the dashboard, or the user signed out of all devices. Sign in again or paste a new key |
-| `Sign in with Plex` says it cannot reach plex.tv | The container has no route to `plex.tv`. Paste a token instead |
-| No server on the account is reachable | The addon must reach the server over the network. Type an address the container can use, such as a Docker service name |
-| The server has no music library with that name | The library filter must be one the connection test listed. Pick it from the list after testing |
-| Search works but playback fails | The reverse proxy buffers or times out long responses. See the reverse proxy notes |
+| Symptom                                           | Cause                                                                                                                                                                                                                                                                                                    |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The setup page asks for a password I never set    | Someone else reached it first, or the volume was reused. Delete the `admin` entry from `/data/addon.json` and restart                                                                                                                                                                                    |
+| `/health` stays `503`                             | A server has not loaded its index yet. Its card on the setup page shows the last error, and the logs have `first library load failed`                                                                                                                                                                    |
+| The container came up with no servers             | State lives on the `/data` volume. Check `compose.yml` mounts it, and that the volume is the same one as before                                                                                                                                                                                          |
+| Log says `cannot open the data file`              | `/data` is not writable by the container's `nonroot` user, or `addon.json` is not valid JSON. Fix the mount or the file and restart                                                                                                                                                                      |
+| Log says `plex rejected the Plex token`           | The token is wrong, or the Plex account signed out of all devices. Open the server on the setup page and sign in again or paste a new token                                                                                                                                                              |
+| Log says `jellyfin rejected the Jellyfin API key` | The key was deleted in the dashboard, or the user signed out of all devices. Sign in again or paste a new key                                                                                                                                                                                            |
+| `Sign in with Plex` says it cannot reach plex.tv  | The container has no route to `plex.tv`. Paste a token instead                                                                                                                                                                                                                                           |
+| No server on the account is reachable             | The addon must reach the server over the network. Type an address the container can use, such as a Docker service name                                                                                                                                                                                   |
+| The server has no music library with that name    | The library filter must be one the connection test listed. Pick it from the list after testing                                                                                                                                                                                                           |
+| Search works but playback fails                   | The reverse proxy buffers or times out long responses. See the reverse proxy notes                                                                                                                                                                                                                       |
 | A track in your library plays from another source | Look for its `search` line. With rows returned and no `stream` after it, the client turned them down: compare the title, version words and runtime in your server with the service's. With no `search` line at all, the client never asked, which is what BitChord does for titles with no Latin letters |
-| A new album does not show up | The index refreshes every `REFRESH_INTERVAL`. Disable and enable the server on the setup page to refresh now |
-| Playback stops when the container is redeployed | A restart lets active streams run for 10 seconds, then closes them. The player resumes with a Range request once the addon is back |
-
-## 🗺️ Roadmap
-
-- **Emby support.** Emby and Jellyfin share most of their API, so this
-  follows the Jellyfin adapter: one more kind on the setup page, shown as
-  "Emby".
-- **Navidrome support.** Through the Subsonic API, which also opens the door
-  to other Subsonic-compatible servers.
+| A new album does not show up                      | The index refreshes every `REFRESH_INTERVAL`. Disable and enable the server on the setup page to refresh now                                                                                                                                                                                             |
+| Playback stops when the container is redeployed   | A restart lets active streams run for 10 seconds, then closes them. The player resumes with a Range request once the addon is back                                                                                                                                                                       |
 
 ## 🧑‍💻 Development
 
