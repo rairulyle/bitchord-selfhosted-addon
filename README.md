@@ -29,6 +29,11 @@ in your library, your own copy plays.
 - **Private.** Your Plex and Jellyfin tokens never leave the addon, and every
   link contains a secret.
 
+<p align="center">
+  <img src="docs/screenshots/setup.png" alt="The setup page listing three servers" width="49%">
+  <img src="docs/screenshots/add-server.png" alt="Adding a Plex server" width="49%">
+</p>
+
 ## 📋 Requirements
 
 - Docker.
@@ -227,3 +232,7 @@ git push origin vX.Y.Z
 The workflow checks the changelog, runs the tests, pushes the image to GHCR
 (`latest`, `X.Y.Z`, `X.Y`) and creates the GitHub release. Preview the notes
 with `scripts/release-notes.sh vX.Y.Z`.
+
+## 📄 License
+
+[MIT](LICENSE)
