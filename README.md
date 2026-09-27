@@ -90,9 +90,9 @@ in your library, your own copy plays.
    right away: until a password is set, anyone who opens the page can claim
    it.
 
-5. **Set the public URL** (`https://music.example.com`), then **add a
-   server**: pick Plex or Jellyfin, sign in or paste a token, test the
-   connection, optionally pick a library, and save.
+5. **Add a server**: pick Plex or Jellyfin, sign in or paste a token,
+   optionally pick a library, and save. The public URL is filled in from the
+   address you opened; change it on the page if it is wrong.
 
 6. **Add it to BitChord.** Copy the link from the server's card. In
    BitChord, open **Sources**, add an addon, and paste it.
@@ -168,6 +168,7 @@ Turn off response buffering, so seeking and skipping stay fast.
       proxy_buffering off;
       proxy_request_buffering off;
       proxy_http_version 1.1;
+      proxy_set_header Host $host;
       proxy_read_timeout 1h;
       proxy_set_header X-Forwarded-Proto $scheme;
       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

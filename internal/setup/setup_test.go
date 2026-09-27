@@ -182,8 +182,14 @@ func TestWithoutAnAdminOnlyTheCreateFormExists(t *testing.T) {
 	if admin == nil || !VerifyPassword(admin.PasswordHash, password) || admin.SessionKey == "" {
 		t.Fatalf("admin = %+v", admin)
 	}
-	if rec := a.get("/setup"); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "No servers yet") {
-		t.Fatalf("overview after create: %d %s", rec.Code, rec.Body.String())
+	if page := a.get("/setup").Body.String(); strings.Contains(page, `id="secret"`) || strings.Contains(page, "Add a server") {
+		t.Fatal("the secret or Add a server shows before a public URL is set")
+	}
+	if err := a.store.SetPublicURL("https://music.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if page := a.get("/setup").Body.String(); !strings.Contains(page, `id="secret"`) || !strings.Contains(page, "No servers yet") {
+		t.Fatalf("overview with a public URL: %s", page)
 	}
 	if strings.Contains(a.logs.String(), password) {
 		t.Fatal("the password reached the logs")
@@ -297,7 +303,7 @@ func TestChangePasswordSignsOtherBrowsersOut(t *testing.T) {
 func TestPublicURLAndSecret(t *testing.T) {
 	a := newTestApp(t)
 	a.signIn()
-	if rec := a.get("/setup"); !strings.Contains(rec.Body.String(), "Set the HTTPS address") {
+	if rec := a.get("/setup"); !strings.Contains(rec.Body.String(), "Server URLs appear once it is set") {
 		t.Fatal("missing public url banner")
 	}
 	if rec := a.form("/setup/public-url", url.Values{"public_url": {"http://music.example.com"}}); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "https://") {
@@ -327,7 +333,7 @@ func TestPublicURLAndSecret(t *testing.T) {
 	if got := a.store.Snapshot().PublicURL; got != "" {
 		t.Fatalf("public url after clearing = %q", got)
 	}
-	if page = a.get("/setup").Body.String(); !strings.Contains(page, "Set the HTTPS address") {
+	if page = a.get("/setup").Body.String(); !strings.Contains(page, "Server URLs appear once it is set") {
 		t.Fatal("missing public url banner after clearing")
 	}
 }
@@ -1155,5 +1161,45 @@ func TestOverHTTPSReadsTheFirstForwardedProto(t *testing.T) {
 	r.Header.Set("X-Forwarded-Proto", "http, https")
 	if overHTTPS(r) {
 		t.Error("an http first hop was treated as https")
+	}
+}
+
+func TestTheFirstPasswordSavesThePublicURLFromTheRequest(t *testing.T) {
+	cases := map[string]struct {
+		target, proto, want string
+	}{
+		"https":                 {"https://music.example.com/setup/password", "", "https://music.example.com"},
+		"behind a proxy":        {"http://music.example.com/setup/password", "https", "https://music.example.com"},
+		"a port is kept":        {"https://music.example.com:8443/setup/password", "", "https://music.example.com:8443"},
+		"plain http":            {"http://music.example.com/setup/password", "", ""},
+		"localhost":             {"https://localhost/setup/password", "", ""},
+		"an ip address":         {"https://192.168.1.10/setup/password", "", ""},
+		"an ipv6 address":       {"https://[::1]:8080/setup/password", "", ""},
+		"a docker service name": {"http://bitchord-selfhosted-addon:8080/setup/password", "https", ""},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			a := newTestApp(t)
+			if tc.proto != "" {
+				a.headers.Set("X-Forwarded-Proto", tc.proto)
+			}
+			if rec := a.form(tc.target, url.Values{"password": {password}}); rec.Code != http.StatusSeeOther {
+				t.Fatalf("create password: %d %s", rec.Code, rec.Body.String())
+			}
+			if got := a.store.Snapshot().PublicURL; got != tc.want {
+				t.Fatalf("public url = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTheFirstPasswordKeepsAPublicURLAlreadySet(t *testing.T) {
+	a := newTestApp(t)
+	if err := a.store.SetPublicURL("https://other.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	a.form("https://music.example.com/setup/password", url.Values{"password": {password}})
+	if got := a.store.Snapshot().PublicURL; got != "https://other.example.com" {
+		t.Fatalf("public url = %q", got)
 	}
 }

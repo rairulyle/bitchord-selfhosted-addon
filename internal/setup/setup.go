@@ -274,6 +274,27 @@ func overHTTPS(r *http.Request) bool {
 	return r.TLS != nil || strings.EqualFold(strings.TrimSpace(proto), "https")
 }
 
+// A host without a dot is rejected: a proxy that does not pass Host on leaves
+// the container's service name there.
+func publicOrigin(r *http.Request) (string, bool) {
+	if !overHTTPS(r) {
+		return "", false
+	}
+	hostname := r.Host
+	if host, _, err := net.SplitHostPort(r.Host); err == nil {
+		hostname = host
+	}
+	hostname = strings.Trim(hostname, "[]")
+	if hostname == "localhost" || strings.HasSuffix(hostname, ".localhost") || net.ParseIP(hostname) != nil || !strings.Contains(hostname, ".") {
+		return "", false
+	}
+	origin := "https://" + r.Host
+	if store.ValidatePublicURL(origin) != nil {
+		return "", false
+	}
+	return origin, true
+}
+
 // clientAddress is the first hop of X-Forwarded-For when a proxy sets it,
 // else the peer address. It is for logging only: it is client-supplied and
 // must never key a rate limit.
