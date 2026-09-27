@@ -10,56 +10,39 @@
 
 ## 🎵 What it is
 
-A small self-hosted server that makes your Plex and Jellyfin music libraries
-sources in BitChord (Android). BitChord searches your library through the
-addon and streams the original files from it.
+A small self-hosted server that adds your Plex and Jellyfin music libraries
+to BitChord (Android) as sources. BitChord searches your library through the
+addon and streams your original files.
 
-BitChord ranks user-added addons above its built-in sources, so when a queued
-track also exists in your library, your own copy plays instead.
+BitChord prefers addons you add over its built-in sources, so when a song is
+in your library, your own copy plays.
 
-## ✨ How it works
+## ✨ Features
 
-- **Setup page.** One container, set up in the browser. Open `/setup`,
-  choose a password, add your servers, and copy each one's URL into
-  BitChord. No server details go into a file.
-- **One source per server.** Every Plex or Jellyfin server you add gets its
-  own URL and shows up in BitChord as its own source, so you order and toggle
-  them there.
-- **Fast search.** The addon keeps an in-memory index of every track in each
-  library and refreshes it on a timer. Expect roughly 30 to 50 MB of memory
-  for a library of 100,000 tracks.
-- **Original quality.** Audio and artwork bytes are proxied from your server,
-  with `Range` support for seeking. The original file is always served.
-  Quality tiers are ignored.
-- **Your token stays home.** Plex tokens and Jellyfin keys never leave the
-  server. Clients only ever see the addon's own URLs.
-- **Secret URL.** Every route sits under a secret path segment. A wrong secret
-  gets an empty `404`, the same answer as a server that does not exist.
+- **Set up in the browser.** Open `/setup`, choose a password, add your
+  servers, and copy each one's link into BitChord.
+- **Any number of servers.** Each Plex or Jellyfin server gets its own link
+  and shows up in BitChord as its own source.
+- **Fast search.** The addon keeps a list of your tracks in memory, about
+  30–50 MB for 100,000 tracks.
+- **Original quality.** Your files are streamed as they are, with seeking.
+- **Private.** Your Plex and Jellyfin tokens never leave the addon, and every
+  link contains a secret.
 
 ## 📋 Requirements
 
 - Docker.
-- A Plex server, or a Jellyfin server on 10.9 or newer, that the addon
-  container can reach over the network.
-- A reverse proxy that terminates HTTPS, such as Caddy, Traefik or nginx. The
-  addon itself listens on plain HTTP. BitChord requires HTTPS. A
-  [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
-  pointed at `bitchord-selfhosted-addon:8080` works too, and reaches the addon
-  from outside your network without opening router ports.
-- For **Sign in with Plex**, the container must reach `plex.tv`. Pasting a
-  token works without it.
-
-## 🗺️ Roadmap
-
-- **Emby support.** Emby and Jellyfin share most of their API, so this
-  follows the Jellyfin adapter: one more kind on the setup page, shown as
-  "Emby".
-- **Navidrome support.** Through the Subsonic API, which also opens the door
-  to other Subsonic-compatible servers.
+- A Plex server, or Jellyfin 10.9 or newer, that the addon can reach.
+- HTTPS, which BitChord requires. Use a reverse proxy such as Caddy, Traefik
+  or nginx, or a
+  [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/).
+- For **Sign in with Plex**, the addon must reach `plex.tv`. Pasting a token
+  works without it.
 
 ## 🚀 Setup
 
-1. **Add the service to your docker compose file**.
+1. **Add the service to your `compose.yml`**, or start from
+   [`compose.example.yml`](compose.example.yml).
 
    ```yaml
    services:
@@ -79,10 +62,13 @@ track also exists in your library, your own copy plays instead.
        name: replace-with-your-reverse-proxy-network
    ```
 
-2. **Connect it to HTTPS.** In `compose.yml`, set the network name to the
-   Docker network your reverse proxy uses, then point the proxy at
-   `bitchord-selfhosted-addon:8080` for the host you will use, such as
-   `music.example.com`.
+   The container runs as user `65532`, so give it the data folder first:
+   `sudo chown 65532 </path/to/your/data>`.
+
+2. **Connect it to HTTPS.** Set the network name to the one your reverse
+   proxy uses, and point the proxy at `bitchord-selfhosted-addon:8080` for a
+   host such as `music.example.com`. If only the proxy needs to reach the
+   addon, you can remove the `ports:` lines.
 
 3. **Start it.**
 
@@ -90,101 +76,80 @@ track also exists in your library, your own copy plays instead.
    docker compose up -d
    ```
 
-4. **Open the setup page** at `https://music.example.com/setup` and choose a
-   password. Do this right after starting: until a password exists, whoever
-   opens the page first owns it.
+4. **Open `https://music.example.com/setup` and choose a password.** Do this
+   right away: until a password is set, anyone who opens the page can claim
+   it.
 
-5. **Set the public URL** to the HTTPS origin from step 2, then **add a
+5. **Set the public URL** (`https://music.example.com`), then **add a
    server**: pick Plex or Jellyfin, sign in or paste a token, test the
-   connection, choose a library if you want to limit it, and save.
+   connection, optionally pick a library, and save.
 
-6. **Copy the server's URL into BitChord.** Each server card shows its URL
-   with a copy button. In BitChord, open **Sources**, add an addon, and paste
-   it. See [Adding it to a client](#-adding-it-to-a-client).
+6. **Add it to BitChord.** Copy the link from the server's card. In
+   BitChord, open **Sources**, add an addon, and paste it.
+
+To update, run `docker compose pull` and then `docker compose up -d`.
 
 ### Upgrading from v0.4
 
-Servers, the public URL and the secret moved from `.env` to the setup page,
-and the addon now keeps them in `/data`. A v0.4 `compose.yml` has no volume, so
-edit it before pulling the latest image:
+Settings moved from `.env` to the setup page and are now saved in `/data`.
+Before pulling the new image:
 
-1. **Add the data volume.** Give the service a `volumes:` entry and declare
-   the volume at the top level, as `compose.example.yml` does:
+1. **Add a data volume** to the service, as in the setup example above:
 
    ```yaml
-   services:
-     bitchord-selfhosted-addon:
-       volumes:
-         - </path/to/your/data>:/data:/data
+   volumes:
+     - </path/to/your/data>:/data
    ```
 
-   Without it, `docker compose down` loses the password, the secret and every
-   server, and the setup page is open again to whoever reaches it first.
+   Without it, your password, secret and servers are lost whenever the
+   container is recreated.
 
-2. **Remove `env_file: .env`** from the service, then delete `.env`. Or keep
-   both, with `.env` holding only the settings listed below; Compose refuses
-   to start while `env_file:` names a file that does not exist.
-3. **Set it up.** Pull latest image, start the container, open `/setup`, set a password
-   and the public URL, add your server, and replace the URL in BitChord with
-   the new one from the server card. The old variables are ignored; the log
-   names any that are still set.
+2. **Remove `env_file: .env`** from the service and delete `.env`. Compose
+   won't start if `env_file` points to a missing file.
+
+3. **Set it up again.** Pull the image, start it, open `/setup`, and add your
+   server. Then replace the old link in BitChord with the new one.
 
 ## ⚙️ Configuration
 
-State lives in one file, `/data/addon.json`, on the volume `compose.example.yml`
-mounts at `/data`. It holds the password hash, the secret, the public URL and
-every server with its token, so keep the volume private. With a bind mount,
-`chown 65532` the directory so the container's `nonroot` user can write it.
+Everything is saved in `/data/addon.json`, including your server tokens, so
+keep that folder private.
 
-The environment holds process settings only. None is required.
+These optional environment variables are the only other settings:
 
-| Variable           | Default | Meaning                                                       |
-| ------------------ | ------- | ------------------------------------------------------------- |
-| `REFRESH_INTERVAL` | `15m`   | Index refresh period for every server, such as `5m` or `1h`   |
-| `PORT`             | `8080`  | Listen port                                                   |
-| `LOG_LEVEL`        | `info`  | `debug`, `info`, `warn` or `error`                            |
-| `LOG_FORMAT`       | `text`  | `text` for reading in `docker logs`, `json` for a log shipper |
+| Variable           | Default | Meaning                                  |
+| ------------------ | ------- | ---------------------------------------- |
+| `REFRESH_INTERVAL` | `15m`   | How often to re-read your libraries      |
+| `PORT`             | `8080`  | Port the addon listens on                |
+| `LOG_LEVEL`        | `info`  | `debug`, `info`, `warn` or `error`       |
+| `LOG_FORMAT`       | `text`  | `text`, or `json` for log collectors     |
 
-## 📱 Adding it to a client
+## 📱 Using it in BitChord
 
-A server's URL is your public URL, the server's id and the secret:
+Each server's link looks like this:
 
 ```
 https://music.example.com/plex-1/<secret>
 ```
 
-In BitChord, open **Sources**, add an addon, and paste the URL. Repeat for
-each server. If a client asks for a manifest URL instead, append
-`/manifest.json`.
+Add one link per server under **Sources**. If an app asks for a manifest URL,
+add `/manifest.json` to the end.
 
-### Using it with other sources
-
-BitChord tries your sources from top to bottom for every track. With your
-servers first, the order looks like this:
-
-1. **Your servers**, in the order you put them. If the track is in one of
-   your libraries, your own file plays.
-2. **Your other addons**, in the order listed.
-3. **Built-in sources**, ending with YouTube Music, which is always on.
-
-If a source does not have the track or cannot be reached, BitChord moves on
-to the next one, so music outside your library still plays.
-
-To change the order, open **Sources** and drag a source by the handle on its
-right. Use the toggle to switch a source off without removing it.
+BitChord tries sources from top to bottom. Put your servers first so your own
+files play, and anything not in your library falls through to the next
+source. Drag a source by its handle to reorder it, or use its toggle to turn
+it off.
 
 > [!WARNING]
-> Treat each URL like a password. Anyone who has it can stream that library.
-> To revoke every URL at once, regenerate the secret on the setup page and
-> add the new URLs to your clients.
+> Treat each link like a password: anyone who has it can stream that
+> library. To revoke every link at once, regenerate the secret on the setup
+> page and add the new links to BitChord.
 
 ## 🔀 Reverse proxy notes
 
-Turn off response buffering for the addon, so seeking stays fast and a
-skipped track stops downloading from your server at once. The setup page at
-`/setup` goes through the same proxy.
+Turn off response buffering, so seeking and skipping stay fast.
 
-- **Caddy** and **Traefik** stream responses by default. No change needed.
+- **Caddy** and **Traefik** work as they are.
 - **nginx:**
 
   ```nginx
@@ -199,74 +164,44 @@ skipped track stops downloading from your server at once. The setup page at
   }
   ```
 
-The setup page marks its session cookie `Secure` when the proxy sends
-`X-Forwarded-Proto: https`. Caddy and Traefik set it by default.
-
-Login lockout is keyed on the TCP peer address, never `X-Forwarded-For`, so
-behind a reverse proxy every client shares one key: five wrong passwords in a
-minute pause logins for everyone for that minute.
-
-Do not publish the container's port on the host. Only the reverse proxy
-should reach it.
+After five wrong passwords in a minute, the setup page pauses logins for a
+minute. Behind a proxy this pause applies to everyone.
 
 ## 📜 Logs
 
-At the default `info` level the addon logs what a client asked for and what
-came of it:
+At the default level the addon logs searches, plays and setup changes:
 
 ```
-msg=search server=plex-1 source=plex q="timebomb all time low" strict=1 fallback=0 returned=1 top="Time‐Bomb — All Time Low"
-msg="search miss" server=plex-1 source=plex q="some song that is not there" strict=0 fallback=0 returned=0
-msg=stream server=plex-1 source=plex id=5820 track="Time‐Bomb — All Time Low" quality="lossless 16-bit 44.1kHz" format=flac
-msg=play server=plex-1 source=plex id=5820 track="Time‐Bomb — All Time Low" range="bytes=0-" status=206 bytes=26779352 ended=complete
-msg="library indexed" server=plex-1 source=plex tracks=8697 added=12 removed=0 skipped=0
-msg="server added" server=jellyfin-1 source=jellyfin host=jellyfin:8096 auth=jellyfin-signin
+msg=search server=plex-1 source=plex q="timebomb all time low" returned=1 top="Time‐Bomb — All Time Low"
+msg=play server=plex-1 source=plex id=5820 track="Time‐Bomb — All Time Low" status=206 ended=complete
+msg="library indexed" server=plex-1 source=plex tracks=8697 added=12 removed=0
 ```
 
-Every line about a server names it under `server` and its kind under
-`source`. Setup page actions are logged too: servers added, changed and
-removed, the public URL, a regenerated secret, and failed logins with the
-client address.
+A `search` with results but no `stream` after it means BitChord decided the
+match was wrong (a different title, version, artist or length). BitChord
+never searches for titles with no Latin letters or digits, such as
+`夜に駆ける`.
 
-| Line                                | Meaning                                                                                                                            |
-| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `search`                            | How many tracks matched every word (`strict`), how many matched on the title alone (`fallback`), and the first row returned        |
-| `search miss`                       | A query that returned nothing                                                                                                      |
-| `stream`                            | The client accepted one of the rows and is about to play it                                                                        |
-| `play`                              | One line per file request. `ended` is `complete`, `client left` (a skip, or the player closing the connection) or `upstream error` |
-| `library indexed`                   | An index refresh finished                                                                                                          |
-| `server started` / `server stopped` | A server's refresher started or stopped, on startup and after a change on the setup page                                           |
-
-A `search` that returned rows with no `stream` after it means the client
-turned them down. BitChord does that when the title, the version (live,
-acoustic, remix), the artist or the runtime disagree with the track it wanted.
-
-BitChord cannot match a track whose title has no Latin letters or digits at
-all, such as `夜に駆ける`. It builds no search for those, so they never reach
-the addon and leave no `search miss` behind.
-
-**Privacy.** Search text is written to the log, so the log records what was
-listened to. It stays on your server. The secret, tokens, API keys and
-passwords are never logged. `LOG_LEVEL=debug` adds one line per HTTP
-request and per `HEAD` probe.
+Search text is logged, so the logs show what was played. They stay on your
+server. Passwords, tokens and the secret are never logged.
 
 ## 🛠️ Troubleshooting
 
-| Symptom                                           | Cause                                                                                                                                                                                                                                                                                                    |
-| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The setup page asks for a password I never set    | Someone else reached it first, or the volume was reused. Delete the `admin` entry from `/data/addon.json` and restart                                                                                                                                                                                    |
-| `/health` stays `503`                             | A server has not loaded its index yet. Its card on the setup page shows the last error, and the logs have `first library load failed`                                                                                                                                                                    |
-| The container came up with no servers             | State lives on the `/data` volume. Check `compose.yml` mounts it, and that the volume is the same one as before                                                                                                                                                                                          |
-| Log says `cannot open the data file`              | `/data` is not writable by the container's `nonroot` user, or `addon.json` is not valid JSON. Fix the mount or the file and restart                                                                                                                                                                      |
-| Log says `plex rejected the Plex token`           | The token is wrong, or the Plex account signed out of all devices. Open the server on the setup page and sign in again or paste a new token                                                                                                                                                              |
-| Log says `jellyfin rejected the Jellyfin API key` | The key was deleted in the dashboard, or the user signed out of all devices. Sign in again or paste a new key                                                                                                                                                                                            |
-| `Sign in with Plex` says it cannot reach plex.tv  | The container has no route to `plex.tv`. Paste a token instead                                                                                                                                                                                                                                           |
-| No server on the account is reachable             | The addon must reach the server over the network. Type an address the container can use, such as a Docker service name                                                                                                                                                                                   |
-| The server has no music library with that name    | The library filter must be one the connection test listed. Pick it from the list after testing                                                                                                                                                                                                           |
-| Search works but playback fails                   | The reverse proxy buffers or times out long responses. See the reverse proxy notes                                                                                                                                                                                                                       |
-| A track in your library plays from another source | Look for its `search` line. With rows returned and no `stream` after it, the client turned them down: compare the title, version words and runtime in your server with the service's. With no `search` line at all, the client never asked, which is what BitChord does for titles with no Latin letters |
-| A new album does not show up                      | The index refreshes every `REFRESH_INTERVAL`. Disable and enable the server on the setup page to refresh now                                                                                                                                                                                             |
-| Playback stops when the container is redeployed   | A restart lets active streams run for 10 seconds, then closes them. The player resumes with a Range request once the addon is back                                                                                                                                                                       |
+| Problem                                      | What to do                                                                                        |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| The setup page asks for a password I never set | Someone else got there first. Delete the `admin` entry in `/data/addon.json` and restart           |
+| My servers are gone after an update          | The `/data` volume is missing or changed. Check `compose.yml`                                      |
+| Log says `cannot open the data file`         | The addon can't write `/data`, or `addon.json` is broken. Fix the folder owner or the file         |
+| Log says Plex or Jellyfin rejected the token | The token was revoked. Edit the server on the setup page and sign in again                         |
+| Sign in with Plex can't reach plex.tv        | Paste a token instead                                                                             |
+| A server shows as unreachable                | Enter an address the container can reach, such as a Docker service name                           |
+| Search works but playback fails              | Your reverse proxy is buffering or timing out. See the reverse proxy notes                         |
+| A new album doesn't show up                  | Wait for the next refresh, or disable and re-enable the server on the setup page                  |
+
+## 🗺️ Roadmap
+
+- **Emby** support.
+- **Navidrome** and other Subsonic-compatible servers.
 
 ## 🧑‍💻 Development
 
@@ -275,32 +210,20 @@ go test -race ./...
 gofmt -l . && go vet ./...
 ```
 
-Tests run against in-process fake Plex, Jellyfin and plex.tv servers in
-`internal/fakes`. No real server is needed.
-
-Each media server is an adapter behind the `Backend` interface in
-`internal/media`. `internal/store` owns the state file, `internal/registry`
-runs one index per server and picks the adapter, `internal/server` serves
-the BitChord routes, and `internal/setup` is the setup page. Only the
-registry names the adapters.
+Tests use fake Plex, Jellyfin and plex.tv servers in `internal/fakes`, so no
+real server is needed.
 
 ### Releasing
 
-`CHANGELOG.md` is the source of truth for release notes.
+`CHANGELOG.md` is the source of truth for release notes. Move the
+`## [Unreleased]` entries into a `## [X.Y.Z] - YYYY-MM-DD` section, commit,
+then tag and push:
 
-1. Move the entries under `## [Unreleased]` into a new `## [X.Y.Z] - YYYY-MM-DD`
-   section and commit.
-2. Tag and push:
+```bash
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
 
-   ```bash
-   git tag vX.Y.Z
-   git push origin vX.Y.Z
-   ```
-
-The workflow checks that the changelog has a section for that version, runs
-the tests, pushes a multi-arch image to GHCR tagged `latest`, `X.Y.Z` and
-`X.Y`, then creates the GitHub release with that section as its notes. The
-version is stamped into the binary and shows in the manifest. Publishing a
-release from the GitHub UI triggers the same workflow, and its notes are
-replaced by the changelog section. Preview the notes locally with
-`scripts/release-notes.sh vX.Y.Z`.
+The workflow checks the changelog, runs the tests, pushes the image to GHCR
+(`latest`, `X.Y.Z`, `X.Y`) and creates the GitHub release. Preview the notes
+with `scripts/release-notes.sh vX.Y.Z`.
