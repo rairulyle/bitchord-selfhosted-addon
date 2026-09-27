@@ -101,15 +101,16 @@ func serve(ctx context.Context, cfg config.Config, st *store.Store, log *slog.Lo
 	if snapshot.Admin == nil {
 		log.Warn("the setup page has no password yet; open /setup on your public URL and set one before anyone else does")
 	}
-	reg := registry.New(snapshot, registry.Options{Interval: cfg.RefreshInterval, Version: version, Log: log})
-	defer reg.Stop()
-
 	listener, err := net.Listen("tcp", ":"+strconv.Itoa(cfg.Port))
 	if err != nil {
 		return err
 	}
+	reg := registry.New(snapshot, registry.Options{Interval: cfg.RefreshInterval, Version: version, Log: log})
 	mux := http.NewServeMux()
 	admin := setup.New(setup.Options{Store: st, Registry: reg, Version: version, Log: log})
+	// The registry stops first so a pending sign-out never waits on a token a
+	// running entry still holds. The ctx.Done branch only stops it early;
+	// this closure owns the cleanup.
 	defer func() {
 		reg.Stop()
 		admin.Close()
