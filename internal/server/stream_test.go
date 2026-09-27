@@ -36,7 +36,7 @@ func TestStreamDescriptors(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			rec := h.get("/" + testSecret + "/stream/" + tc.id + "?quality=HIGH")
+			rec := h.get("/plex-1/" + testSecret + "/stream/" + tc.id + "?quality=HIGH")
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d", rec.Code)
 			}
@@ -50,14 +50,14 @@ func TestStreamDescriptors(t *testing.T) {
 func TestStreamAnswersFromTheIndexAndAsksPlexOnlyOnAMiss(t *testing.T) {
 	h := newHarness(t)
 	before := len(h.fake.Requests())
-	if rec := h.get("/" + testSecret + "/stream/101"); rec.Code != http.StatusOK {
+	if rec := h.get("/plex-1/" + testSecret + "/stream/101"); rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
 	if len(h.fake.Requests()) != before {
 		t.Error("an indexed track must not cost an upstream request")
 	}
 	cold := newHarnessWith(t, plex.Options{}, false)
-	if rec := cold.get("/" + testSecret + "/stream/101"); rec.Code != http.StatusOK {
+	if rec := cold.get("/plex-1/" + testSecret + "/stream/101"); rec.Code != http.StatusOK {
 		t.Fatalf("index miss: status = %d", rec.Code)
 	}
 	if requests := cold.fake.Requests(); requests[len(requests)-1].Path != "/library/metadata/101" {
@@ -68,12 +68,12 @@ func TestStreamAnswersFromTheIndexAndAsksPlexOnlyOnAMiss(t *testing.T) {
 func TestStreamMisses(t *testing.T) {
 	h := newHarness(t)
 	for name, id := range map[string]string{"unknown": "999", "track without media": "106"} {
-		if rec := h.get("/" + testSecret + "/stream/" + id); rec.Code != http.StatusNotFound || rec.Body.Len() != 0 {
+		if rec := h.get("/plex-1/" + testSecret + "/stream/" + id); rec.Code != http.StatusNotFound || rec.Body.Len() != 0 {
 			t.Errorf("%s: status %d, body %q", name, rec.Code, rec.Body.String())
 		}
 	}
 	before := len(h.fake.Requests())
-	h.get("/" + testSecret + "/stream/xyz")
+	h.get("/plex-1/" + testSecret + "/stream/xyz")
 	if len(h.fake.Requests()) != before {
 		t.Error("a malformed id must not reach Plex")
 	}
@@ -83,17 +83,17 @@ func TestStreamAnswers502WhenPlexFails(t *testing.T) {
 	t.Run("plex 500", func(t *testing.T) {
 		h := newHarness(t)
 		h.fake.FailWith(http.StatusInternalServerError)
-		if rec := h.get("/" + testSecret + "/stream/999"); rec.Code != http.StatusBadGateway {
+		if rec := h.get("/plex-1/" + testSecret + "/stream/999"); rec.Code != http.StatusBadGateway {
 			t.Fatalf("status = %d", rec.Code)
 		}
 	})
 	t.Run("rejected token is named in the log", func(t *testing.T) {
 		h := newHarnessWith(t, plex.Options{Token: "wrong"}, false)
-		rec := h.get("/" + testSecret + "/stream/101")
+		rec := h.get("/plex-1/" + testSecret + "/stream/101")
 		if rec.Code != http.StatusBadGateway {
 			t.Fatalf("status = %d", rec.Code)
 		}
-		if logs := h.logs.String(); !strings.Contains(logs, "PLEX_TOKEN") || strings.Contains(logs, fakes.PlexToken) {
+		if logs := h.logs.String(); !strings.Contains(logs, "the Plex token") || strings.Contains(logs, fakes.PlexToken) {
 			t.Fatalf("logs = %s", logs)
 		}
 	})
@@ -107,7 +107,7 @@ func TestStreamAnswers502WhenPlexFails(t *testing.T) {
 		}
 		h.server.lookupTimeout = 50 * time.Millisecond
 		started := time.Now()
-		rec := h.get("/" + testSecret + "/stream/999")
+		rec := h.get("/plex-1/" + testSecret + "/stream/999")
 		if rec.Code != http.StatusBadGateway || time.Since(started) > time.Second {
 			t.Fatalf("status %d after %v", rec.Code, time.Since(started))
 		}
@@ -116,8 +116,8 @@ func TestStreamAnswers502WhenPlexFails(t *testing.T) {
 
 func TestStreamLogsTheTrackBitChordChose(t *testing.T) {
 	h := newHarness(t)
-	h.get("/" + testSecret + "/stream/101")
-	want := `"msg":"stream","id":"101","track":"New Religion — All Time Low feat. Teddy Swims","quality":"lossless 24-bit 48kHz"`
+	h.get("/plex-1/" + testSecret + "/stream/101")
+	want := `"msg":"stream","server":"plex-1","source":"plex","id":"101","track":"New Religion — All Time Low feat. Teddy Swims","quality":"lossless 24-bit 48kHz"`
 	if logs := h.logs.String(); !strings.Contains(logs, want) {
 		t.Fatalf("logs lack %s:\n%s", want, logs)
 	}

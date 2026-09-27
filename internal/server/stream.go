@@ -16,28 +16,28 @@ func trackID(r *http.Request) (string, bool) {
 	return id, idPattern.MatchString(id)
 }
 
-func (s *server) stream(w http.ResponseWriter, r *http.Request) {
-	track, status := s.resolve(r)
+func (s *server) stream(w http.ResponseWriter, r *http.Request, src source) {
+	track, status := s.resolve(r, src)
 	if status != http.StatusOK {
 		w.WriteHeader(status)
 		return
 	}
-	descriptor := toStreamJSON(s.base(), track)
-	s.Log.Info("stream", "id", track.ID, "track", label(track), "quality", descriptor.Quality, "format", descriptor.Format)
+	descriptor := toStreamJSON(src.base, track)
+	src.Log.Info("stream", "id", track.ID, "track", label(track), "quality", descriptor.Quality, "format", descriptor.Format)
 	writeJSON(w, descriptor)
 }
 
 // resolve answers from the index and asks the backend only on a miss, so a
 // track that arrived after the last refresh still plays.
-func (s *server) resolve(r *http.Request) (media.Track, int) {
+func (s *server) resolve(r *http.Request, src source) (media.Track, int) {
 	id, ok := trackID(r)
 	if !ok {
 		return media.Track{}, http.StatusNotFound
 	}
-	track, found := s.Library.Get(id)
+	track, found := src.Library.Get(id)
 	if !found {
 		var status int
-		if track, status = s.lookup(r, id); status != http.StatusOK {
+		if track, status = s.lookup(r, src, id); status != http.StatusOK {
 			return media.Track{}, status
 		}
 	}
@@ -47,23 +47,23 @@ func (s *server) resolve(r *http.Request) (media.Track, int) {
 	return track, http.StatusOK
 }
 
-func (s *server) lookup(r *http.Request, id string) (media.Track, int) {
+func (s *server) lookup(r *http.Request, src source, id string) (media.Track, int) {
 	ctx, cancel := context.WithTimeout(r.Context(), s.lookupTimeout)
 	defer cancel()
-	track, err := s.Backend.Track(ctx, id)
+	track, err := src.Backend.Track(ctx, id)
 	switch {
 	case err == nil:
 		return track, http.StatusOK
 	case errors.Is(err, media.ErrNotFound):
 		return media.Track{}, http.StatusNotFound
 	}
-	s.logFailure(r, err)
+	logFailure(r, src, err)
 	return media.Track{}, http.StatusBadGateway
 }
 
-func (s *server) logFailure(r *http.Request, err error) {
+func logFailure(r *http.Request, src source, err error) {
 	if r.Context().Err() != nil {
 		return
 	}
-	s.Log.Error("upstream request failed", "error", err.Error())
+	src.Log.Error("upstream request failed", "error", err.Error())
 }

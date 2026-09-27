@@ -16,6 +16,7 @@ import (
 type Options struct {
 	BaseURL       string
 	Token         string
+	ClientID      string
 	PageSize      int
 	HeaderTimeout time.Duration
 	CallTimeout   time.Duration
@@ -35,13 +36,18 @@ func New(o Options) *Client {
 	if o.Log == nil {
 		o.Log = slog.New(slog.DiscardHandler)
 	}
-	token := o.Token
+	token, clientID := o.Token, o.ClientID
 	return &Client{
 		http: media.NewClient(media.ClientOptions{
-			BaseURL:       o.BaseURL,
-			Name:          "plex",
-			TokenVar:      "PLEX_TOKEN",
-			Authorize:     func(r *http.Request) { r.Header.Set("X-Plex-Token", token) },
+			BaseURL:  o.BaseURL,
+			Name:     "plex",
+			TokenVar: "the Plex token",
+			Authorize: func(r *http.Request) {
+				r.Header.Set("X-Plex-Token", token)
+				if clientID != "" {
+					r.Header.Set("X-Plex-Client-Identifier", clientID)
+				}
+			},
 			HeaderTimeout: o.HeaderTimeout,
 			CallTimeout:   o.CallTimeout,
 		}),
@@ -52,7 +58,31 @@ func New(o Options) *Client {
 
 func (c *Client) Name() string { return "Plex" }
 
-func (c *Client) musicSections(ctx context.Context, filter string) ([]Section, error) {
+func (c *Client) Version(ctx context.Context) (string, error) {
+	var answer struct {
+		MediaContainer struct {
+			Version string `json:"version"`
+		} `json:"MediaContainer"`
+	}
+	if err := c.http.GetJSON(ctx, "/identity", nil, &answer); err != nil {
+		return "", err
+	}
+	return answer.MediaContainer.Version, nil
+}
+
+func (c *Client) Libraries(ctx context.Context) ([]media.Library, error) {
+	sections, err := c.sections(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]media.Library, len(sections))
+	for i, section := range sections {
+		out[i] = media.Library{ID: section.Key, Name: section.Title}
+	}
+	return out, nil
+}
+
+func (c *Client) sections(ctx context.Context) ([]Section, error) {
 	var answer struct {
 		MediaContainer struct {
 			Directory []Section `json:"Directory"`
@@ -63,9 +93,20 @@ func (c *Client) musicSections(ctx context.Context, filter string) ([]Section, e
 	}
 	var out []Section
 	for _, section := range answer.MediaContainer.Directory {
-		if section.Type != "artist" {
-			continue
+		if section.Type == "artist" {
+			out = append(out, section)
 		}
+	}
+	return out, nil
+}
+
+func (c *Client) musicSections(ctx context.Context, filter string) ([]Section, error) {
+	sections, err := c.sections(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []Section
+	for _, section := range sections {
 		if filter == "" || filter == section.Key || filter == section.Title {
 			out = append(out, section)
 		}

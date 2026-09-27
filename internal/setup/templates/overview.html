@@ -1,0 +1,86 @@
+{{define "content"}}
+<h1>Servers</h1>
+
+<section class="card">
+  <h2>Public URL</h2>
+  {{if not .PublicURL}}<p class="warn">Set the HTTPS address your reverse proxy serves this addon on. Server URLs cannot be shown until it is set.</p>{{end}}
+  <form method="post" action="/setup/public-url" class="row">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <input type="url" name="public_url" value="{{.PublicURL}}" placeholder="https://music.example.com">
+    <button>Save</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Secret</h2>
+  <p>Every server URL carries this secret. Regenerating it changes every URL at once.</p>
+  <div class="row">
+    <code id="secret" data-secret="{{.Secret}}">••••••••••••••••••••</code>
+    <button type="button" class="link" id="secret-toggle">Show</button>
+    <button type="button" class="copy" data-copy="{{.Secret}}" aria-label="Copy the secret">Copy</button>
+    <form method="post" action="/setup/secret/regenerate" onsubmit="return confirm('Regenerate the secret? Every server URL changes and each client must be updated.')">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <button class="danger">Regenerate</button>
+    </form>
+  </div>
+</section>
+
+{{if not .Servers}}
+<section class="card empty">
+  <p>No servers yet. Add a Plex or Jellyfin server to get its BitChord URL.</p>
+  <a class="button" href="/setup/servers/new">Add a server</a>
+</section>
+{{else}}
+<p><a class="button" href="/setup/servers/new">Add a server</a></p>
+{{range .Servers}}
+<section class="card server" id="server-{{.Slug}}">
+  <h2>{{.Name}} <small>{{.Slug}}</small></h2>
+  <dl>
+    <dt>Server</dt><dd>{{.Host}}{{if .Account}} · signed in as {{.Account}}{{end}}</dd>
+    <dt>Library</dt><dd>{{.Library}}</dd>
+    <dt>Status</dt>
+    <dd>
+      {{if not .Enabled}}Disabled
+      {{else if not .Running}}Not running
+      {{else if .Status.LastError}}<span class="warn">Error: {{.Status.LastError}}</span>{{if .Status.Ready}} (serving the last good index of {{.Status.Tracks}} tracks){{end}}
+      {{else if .Status.Ready}}{{.Status.Tracks}} tracks, refreshed {{.Checked}}
+      {{else}}Building the index{{end}}
+    </dd>
+    <dt>BitChord URL</dt>
+    <dd class="row">{{if .URL}}<code class="url">{{.MaskedURL}}</code> <button type="button" class="copy" data-copy="{{.URL}}" aria-label="Copy the BitChord URL for {{.Name}}">Copy</button>{{else}}Set the public URL first{{end}}</dd>
+  </dl>
+  <div class="row actions">
+    <a class="button secondary" href="/setup/servers/{{.Slug}}/edit">Edit</a>
+    <form method="post" action="/setup/servers/{{.Slug}}/enabled">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <input type="hidden" name="enabled" value="{{if .Enabled}}false{{else}}true{{end}}">
+      <button class="secondary">{{if .Enabled}}Disable{{else}}Enable{{end}}</button>
+    </form>
+    <form method="post" action="/setup/servers/{{.Slug}}/delete" onsubmit="return confirm('Remove {{.Name}}? Its URL stops answering.')">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <button class="danger">Remove</button>
+    </form>
+  </div>
+</section>
+{{end}}
+{{end}}
+
+<script>
+var secret = document.getElementById('secret');
+var secretToggle = document.getElementById('secret-toggle');
+secretToggle.addEventListener('click', function () {
+  var hidden = secret.textContent !== secret.dataset.secret;
+  secret.textContent = hidden ? secret.dataset.secret : '••••••••••••••••••••';
+  secretToggle.textContent = hidden ? 'Hide' : 'Show';
+});
+document.querySelectorAll('button.copy').forEach(function (button) {
+  button.addEventListener('click', function () {
+    navigator.clipboard.writeText(button.dataset.copy).then(function () {
+      var label = button.textContent;
+      button.textContent = 'Copied';
+      setTimeout(function () { button.textContent = label; }, 1500);
+    });
+  });
+});
+</script>
+{{end}}

@@ -1,8 +1,11 @@
 services:
   bitchord-selfhosted-addon:
     image: ghcr.io/rairulyle/bitchord-selfhosted-addon:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - </path/to/your/data>:/data
     restart: unless-stopped
-    env_file: .env
     networks:
       - proxy
 

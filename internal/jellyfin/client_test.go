@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -141,6 +142,24 @@ func TestItemQueriesAskForMediaSources(t *testing.T) {
 	}
 }
 
+func TestLibrariesListsEveryMusicLibrary(t *testing.T) {
+	got, err := client(fakes.NewJellyfin(t), 1000).Libraries(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []media.Library{{ID: fakes.MusicFolder, Name: "Music"}, {ID: fakes.AudiobooksFolder, Name: "Audiobooks"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Libraries = %v", got)
+	}
+}
+
+func TestVersionComesFromSystemInfo(t *testing.T) {
+	got, err := client(fakes.NewJellyfin(t), 1000).Version(context.Background())
+	if err != nil || got != "10.10.7" {
+		t.Fatalf("Version = %q, %v", got, err)
+	}
+}
+
 func TestTrackFetchesOneItemAsAFilteredList(t *testing.T) {
 	fake := fakes.NewJellyfin(t)
 	c := client(fake, 1000)
@@ -183,7 +202,7 @@ func TestErrors(t *testing.T) {
 		fake := fakes.NewJellyfin(t)
 		c := jellyfin.New(jellyfin.Options{BaseURL: fake.URL, APIKey: "wrong"})
 		_, err := c.AllTracks(context.Background(), "")
-		if !errors.Is(err, media.ErrUnauthorized) || !strings.Contains(err.Error(), "JELLYFIN_API_KEY") {
+		if !errors.Is(err, media.ErrUnauthorized) || !strings.Contains(err.Error(), "the Jellyfin API key") {
 			t.Fatalf("err = %v", err)
 		}
 	})

@@ -15,7 +15,7 @@ import (
 
 const flacBody = "0123456789abcdefghijklmnopqrstuvwxyz"
 
-func filePath(id string) string { return "/" + testSecret + "/file/" + id }
+func filePath(id string) string { return "/plex-1/" + testSecret + "/file/" + id }
 
 func TestFileWithoutRange(t *testing.T) {
 	rec := newHarness(t).get(filePath("101"))
@@ -109,7 +109,7 @@ func TestFileMissesAndFailures(t *testing.T) {
 	if rec := h.get(filePath("101")); rec.Code != http.StatusBadGateway {
 		t.Errorf("plex 500: status %d", rec.Code)
 	}
-	if logs := h.logs.String(); !strings.Contains(logs, `"msg":"upstream answered the byte request badly","status":500`) {
+	if logs := h.logs.String(); !strings.Contains(logs, `"msg":"upstream answered the byte request badly","server":"plex-1","source":"plex","status":500`) {
 		t.Errorf("logs lack the bad-answer line:\n%s", logs)
 	}
 }
@@ -120,7 +120,7 @@ func TestFileAnswers502AndNamesTheVariableWhenTheTokenIsRejected(t *testing.T) {
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	if logs := h.logs.String(); !strings.Contains(logs, "PLEX_TOKEN") || strings.Contains(logs, fakes.PlexToken) {
+	if logs := h.logs.String(); !strings.Contains(logs, "the Plex token") || strings.Contains(logs, fakes.PlexToken) {
 		t.Fatalf("logs = %s", logs)
 	}
 }
@@ -245,7 +245,7 @@ func TestStreamEndingEarlyIsLoggedAtDebugNotAboveIt(t *testing.T) {
 
 func TestArt(t *testing.T) {
 	h := newHarness(t)
-	rec := h.get("/" + testSecret + "/art/101")
+	rec := h.get("/plex-1/" + testSecret + "/art/101")
 	if rec.Code != http.StatusOK || rec.Body.String() != "jpeg:/library/metadata/101/thumb/1" {
 		t.Fatalf("status %d, body %q", rec.Code, rec.Body.String())
 	}
@@ -264,19 +264,19 @@ func TestArt(t *testing.T) {
 
 func TestArtFallbacksAndMisses(t *testing.T) {
 	h := newHarness(t)
-	if rec := h.get("/" + testSecret + "/art/105"); rec.Body.String() != "jpeg:/library/metadata/9105/thumb/1" {
+	if rec := h.get("/plex-1/" + testSecret + "/art/105"); rec.Body.String() != "jpeg:/library/metadata/9105/thumb/1" {
 		t.Errorf("album thumb fallback: %q", rec.Body.String())
 	}
 	for name, id := range map[string]string{"track without any thumb": "104", "unknown id": "999"} {
-		if rec := h.get("/" + testSecret + "/art/" + id); rec.Code != http.StatusNotFound {
+		if rec := h.get("/plex-1/" + testSecret + "/art/" + id); rec.Code != http.StatusNotFound {
 			t.Errorf("%s: status %d", name, rec.Code)
 		}
 	}
 	cold := newHarnessWith(t, plex.Options{}, false)
-	if rec := cold.get("/" + testSecret + "/art/101"); rec.Code != http.StatusOK {
+	if rec := cold.get("/plex-1/" + testSecret + "/art/101"); rec.Code != http.StatusOK {
 		t.Errorf("index miss: status %d", rec.Code)
 	}
-	head := h.do(http.MethodHead, "/"+testSecret+"/art/101", nil)
+	head := h.do(http.MethodHead, "/plex-1/"+testSecret+"/art/101", nil)
 	if head.Code != http.StatusOK || head.Body.Len() != 0 {
 		t.Errorf("HEAD: status %d, body %q", head.Code, head.Body.String())
 	}
@@ -289,9 +289,9 @@ func TestPlaysAreLogged(t *testing.T) {
 	h.do(http.MethodHead, filePath("101"), nil)
 	logs := h.logs.String()
 	for _, want := range []string{
-		`"level":"INFO","msg":"play","id":"101","track":"New Religion — All Time Low feat. Teddy Swims","range":"","status":200,"bytes":36,"ended":"complete"`,
-		`"msg":"play","id":"101","track":"New Religion — All Time Low feat. Teddy Swims","range":"bytes=10-19","status":206,"bytes":10,"ended":"complete"`,
-		`"level":"DEBUG","msg":"probe","id":"101"`,
+		`"level":"INFO","msg":"play","server":"plex-1","source":"plex","id":"101","track":"New Religion — All Time Low feat. Teddy Swims","range":"","status":200,"bytes":36,"ended":"complete"`,
+		`"msg":"play","server":"plex-1","source":"plex","id":"101","track":"New Religion — All Time Low feat. Teddy Swims","range":"bytes=10-19","status":206,"bytes":10,"ended":"complete"`,
+		`"level":"DEBUG","msg":"probe","server":"plex-1","source":"plex","id":"101"`,
 	} {
 		if !strings.Contains(logs, want) {
 			t.Errorf("logs lack %s:\n%s", want, logs)

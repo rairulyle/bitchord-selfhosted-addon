@@ -1,7 +1,6 @@
 package main
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -10,7 +9,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -18,16 +16,18 @@ import (
 	"time"
 
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/config"
-	"github.com/rairulyle/bitchord-selfhosted-addon/internal/jellyfin"
-	"github.com/rairulyle/bitchord-selfhosted-addon/internal/library"
-	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
-	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/registry"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/server"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/setup"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/store"
 )
 
 var version = "dev"
 
-const shutdownGrace = 10 * time.Second
+const (
+	dataDir       = "/data"
+	shutdownGrace = 10 * time.Second
+)
 
 func main() { os.Exit(run(os.Args[1:], os.Getenv, os.Stderr)) }
 
@@ -51,12 +51,15 @@ func run(args []string, getenv func(string) string, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "invalid configuration:\n%v\n", err)
 		return 1
 	}
-	log := newLogger(cfg.LogFormat, cfg.LogLevel, stderr).With("source", string(cfg.Backend))
-	log.Info("starting", "version", version, "server", hostOf(cfg.ServerURL), "library", cmp.Or(cfg.Library, "all music"),
-		"refresh", cfg.RefreshInterval.String(), "public_url", cfg.PublicURL, "log_level", cfg.LogLevel.String())
+	log := newLogger(cfg.LogFormat, cfg.LogLevel, stderr)
+	st, err := store.Open(dataDir)
+	if err != nil {
+		log.Error("cannot open the data file", "error", err.Error())
+		return 1
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
-	if err := serve(ctx, cfg, log, func(net.Addr) {}); err != nil {
+	if err := serve(ctx, cfg, st, log, config.Removed(getenv), func(net.Addr) {}); err != nil {
 		log.Error("server stopped", "error", err.Error())
 		return 1
 	}
@@ -71,12 +74,10 @@ func newLogger(format string, level slog.Level, w io.Writer) *slog.Logger {
 	return slog.New(slog.NewTextHandler(w, options))
 }
 
-func hostOf(raw string) string {
-	parsed, err := url.Parse(raw)
-	if err != nil {
-		return ""
+func warnRemoved(log *slog.Logger, names []string) {
+	for _, name := range names {
+		log.Warn(name+" is no longer read; servers, the public URL and the secret are set on the setup page", "variable", name)
 	}
-	return parsed.Host
 }
 
 func healthcheck(url string) int {
@@ -92,43 +93,39 @@ func healthcheck(url string) int {
 	return 0
 }
 
-func newBackend(cfg config.Config, log *slog.Logger) (media.Backend, error) {
-	switch cfg.Backend {
-	case config.Plex:
-		return plex.New(plex.Options{BaseURL: cfg.ServerURL, Token: cfg.ServerToken, Log: log}), nil
-	case config.Jellyfin:
-		return jellyfin.New(jellyfin.Options{BaseURL: cfg.ServerURL, APIKey: cfg.ServerToken, Version: version}), nil
-	default:
-		return nil, fmt.Errorf("unknown backend %q", cfg.Backend)
+func serve(ctx context.Context, cfg config.Config, st *store.Store, log *slog.Logger, removed []string, listening func(net.Addr)) error {
+	snapshot := st.Snapshot()
+	log.Info("starting", "version", version, "data", st.Path(), "servers", len(snapshot.Servers),
+		"public_url", snapshot.PublicURL, "refresh", cfg.RefreshInterval.String(), "log_level", cfg.LogLevel.String())
+	warnRemoved(log, removed)
+	if snapshot.Admin == nil {
+		log.Warn("the setup page has no password yet; open /setup on your public URL and set one before anyone else does")
 	}
-}
-
-func serve(ctx context.Context, cfg config.Config, log *slog.Logger, listening func(net.Addr)) error {
-	backend, err := newBackend(cfg, log)
-	if err != nil {
-		return err
-	}
-	lib := library.NewLibrary(backend, cfg.Library, cfg.RefreshInterval, log)
-	runCtx, stopRun := context.WithCancel(ctx)
-	runDone := make(chan struct{})
-	go func() {
-		defer close(runDone)
-		lib.Run(runCtx)
-	}()
-	defer func() {
-		stopRun()
-		<-runDone
-	}()
-
 	listener, err := net.Listen("tcp", ":"+strconv.Itoa(cfg.Port))
 	if err != nil {
 		return err
 	}
+	reg := registry.New(snapshot, registry.Options{Interval: cfg.RefreshInterval, Version: version, Log: log})
+	mux := http.NewServeMux()
+	admin := setup.New(setup.Options{Store: st, Registry: reg, Version: version, Log: log})
+	// The registry stops first so a pending sign-out never waits on a token a
+	// running entry still holds. The ctx.Done branch only stops it early;
+	// this closure owns the cleanup.
+	defer func() {
+		reg.Stop()
+		admin.Close()
+	}()
+	mux.Handle("/setup", admin)
+	mux.Handle("/setup/", admin)
+	mux.Handle("/", server.New(server.Options{
+		Site: func() server.Site {
+			current := st.Snapshot()
+			return server.Site{PublicURL: current.PublicURL, Secret: current.Secret}
+		},
+		Registry: reg, Version: version, Log: log,
+	}))
 	srv := &http.Server{
-		Handler: server.New(server.Options{
-			Secret: cfg.Secret, PublicURL: cfg.PublicURL, AddonName: cfg.AddonName, Version: version,
-			Library: lib, Backend: backend, Log: log,
-		}),
+		Handler: mux,
 		// WriteTimeout stays unset: a stream lasts as long as the song.
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
@@ -142,7 +139,7 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger, listening f
 	case err := <-failed:
 		return err
 	case <-ctx.Done():
-		stopRun()
+		reg.Stop()
 	}
 	log.Info("shutting down")
 	grace, cancel := context.WithTimeout(context.Background(), shutdownGrace)

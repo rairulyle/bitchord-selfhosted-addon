@@ -1,0 +1,208 @@
+{{define "content"}}
+<h1>{{.Title}}</h1>
+<form method="post" action="{{.Action}}" class="stack" id="server-form" data-kind="{{.Kind}}" data-slug="{{.Slug}}" data-csrf="{{.CSRF}}">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input type="hidden" name="token_ref" id="token_ref" value="">
+
+  <fieldset>
+    <legend>Kind</legend>
+    {{range .Kinds}}
+    <label class="inline"><input type="radio" name="kind" value="{{.Kind}}" {{if eq .Kind $.Kind}}checked{{end}} {{if $.Editing}}disabled{{end}}> {{.Name}}</label>
+    {{end}}
+    {{if .Editing}}<input type="hidden" name="kind" value="{{.Kind}}">{{end}}
+  </fieldset>
+
+  <label>Name in BitChord
+    <span class="prefixed"><span class="prefix" id="kind-prefix">{{.KindName}} -</span><input type="text" name="label" value="{{.Label}}" maxlength="16" placeholder="Home"></span>
+  </label>
+
+  <label>Server URL <input type="url" name="url" id="url" value="{{.URL}}" placeholder="http://plex:32400" list="server-addresses" required></label>
+  <datalist id="server-addresses"></datalist>
+  <p class="hint">The address the addon container uses to reach the server, such as a Docker service name.</p>
+
+  <fieldset id="credentials">
+    <legend>Credentials</legend>
+    <div class="tabs" role="tablist">
+      <button type="button" class="tab active" data-tab="signin" role="tab" aria-selected="true" aria-controls="panel-signin">Sign in</button>
+      <button type="button" class="tab" data-tab="token" role="tab" aria-selected="false" aria-controls="panel-token">Paste a token</button>
+    </div>
+
+    <div class="panel" data-panel="signin" id="panel-signin" role="tabpanel">
+      {{if .Account}}<p class="ok" id="signed-in" role="status">Signed in as {{.Account}}. Save keeps this sign-in{{if eq .Kind "jellyfin"}} unless the URL changes{{end}}.</p>{{else}}<p class="ok" id="signed-in" role="status" hidden></p>{{end}}
+      <div data-kind-panel="plex" {{if ne .Kind "plex"}}hidden{{end}}>
+        <button type="button" id="plex-signin" class="secondary">Sign in with Plex</button>
+        <p class="hint">Opens app.plex.tv in a new tab. The addon container must be able to reach plex.tv.</p>
+      </div>
+      <div data-kind-panel="jellyfin" {{if ne .Kind "jellyfin"}}hidden{{end}}>
+        <label>Username <input type="text" id="jf-username" autocomplete="off"></label>
+        <label>Password <input type="password" id="jf-password" autocomplete="off"></label>
+        <button type="button" id="jf-signin" class="secondary">Sign in</button>
+        <p class="hint">The password is used once and never stored. The addon appears under this user's devices in Jellyfin, and this user's libraries are the ones it can see.</p>
+      </div>
+    </div>
+
+    <div class="panel" data-panel="token" id="panel-token" role="tabpanel" hidden>
+      <label><span id="token-label">Plex token</span> <input type="password" name="token" id="token" autocomplete="off" placeholder="{{if .Editing}}leave empty to keep the stored token{{end}}"></label>
+      <p class="hint" data-kind-panel="plex" {{if ne .Kind "plex"}}hidden{{end}}>In Plex Web, open any item, choose Get Info, then View XML. The address ends with <code>X-Plex-Token=</code> and the token.</p>
+      <p class="hint" data-kind-panel="jellyfin" {{if ne .Kind "jellyfin"}}hidden{{end}}>In Jellyfin, open Dashboard, then API Keys under Advanced, and add a key. An API key sees every library.</p>
+    </div>
+  </fieldset>
+
+  <div class="row">
+    <button type="button" id="test" class="secondary">Test connection</button>
+    <span id="test-result" class="hint" role="status"></span>
+  </div>
+
+  <label>Library
+    <select name="library" id="library">
+      <option value="">All music libraries</option>
+      {{if .Library}}<option value="{{.Library}}" selected>{{or .LibraryName .Library}}</option>{{end}}
+    </select>
+  </label>
+  <p class="hint">Test the connection to list the server's music libraries.</p>
+
+  <label class="inline"><input type="checkbox" name="enabled" value="1" {{if .Enabled}}checked{{end}}> Enabled</label>
+
+  <div class="row">
+    <button>Save</button>
+    <a class="button secondary" href="/setup">Cancel</a>
+  </div>
+</form>
+
+<script>
+(function () {
+  var form = document.getElementById('server-form');
+  var csrf = form.dataset.csrf;
+  var names = { plex: 'Plex', jellyfin: 'Jellyfin' };
+  var tokenLabels = { plex: 'Plex token', jellyfin: 'Jellyfin API key' };
+  var urlPlaceholders = { plex: 'http://plex:32400', jellyfin: 'http://jellyfin:8096' };
+  var result = document.getElementById('test-result');
+
+  function kind() {
+    var checked = form.querySelector('input[name=kind]:checked') || form.querySelector('input[name=kind][type=hidden]');
+    return checked ? checked.value : form.dataset.kind;
+  }
+  function showKind() {
+    var k = kind();
+    document.getElementById('kind-prefix').textContent = names[k] + ' -';
+    document.getElementById('token-label').textContent = tokenLabels[k];
+    document.getElementById('url').placeholder = urlPlaceholders[k];
+    form.querySelectorAll('[data-kind-panel]').forEach(function (el) { el.hidden = el.dataset.kindPanel !== k; });
+  }
+  form.querySelectorAll('input[name=kind]').forEach(function (radio) { radio.addEventListener('change', showKind); });
+  showKind();
+
+  form.querySelectorAll('.tab').forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      form.querySelectorAll('.tab').forEach(function (t) {
+        t.classList.toggle('active', t === tab);
+        t.setAttribute('aria-selected', t === tab ? 'true' : 'false');
+      });
+      form.querySelectorAll('.panel').forEach(function (p) { p.hidden = p.dataset.panel !== tab.dataset.tab; });
+    });
+  });
+
+  function asJSON(res) {
+    if ((res.headers.get('Content-Type') || '').indexOf('application/json') === -1) {
+      var error = new Error(res.redirected ? 'You have been signed out. Reload the page.' : 'The page is stale. Reload it and try again.');
+      error.friendly = true;
+      throw error;
+    }
+    return res.json();
+  }
+  function friendly(error, fallback) {
+    return error && error.friendly ? error.message : fallback;
+  }
+  function post(url, body) {
+    return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf }, body: JSON.stringify(body) })
+      .then(asJSON);
+  }
+  function signedIn(username) {
+    var el = document.getElementById('signed-in');
+    el.textContent = 'Signed in as ' + username + '. Save to keep it.';
+    el.hidden = false;
+    document.getElementById('token').value = '';
+  }
+  function fillLibraries(libraries) {
+    var select = document.getElementById('library');
+    var current = select.value;
+    select.innerHTML = '<option value="">All music libraries</option>';
+    libraries.forEach(function (lib) {
+      var option = document.createElement('option');
+      option.value = lib.id; option.textContent = lib.name; option.selected = lib.id === current || lib.name === current;
+      select.appendChild(option);
+    });
+  }
+
+  document.getElementById('test').addEventListener('click', function () {
+    result.textContent = 'Testing…';
+    post('/setup/servers/test', { kind: kind(), url: document.getElementById('url').value, token: document.getElementById('token').value, token_ref: document.getElementById('token_ref').value, slug: form.dataset.slug })
+      .then(function (answer) {
+        if (!answer.ok) { result.textContent = answer.error; result.className = 'error'; return; }
+        fillLibraries(answer.libraries);
+        result.textContent = 'Connected' + (answer.version ? ' to version ' + answer.version : '') + ', ' + answer.libraries.length + ' music librar' + (answer.libraries.length === 1 ? 'y' : 'ies') + '.';
+        result.className = 'ok';
+      })
+      .catch(function (error) { result.textContent = friendly(error, 'The addon did not answer.'); result.className = 'error'; });
+  });
+
+  document.getElementById('plex-signin').addEventListener('click', function () {
+    var button = this;
+    button.disabled = true;
+    result.textContent = 'Waiting for the sign-in at plex.tv…';
+    result.className = 'hint';
+    var failed = function (message) { result.textContent = message; result.className = 'error'; button.disabled = false; };
+    post('/setup/plex/pin', {}).then(function (pin) {
+      if (!pin.ok) { failed(pin.error); return; }
+      window.open(pin.auth_url, '_blank', 'noopener');
+      var polls = 0;
+      var poll = function () {
+        if (++polls > 150) { failed('No sign-in after five minutes. Start over.'); return; }
+        fetch('/setup/plex/pin/' + pin.id, { headers: { 'X-CSRF-Token': csrf } }).then(asJSON).then(function (answer) {
+          if (!answer.ok) { failed(answer.error); return; }
+          if (!answer.claimed) { setTimeout(poll, 2000); return; }
+          button.disabled = false;
+          document.getElementById('token_ref').value = answer.ref;
+          signedIn(answer.username);
+          var url = document.getElementById('url');
+          var reachable = answer.servers.filter(function (s) { return s.reachable; });
+          var suggestions = document.getElementById('server-addresses');
+          suggestions.innerHTML = '';
+          reachable.forEach(function (server) {
+            var option = document.createElement('option');
+            option.value = server.url;
+            option.label = server.name;
+            suggestions.appendChild(option);
+          });
+          if (!url.value.trim()) {
+            if (reachable.length === 0) { url.focus(); result.textContent = 'The addon cannot reach any server on this account. Type the address it should use.'; result.className = 'error'; return; }
+            url.value = reachable[0].url;
+          }
+          document.getElementById('test').click();
+        }).catch(function (error) { failed(friendly(error, 'The addon did not answer. Start over.')); });
+      };
+      setTimeout(poll, 2000);
+    }).catch(function (error) { failed(friendly(error, 'The addon did not answer.')); });
+  });
+
+  document.getElementById('jf-signin').addEventListener('click', function () {
+    var password = document.getElementById('jf-password');
+    result.textContent = 'Signing in…';
+    result.className = 'hint';
+    post('/setup/jellyfin/signin', { url: document.getElementById('url').value, username: document.getElementById('jf-username').value, password: password.value })
+      .then(function (answer) {
+        password.value = '';
+        if (!answer.ok) { result.textContent = answer.error; result.className = 'error'; return; }
+        document.getElementById('token_ref').value = answer.ref;
+        signedIn(answer.username);
+        document.getElementById('test').click();
+      })
+      .catch(function (error) {
+        password.value = '';
+        result.textContent = friendly(error, 'The addon did not answer.');
+        result.className = 'error';
+      });
+  });
+})();
+</script>
+{{end}}
