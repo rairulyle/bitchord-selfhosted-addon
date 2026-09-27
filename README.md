@@ -17,6 +17,11 @@ addon and streams your original files.
 BitChord prefers addons you add over its built-in sources, so when a song is
 in your library, your own copy plays.
 
+> [!IMPORTANT]
+> **You need your own Plex or Jellyfin server with your own music on it.**
+> This addon adds no music and is not a streaming service. If you don't run
+> Plex or Jellyfin, it has nothing to play, so you don't need it.
+
 ## ✨ Features
 
 - **Set up in the browser.** Open `/setup`, choose a password, add your
