@@ -1083,3 +1083,15 @@ func TestSinceDropsZeroUnits(t *testing.T) {
 		t.Errorf("zero time = %q", got)
 	}
 }
+
+func TestOverHTTPSReadsTheFirstForwardedProto(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/setup", nil)
+	r.Header.Set("X-Forwarded-Proto", "https, http")
+	if !overHTTPS(r) {
+		t.Error("an https first hop was not recognised")
+	}
+	r.Header.Set("X-Forwarded-Proto", "http, https")
+	if overHTTPS(r) {
+		t.Error("an http first hop was treated as https")
+	}
+}

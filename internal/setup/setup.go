@@ -267,8 +267,11 @@ func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/setup", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: overHTTPS(r)})
 }
 
+// overHTTPS reads only the first X-Forwarded-Proto value: chained proxies
+// join theirs with commas, and the first is the client-facing hop.
 func overHTTPS(r *http.Request) bool {
-	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	proto, _, _ := strings.Cut(r.Header.Get("X-Forwarded-Proto"), ",")
+	return r.TLS != nil || strings.EqualFold(strings.TrimSpace(proto), "https")
 }
 
 // clientAddress is the first hop of X-Forwarded-For when a proxy sets it,
