@@ -450,6 +450,23 @@ func TestTestConnectionEndpoint(t *testing.T) {
 	}
 }
 
+func TestASignInForTheOtherKindIsRefusedByName(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	fake := fakes.NewJellyfin(t)
+	ref := a.jellyfinSignIn(fake)
+	rec, answer := a.json(http.MethodPost, "/setup/servers/test", testRequest{Kind: store.Plex, URL: fake.URL, TokenRef: ref})
+	if rec.Code != http.StatusBadRequest || !strings.Contains(answer["error"].(string), "belongs to Jellyfin, not Plex") {
+		t.Fatalf("test with the wrong kind: %d %v", rec.Code, answer)
+	}
+	if rec := a.form("/setup/servers", url.Values{"kind": {"plex"}, "url": {fake.URL}, "token_ref": {ref}, "enabled": {"1"}}); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "belongs to Jellyfin, not Plex") {
+		t.Fatalf("save with the wrong kind: %d", rec.Code)
+	}
+	if rec, answer := a.json(http.MethodPost, "/setup/servers/test", testRequest{Kind: store.Jellyfin, URL: fake.URL, TokenRef: ref}); rec.Code != http.StatusOK {
+		t.Fatalf("the mismatch consumed the sign-in: %d %v", rec.Code, answer)
+	}
+}
+
 func TestPlexSignInEndToEnd(t *testing.T) {
 	a := newTestApp(t)
 	a.signIn()

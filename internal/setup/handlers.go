@@ -296,11 +296,12 @@ func (a *app) resolveServer(ctx context.Context, form submitted, existing store.
 	switch {
 	case form.tokenRef != "":
 		pending, ok := a.refs.take(form.tokenRef)
-		if ok {
-			giveBack = func() { a.refs.restore(form.tokenRef, pending) }
-		}
-		if !ok || pending.kind != server.Kind {
+		if !ok {
 			return server, giveBack, errors.New("the sign-in has expired, sign in again")
+		}
+		giveBack = func() { a.refs.restore(form.tokenRef, pending) }
+		if pending.kind != server.Kind {
+			return server, giveBack, fmt.Errorf("the sign-in belongs to %s, not %s; sign in again", kindName(pending.kind), kindName(server.Kind))
 		}
 		server.Token, server.Account, server.DeviceID = pending.token, pending.account, pending.deviceID
 		server.Auth = map[store.Kind]store.Auth{store.Plex: store.AuthPlexSignIn, store.Jellyfin: store.AuthJellyfinSignIn}[server.Kind]
@@ -403,8 +404,12 @@ func (a *app) testServer(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case req.TokenRef != "":
 		pending, ok := a.refs.peek(req.TokenRef)
-		if !ok || pending.kind != req.Kind {
+		switch {
+		case !ok:
 			jsonError(w, http.StatusBadRequest, "the sign-in has expired, sign in again")
+			return
+		case pending.kind != req.Kind:
+			jsonError(w, http.StatusBadRequest, fmt.Sprintf("the sign-in belongs to %s, not %s; sign in again", kindName(pending.kind), kindName(req.Kind)))
 			return
 		}
 		server.Token, server.DeviceID = pending.token, pending.deviceID
