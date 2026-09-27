@@ -76,6 +76,15 @@ func (a *app) createPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	a.Log.Info("admin password created", "from", clientAddress(r))
 	a.setSessionCookie(w, r, admin)
+	if origin, ok := publicOrigin(r); ok && a.Store.Snapshot().PublicURL == "" {
+		if err := a.Store.SetPublicURL(origin); err != nil {
+			a.fail(w, r, err)
+			return
+		}
+		a.Log.Info("public url set", "public_url", origin)
+		redirectNotice(w, r, "Password set. The public URL is "+origin+"; change it below if that is wrong. Now add a server.")
+		return
+	}
 	redirectNotice(w, r, "Password set. Add your public URL and a server.")
 }
 

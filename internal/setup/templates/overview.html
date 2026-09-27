@@ -3,7 +3,7 @@
 
 <section class="card">
   <h2>Public URL</h2>
-  {{if not .PublicURL}}<p class="warn">Set the HTTPS address your reverse proxy serves this addon on. Server URLs cannot be shown until it is set.</p>{{end}}
+  <p class="hint">The HTTPS address BitChord uses to reach this addon.{{if not .PublicURL}} Server URLs appear once it is set.{{end}}</p>
   <form method="post" action="/setup/public-url" class="row">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <input type="url" name="public_url" value="{{.PublicURL}}" placeholder="https://music.example.com">
@@ -11,6 +11,7 @@
   </form>
 </section>
 
+{{if .PublicURL}}
 <section class="card">
   <h2>Secret</h2>
   <p>Every server URL carries this secret. Regenerating it changes every URL at once.</p>
@@ -32,6 +33,9 @@
 </section>
 {{else}}
 <p><a class="button" href="/setup/servers/new">Add a server</a></p>
+{{end}}
+{{end}}
+{{if .Servers}}
 {{range .Servers}}
 <section class="card server" id="server-{{.Slug}}">
   <h2>{{.Name}} <small>{{.Slug}}</small></h2>
@@ -68,11 +72,13 @@
 <script>
 var secret = document.getElementById('secret');
 var secretToggle = document.getElementById('secret-toggle');
-secretToggle.addEventListener('click', function () {
-  var hidden = secret.textContent !== secret.dataset.secret;
-  secret.textContent = hidden ? secret.dataset.secret : '••••••••••••••••••••';
-  secretToggle.textContent = hidden ? 'Hide' : 'Show';
-});
+if (secretToggle) {
+  secretToggle.addEventListener('click', function () {
+    var hidden = secret.textContent !== secret.dataset.secret;
+    secret.textContent = hidden ? secret.dataset.secret : '••••••••••••••••••••';
+    secretToggle.textContent = hidden ? 'Hide' : 'Show';
+  });
+}
 document.querySelectorAll('button.copy').forEach(function (button) {
   button.addEventListener('click', function () {
     navigator.clipboard.writeText(button.dataset.copy).then(function () {
