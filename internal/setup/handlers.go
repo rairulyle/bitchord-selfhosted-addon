@@ -154,15 +154,22 @@ func (a *app) overview(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) setPublicURL(w http.ResponseWriter, r *http.Request) {
 	value := strings.TrimRight(strings.TrimSpace(r.PostFormValue("public_url")), "/")
-	if err := store.ValidatePublicURL(value); err != nil {
-		view := a.overviewView(r, a.Store.Snapshot())
-		view.Error = err.Error()
-		view.PublicURL = value
-		a.render(w, r, http.StatusBadRequest, "overview", view)
-		return
+	if value != "" {
+		if err := store.ValidatePublicURL(value); err != nil {
+			view := a.overviewView(r, a.Store.Snapshot())
+			view.Error = err.Error()
+			view.PublicURL = value
+			a.render(w, r, http.StatusBadRequest, "overview", view)
+			return
+		}
 	}
 	if err := a.Store.SetPublicURL(value); err != nil {
 		a.fail(w, r, err)
+		return
+	}
+	if value == "" {
+		a.Log.Info("public url cleared")
+		redirectNotice(w, r, "Public URL cleared. Server URLs cannot be shown until it is set again.")
 		return
 	}
 	a.Log.Info("public url set", "public_url", value)

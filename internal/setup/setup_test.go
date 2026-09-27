@@ -321,6 +321,15 @@ func TestPublicURLAndSecret(t *testing.T) {
 	if after == before || strings.Contains(page, before) || !strings.Contains(page, "https://music.example.com/"+slug+"/"+after) {
 		t.Fatalf("secret not rotated on the page")
 	}
+	if rec := a.form("/setup/public-url", url.Values{"public_url": {""}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("clear public url: %d", rec.Code)
+	}
+	if got := a.store.Snapshot().PublicURL; got != "" {
+		t.Fatalf("public url after clearing = %q", got)
+	}
+	if page = a.get("/setup").Body.String(); !strings.Contains(page, "Set the HTTPS address") {
+		t.Fatal("missing public url banner after clearing")
+	}
 }
 
 func TestServerLifecycleThroughTheForms(t *testing.T) {

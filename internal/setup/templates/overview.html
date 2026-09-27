@@ -6,7 +6,7 @@
   {{if not .PublicURL}}<p class="warn">Set the HTTPS address your reverse proxy serves this addon on. Server URLs cannot be shown until it is set.</p>{{end}}
   <form method="post" action="/setup/public-url" class="row">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
-    <input type="url" name="public_url" value="{{.PublicURL}}" placeholder="https://music.example.com" required>
+    <input type="url" name="public_url" value="{{.PublicURL}}" placeholder="https://music.example.com">
     <button>Save</button>
   </form>
 </section>
