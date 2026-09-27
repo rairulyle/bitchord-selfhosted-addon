@@ -32,7 +32,6 @@
       <div data-kind-panel="plex" {{if ne .Kind "plex"}}hidden{{end}}>
         <button type="button" id="plex-signin" class="secondary">Sign in with Plex</button>
         <p class="hint">Opens app.plex.tv in a new tab. The addon container must be able to reach plex.tv.</p>
-        <label id="plex-servers-label" hidden>Server <select id="plex-servers"></select></label>
       </div>
       <div data-kind-panel="jellyfin" {{if ne .Kind "jellyfin"}}hidden{{end}}>
         <label>Username <input type="text" id="jf-username" autocomplete="off"></label>
@@ -165,28 +164,25 @@
           button.disabled = false;
           document.getElementById('token_ref').value = answer.ref;
           signedIn(answer.username);
-          var select = document.getElementById('plex-servers');
-          select.innerHTML = '<option value="">Choose a server</option>';
+          var url = document.getElementById('url');
           var reachable = answer.servers.filter(function (s) { return s.reachable; });
-          answer.servers.sort(function (a, b) { return (b.reachable ? 1 : 0) - (a.reachable ? 1 : 0); }).forEach(function (server) {
+          var suggestions = document.getElementById('server-addresses');
+          suggestions.innerHTML = '';
+          reachable.forEach(function (server) {
             var option = document.createElement('option');
             option.value = server.url;
-            option.textContent = server.name + (server.reachable ? '' : ' — Unreachable');
-            option.disabled = !server.reachable;
-            select.appendChild(option);
+            option.label = server.name;
+            suggestions.appendChild(option);
           });
-          document.getElementById('plex-servers-label').hidden = false;
-          if (reachable.length === 1) { select.value = reachable[0].url; document.getElementById('url').value = reachable[0].url; }
-          if (reachable.length === 0) { document.getElementById('url').focus(); result.textContent = 'Signed in, but the addon cannot reach any of your servers. Type the address it should use.'; result.className = 'error'; return; }
-          result.textContent = 'Signed in as ' + answer.username + '. Choose a server, then test the connection.';
-          result.className = 'ok';
+          if (!url.value.trim()) {
+            if (reachable.length === 0) { url.focus(); result.textContent = 'The addon cannot reach any server on this account. Type the address it should use.'; result.className = 'error'; return; }
+            url.value = reachable[0].url;
+          }
+          document.getElementById('test').click();
         }).catch(function (error) { failed(friendly(error, 'The addon did not answer. Start over.')); });
       };
       setTimeout(poll, 2000);
     }).catch(function (error) { failed(friendly(error, 'The addon did not answer.')); });
-  });
-  document.getElementById('plex-servers').addEventListener('change', function () {
-    if (this.value) { document.getElementById('url').value = this.value; }
   });
 
   document.getElementById('jf-signin').addEventListener('click', function () {
@@ -199,8 +195,7 @@
         if (!answer.ok) { result.textContent = answer.error; result.className = 'error'; return; }
         document.getElementById('token_ref').value = answer.ref;
         signedIn(answer.username);
-        result.textContent = 'Signed in as ' + answer.username + '. Test the connection to pick a library.';
-        result.className = 'ok';
+        document.getElementById('test').click();
       })
       .catch(function (error) {
         password.value = '';
