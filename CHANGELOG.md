@@ -6,6 +6,10 @@ Entries are written **one line per paragraph and bullet** (no hard-wrapping) so 
 
 ## [Unreleased]
 
+### Changed
+
+- The public URL is saved automatically when you create the setup password over HTTPS on a public hostname, and the setup page explains what it is. You can still change or clear it. Behind nginx, add `proxy_set_header Host $host;` so the addon sees your hostname.
+
 ## [1.0.0] - 2026-09-27
 
 **Breaking:** servers are now set up on a password-protected page at `/setup` instead of in `.env`, state needs a `/data` volume, and every BitChord URL changes. Follow the upgrade steps under Removed, or "Upgrading from v0.4" in the README.
