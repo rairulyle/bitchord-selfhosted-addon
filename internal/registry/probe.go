@@ -10,6 +10,7 @@ import (
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/store"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/subsonic"
 )
 
 type Probe struct {
@@ -90,6 +91,18 @@ func (r *Registry) JellyfinSignOut(ctx context.Context, serverURL, deviceID, tok
 		deviceID = r.clientIDNow()
 	}
 	return jellyfin.SignOut(ctx, r.opts.HTTP, serverURL, r.opts.Version, deviceID, token)
+}
+
+// NavidromeSignIn verifies a Navidrome username and password against its
+// Subsonic API and returns the credential to store. Navidrome keeps no session
+// to hand out, so the username and password themselves are stored, joined as
+// "user:password", and used for every later request.
+func (r *Registry) NavidromeSignIn(ctx context.Context, serverURL, username, password string) (Account, error) {
+	client := subsonic.New(subsonic.Options{BaseURL: serverURL, Username: username, Password: password, Log: r.opts.Log})
+	if _, err := client.Version(ctx); err != nil {
+		return Account{}, err
+	}
+	return Account{Token: subsonic.JoinCredential(username, password), Username: username}, nil
 }
 
 type PlexServer struct {

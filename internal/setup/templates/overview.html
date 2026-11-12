@@ -1,92 +1,838 @@
 {{define "content"}}
-<h1>Servers</h1>
+<div class="page-header">
+  <h1>Servers</h1>
+  {{if and .PublicURL .Servers}}
+  <div class="page-header-actions">
+    {{if gt (len .Servers) 1}}
+    <form method="post" action="/setup/sync-all" class="sync-form" style="margin: 0;">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <button type="submit" class="secondary sync-btn">Sync all</button>
+    </form>
+    {{end}}
+    <a class="button" href="/setup/servers/new">+ Add server</a>
+  </div>
+  {{end}}
+</div>
 
-<section class="card">
-  <h2>Public URL</h2>
-  <p class="hint">The HTTPS address BitChord uses to reach this addon.{{if not .PublicURL}} Server URLs appear once it is set.{{end}}</p>
-  <form method="post" action="/setup/public-url" class="row">
-    <input type="hidden" name="csrf" value="{{.CSRF}}">
-    <input type="url" name="public_url" value="{{.PublicURL}}" placeholder="https://music.example.com">
-    <button>Save</button>
-  </form>
-</section>
-
-{{if .PublicURL}}
-<section class="card">
-  <h2>Secret</h2>
-  <p>Every server URL carries this secret. Regenerating it changes every URL at once.</p>
-  <div class="row">
-    <code id="secret" data-secret="{{.Secret}}">••••••••••••••••••••</code>
-    <button type="button" class="link" id="secret-toggle">Show</button>
-    <button type="button" class="copy" data-copy="{{.Secret}}" aria-label="Copy the secret">Copy</button>
-    <form method="post" action="/setup/secret/regenerate" onsubmit="return confirm('Regenerate the secret? Every server URL changes and each client must be updated.')">
+<div class="endpoint-panel">
+  <div class="endpoint-col">
+    <label for="public-url-input">Public URL</label>
+    <p class="hint">The HTTPS address BitChord uses to reach this addon.{{if not .PublicURL}} Server URLs appear once it is set.{{end}}</p>
+    <form method="post" action="/setup/public-url" class="inline-form">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
-      <button class="danger">Regenerate</button>
+      <input type="url" id="public-url-input" name="public_url" value="{{.PublicURL}}" placeholder="https://music.example.com">
+      <button class="secondary">Save</button>
     </form>
   </div>
-</section>
+  {{if .PublicURL}}
+  <div class="endpoint-col">
+    <label>Secret</label>
+    <p class="hint">Every server URL carries this secret. Regenerating it changes every URL at once.</p>
+    <div class="secret-row">
+      <div class="copy-pill secret-pill" data-copy="{{.Secret}}" tabindex="0" role="button" aria-label="Copy secret">
+        <span class="copy-text" id="secret" data-secret="{{.Secret}}">••••••••••••••••••••</span>
+        <span class="copy-action">
+          <button type="button" class="secret-toggle" id="secret-toggle" aria-label="Show secret" title="Show secret">
+            <svg class="eye-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+            <svg class="eye-off-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display: none;"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/></svg>
+          </button>
+          <span class="copy-sep"></span>
+          <span class="copy-feedback">Copied!</span>
+          <svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+          <svg class="check-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </span>
+      </div>
+      <form method="post" action="/setup/secret/regenerate" onsubmit="return confirm('Regenerate the secret? Every server URL changes and each client must be updated.')" style="margin: 0; display: inline-flex;">
+        <input type="hidden" name="csrf" value="{{.CSRF}}">
+        <button type="submit" class="icon-btn danger" title="Regenerate secret" aria-label="Regenerate secret">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+        </button>
+      </form>
+    </div>
+  </div>
+  {{end}}
+</div>
 
+{{if .PublicURL}}
 {{if not .Servers}}
 <section class="card empty">
-  <p>No servers yet. Add a Plex or Jellyfin server to get its BitChord URL.</p>
+  <p>No servers yet. Connect your Plex, Jellyfin, or Navidrome server to get started.</p>
   <a class="button" href="/setup/servers/new">Add a server</a>
 </section>
-{{else}}
-<p><a class="button" href="/setup/servers/new">Add a server</a></p>
 {{end}}
 {{end}}
+
 {{if .Servers}}
 {{range .Servers}}
 <section class="card server" id="server-{{.Slug}}">
-  <h2>{{.Name}} <small>{{.Slug}}</small></h2>
+  <div class="server-header">
+    <div class="server-title-group">
+      <h3>{{.Name}} <small>{{.Slug}}</small></h3>
+      {{if .Enabled}}
+        {{if .Online}}
+          <span class="badge online">
+            <span class="status-dot online"></span> Online
+          </span>
+        {{else}}
+          <span class="badge offline"{{if .Status.LastError}} title="{{.Status.LastError}}"{{end}}>
+            <span class="status-dot offline"></span> Unreachable
+          </span>
+        {{end}}
+      {{else}}
+        <span class="badge muted">Disabled</span>
+      {{end}}
+    </div>
+    <div class="server-actions">
+      {{if and .Enabled .Running}}
+      <form method="post" action="/setup/servers/{{.Slug}}/refresh" class="sync-form" style="margin: 0;">
+        <input type="hidden" name="csrf" value="{{$.CSRF}}">
+        <button class="secondary sync-btn">Sync now</button>
+      </form>
+      {{end}}
+      <a class="button secondary" href="/setup/servers/{{.Slug}}/edit">Edit</a>
+      <form method="post" action="/setup/servers/{{.Slug}}/enabled" style="margin: 0;">
+        <input type="hidden" name="csrf" value="{{$.CSRF}}">
+        <input type="hidden" name="enabled" value="{{if .Enabled}}false{{else}}true{{end}}">
+        <button class="secondary">{{if .Enabled}}Disable{{else}}Enable{{end}}</button>
+      </form>
+      <form method="post" action="/setup/servers/{{.Slug}}/delete" onsubmit="return confirm('Remove {{.Name}}? Its URL stops answering.')" style="margin: 0; display: inline-flex;">
+        <input type="hidden" name="csrf" value="{{$.CSRF}}">
+        <button type="submit" class="icon-btn danger" title="Remove {{.Name}}" aria-label="Remove {{.Name}}">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
+        </button>
+      </form>
+    </div>
+  </div>
+  {{if and .Enabled (not .Online) .Status.LastError}}
+  <div class="server-error-banner" role="alert">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+    <span><strong>Connection error:</strong> {{.Status.LastError}}</span>
+  </div>
+  {{end}}
   <dl>
-    <dt>Server</dt><dd>{{.Host}}{{if .Account}} · signed in as {{.Account}}{{end}}</dd>
+    <dt>Server</dt><dd><a href="{{.ServerURL}}" target="_blank" rel="noopener" class="server-link" title="Open {{.ServerURL}} in a new tab">{{.Host}}</a>{{if .Account}} · signed in as {{.Account}}{{end}}</dd>
     <dt>Library</dt><dd>{{.Library}}</dd>
+    <dt>Sync Interval</dt><dd>{{.SyncInterval}}</dd>
+    {{if .ScrobbleInfo}}
+    <dt>Scrobbling</dt><dd>{{.ScrobbleInfo}}</dd>
+    {{end}}
     <dt>Status</dt>
     <dd>
       {{if not .Enabled}}Disabled
       {{else if not .Running}}Not running
       {{else if .Status.LastError}}<span class="warn">Error: {{.Status.LastError}}</span>{{if .Status.Ready}} (serving the last good index of {{.Status.Tracks}} tracks){{end}}
-      {{else if .Status.Ready}}{{.Status.Tracks}} tracks, refreshed {{.Checked}}
+      {{else if .Status.Ready}}{{.Status.Tracks}} tracks{{if .Status.Artists}} · {{.Status.Artists}} artists{{end}}{{if .Status.Albums}} · {{.Status.Albums}} albums{{end}}, refreshed {{.Checked}}{{if .ScanDuration}} (took {{.ScanDuration}}){{end}}
       {{else}}Building the index{{end}}
     </dd>
+    {{if .URL}}
     <dt>BitChord URL</dt>
-    <dd class="row">{{if .URL}}<code class="url">{{.MaskedURL}}</code> <button type="button" class="copy" data-copy="{{.URL}}" aria-label="Copy the BitChord URL for {{.Name}}">Copy</button>{{else}}Set the public URL first{{end}}</dd>
+    <dd>
+      <div class="copy-pill" data-copy="{{.URL}}" tabindex="0" role="button" aria-label="Copy BitChord URL for {{.Name}}">
+        <span class="copy-text">{{.MaskedURL}}</span>
+        <span class="copy-action">
+          <span class="copy-feedback">Copied!</span>
+          <svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+          <svg class="check-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </span>
+      </div>
+    </dd>
+    {{end}}
+    {{if .SyncURL}}
+    <dt>Sync Webhook</dt>
+    <dd>
+      <div class="copy-pill" data-copy="{{.SyncURL}}" tabindex="0" role="button" aria-label="Copy Sync Webhook URL for {{.Name}}">
+        <span class="copy-text">{{.MaskedSyncURL}}</span>
+        <span class="copy-action">
+          <span class="copy-feedback">Copied!</span>
+          <svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+          <svg class="check-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </span>
+      </div>
+    </dd>
+    <dd style="grid-column: 1 / -1; margin-top: 0.25rem;">
+      <details class="accordion webhook-helper">
+        <summary>
+          <span class="summary-title">Webhook helper &amp; curl command</span>
+          <svg class="chevron" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06z"/></svg>
+        </summary>
+        <div class="accordion-content">
+          <p class="hint" style="margin: 0 0 0.5rem 0;">Trigger instant sync from terminal, script, or cron:</p>
+          <div class="copy-pill" data-copy="curl -X POST &quot;{{.SyncURL}}&quot;" tabindex="0" role="button" aria-label="Copy curl command">
+            <span class="copy-text">curl -X POST "{{.MaskedSyncURL}}"</span>
+            <span class="copy-action">
+              <span class="copy-feedback">Copied!</span>
+              <svg class="copy-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+              <svg class="check-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            </span>
+          </div>
+        </div>
+      </details>
+    </dd>
+    {{end}}
   </dl>
-  <div class="row actions">
-    <a class="button secondary" href="/setup/servers/{{.Slug}}/edit">Edit</a>
-    <form method="post" action="/setup/servers/{{.Slug}}/enabled">
-      <input type="hidden" name="csrf" value="{{$.CSRF}}">
-      <input type="hidden" name="enabled" value="{{if .Enabled}}false{{else}}true{{end}}">
-      <button class="secondary">{{if .Enabled}}Disable{{else}}Enable{{end}}</button>
-    </form>
-    <form method="post" action="/setup/servers/{{.Slug}}/delete" onsubmit="return confirm('Remove {{.Name}}? Its URL stops answering.')">
-      <input type="hidden" name="csrf" value="{{$.CSRF}}">
-      <button class="danger">Remove</button>
-    </form>
-  </div>
+  {{if and .Enabled .Running}}
+  <details class="accordion search-box">
+    <summary>
+      <span class="summary-title">Search tester <kbd style="margin-left: 6px; font-size: 10px;">/</kbd></span>
+      <svg class="chevron" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06z"/></svg>
+    </summary>
+    <div class="accordion-content">
+      <p class="hint">Preview how BitChord queries match against this server's index:</p>
+      <div class="search-input-row" data-search-slug="{{.Slug}}">
+        <div class="search-input-wrap">
+          <svg class="search-lens" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <input type="text" class="search-q" placeholder="Type a song, artist, or album title…">
+          <kbd class="search-kbd">/</kbd>
+          <button type="button" class="search-clear" aria-label="Clear search" style="display: none;">✕</button>
+        </div>
+        <button type="button" class="secondary search-run">Search</button>
+      </div>
+      <div class="search-tabs" role="tablist" aria-label="Search filter">
+        <button type="button" class="search-tab active" data-tab="all" role="tab" aria-selected="true">All</button>
+        <button type="button" class="search-tab" data-tab="songs" role="tab" aria-selected="false">Songs</button>
+        <button type="button" class="search-tab" data-tab="albums" role="tab" aria-selected="false">Albums</button>
+      </div>
+      <div class="search-output"></div>
+    </div>
+  </details>
+  {{end}}
 </section>
 {{end}}
 {{end}}
 
+<section class="activity-section">
+  <details class="accordion activity-accordion">
+    <summary>
+      <span class="summary-title">Recent Activity</span>
+      <svg class="chevron" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06z"/></svg>
+    </summary>
+    <div class="accordion-content">
+      <p class="hint" style="margin: 0 0 8px 0;">Latest sync and playback events across your servers.</p>
+      <div class="activity-bar">
+        <div class="activity-tabs" role="tablist" aria-label="Activity filter">
+          <button type="button" class="activity-tab active" data-filter="all" role="tab" aria-selected="true">All</button>
+          <button type="button" class="activity-tab" data-filter="sync" role="tab" aria-selected="false">Syncs</button>
+          <button type="button" class="activity-tab" data-filter="playback" role="tab" aria-selected="false">Playback</button>
+        </div>
+        <form method="post" action="/setup/activity/clear" class="activity-clear-form">
+          <input type="hidden" name="csrf" value="{{.CSRF}}">
+          <input type="hidden" name="filter" value="all" class="activity-clear-filter">
+          <button type="submit" class="activity-clear-btn" title="Clear activity log">Clear</button>
+        </form>
+      </div>
+      <div class="activity-list">
+        {{if .Activities}}
+          {{range .Activities}}
+          <div class="activity-row" data-kind="{{.Kind}}">
+            <div class="activity-main">
+              <span class="activity-icon-pill" title="{{.Kind}}">
+                {{if or (eq .Kind "sync") (eq .Kind "sync_error")}}
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
+                {{else if or (eq .Kind "scrobble") (eq .Kind "now_playing") (eq .Kind "playback")}}
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+                {{else}}
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/></svg>
+                {{end}}
+              </span>
+              <span class="activity-server-tag">{{.Server}}</span>
+              <span class="activity-msg">{{.Message}}</span>
+            </div>
+            <span class="activity-time">{{.TimeAgo}}</span>
+          </div>
+          {{end}}
+        {{else}}
+          <p class="hint empty-activity">No recent activity yet.</p>
+        {{end}}
+      </div>
+    </div>
+  </details>
+</section>
+
+<section class="backup-section">
+  <details class="accordion backup-accordion">
+    <summary>
+      <span class="summary-title">Backup &amp; Restore</span>
+      <svg class="chevron" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06z"/></svg>
+    </summary>
+    <div class="accordion-content">
+      <div class="backup-grid">
+        <div class="backup-col">
+          <label>Export Configuration</label>
+          <p class="hint">Download an encrypted backup of your servers and settings.</p>
+          <form method="post" action="/setup/backup" class="backup-form">
+            <input type="hidden" name="csrf" value="{{.CSRF}}">
+            <div class="backup-field-row">
+              <input type="password" name="passphrase" class="backup-passphrase-input" placeholder="Password" required autocomplete="new-password">
+              <button type="submit" class="secondary backup-btn">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                Download backup
+              </button>
+            </div>
+          </form>
+        </div>
+        <div class="backup-col">
+          <label>Restore Configuration</label>
+          <p class="hint">Upload a backup file. Existing servers will be replaced with the backup configuration.</p>
+          <form method="post" action="/setup/restore" enctype="multipart/form-data" class="restore-form" onsubmit="return confirm('Restore this configuration? Existing servers will be replaced with the backup.')">
+            <input type="hidden" name="csrf" value="{{.CSRF}}">
+            <div class="backup-field-row">
+              <input type="file" name="backup_file" id="backup-file-input" class="restore-file-input" accept=".json,application/json" required>
+              <input type="password" name="passphrase" class="backup-passphrase-input" placeholder="Password" autocomplete="current-password">
+              <button type="submit" class="secondary">Restore</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </details>
+</section>
+
 <script>
-var secret = document.getElementById('secret');
-var secretToggle = document.getElementById('secret-toggle');
-if (secretToggle) {
-  secretToggle.addEventListener('click', function () {
-    var hidden = secret.textContent !== secret.dataset.secret;
-    secret.textContent = hidden ? secret.dataset.secret : '••••••••••••••••••••';
-    secretToggle.textContent = hidden ? 'Hide' : 'Show';
-  });
-}
-document.querySelectorAll('button.copy').forEach(function (button) {
-  button.addEventListener('click', function () {
-    navigator.clipboard.writeText(button.dataset.copy).then(function () {
-      var label = button.textContent;
-      button.textContent = 'Copied';
-      setTimeout(function () { button.textContent = label; }, 1500);
+(function () {
+  var toggle = document.getElementById('secret-toggle');
+  var secret = document.getElementById('secret');
+  if (toggle && secret) {
+    var raw = secret.dataset.secret;
+    var masked = secret.textContent;
+    var showing = false;
+    var eyeIcon = toggle.querySelector('.eye-icon');
+    var eyeOffIcon = toggle.querySelector('.eye-off-icon');
+
+    toggle.addEventListener('click', function (e) {
+      e.stopPropagation();
+      showing = !showing;
+      secret.textContent = showing ? raw : masked;
+      toggle.setAttribute('aria-label', showing ? 'Hide secret' : 'Show secret');
+      toggle.setAttribute('title', showing ? 'Hide secret' : 'Show secret');
+      if (eyeIcon && eyeOffIcon) {
+        eyeIcon.style.display = showing ? 'none' : 'inline';
+        eyeOffIcon.style.display = showing ? 'inline' : 'none';
+      }
+    });
+  }
+
+  function setupCopyPill(pill) {
+    function doCopy() {
+      var text = pill.dataset.copy;
+      if (!text) return;
+      navigator.clipboard.writeText(text).then(function () {
+        pill.classList.add('copied');
+        setTimeout(function () {
+          pill.classList.remove('copied');
+        }, 1600);
+      });
+    }
+
+    pill.addEventListener('click', function (e) {
+      if (e.target.closest('button.secret-toggle')) return;
+      doCopy();
+    });
+
+    pill.addEventListener('keydown', function (e) {
+      if (e.target.closest('button.secret-toggle')) return;
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        doCopy();
+      }
+    });
+  }
+
+  document.querySelectorAll('.copy-pill').forEach(setupCopyPill);
+
+  document.querySelectorAll('.sync-form').forEach(function (f) {
+    f.addEventListener('submit', function () {
+      var b = f.querySelector('.sync-btn');
+      if (!b) return;
+      b.disabled = true;
+      b.textContent = 'Syncing…';
     });
   });
+
+  var restoreFileInput = document.getElementById('backup-file-input');
+  var restoreForm = document.querySelector('.restore-form');
+  var restorePassInput = restoreForm ? restoreForm.querySelector('input[name="passphrase"]') : null;
+  var isEncryptedBackupFile = false;
+
+  if (restoreFileInput && restorePassInput) {
+    restoreFileInput.addEventListener('change', function () {
+      isEncryptedBackupFile = false;
+      var file = restoreFileInput.files && restoreFileInput.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function (e) {
+        try {
+          var parsed = JSON.parse(e.target.result);
+          if (parsed && (parsed.ciphertext || (parsed.version === 1 && parsed.salt))) {
+            isEncryptedBackupFile = true;
+            restorePassInput.required = true;
+            restorePassInput.placeholder = 'Password (required)';
+            restorePassInput.focus();
+          } else {
+            restorePassInput.required = false;
+            restorePassInput.placeholder = 'Password (if encrypted)';
+          }
+        } catch (err) {}
+      };
+      reader.readAsText(file);
+    });
+
+    if (restoreForm) {
+      restoreForm.addEventListener('submit', function (e) {
+        if (isEncryptedBackupFile && !restorePassInput.value.trim()) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          alert('This backup is encrypted. Please enter the backup password before restoring.');
+          restorePassInput.focus();
+          return false;
+        }
+      });
+    }
+  }
+
+  if (location.search.indexOf('error=') !== -1 || (document.querySelector('.notice.error') && document.querySelector('.notice.error').textContent.indexOf('Restore failed') !== -1)) {
+    var backupAccordion = document.querySelector('.backup-accordion');
+    if (backupAccordion) {
+      backupAccordion.open = true;
+      try {
+        backupAccordion.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } catch (err) {}
+    }
+  }
+})();
+
+document.querySelectorAll('.accordion.search-box').forEach(function (box) {
+  var row = box.querySelector('.search-input-row');
+  if (!row) return;
+  var slug = row.dataset.searchSlug;
+  var input = row.querySelector('.search-q');
+  var btn = row.querySelector('.search-run');
+  var clearBtn = row.querySelector('.search-clear');
+  var out = box.querySelector('.search-output');
+  var tabs = box.querySelectorAll('.search-tab');
+  var activeTab = 'all';
+  var lastData = null;
+  var debounceTimer = null;
+
+  function updateClearVisibility() {
+    var val = input.value.trim();
+    clearBtn.style.display = val ? 'inline-flex' : 'none';
+    var wrap = input.closest('.search-input-wrap');
+    if (wrap) {
+      wrap.classList.toggle('has-text', !!val);
+    }
+  }
+
+  function clearSearch() {
+    input.value = '';
+    out.innerHTML = '';
+    lastData = null;
+    updateClearVisibility();
+    input.focus();
+  }
+
+  clearBtn.addEventListener('click', clearSearch);
+
+  tabs.forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      tabs.forEach(function (t) {
+        t.classList.remove('active');
+        t.setAttribute('aria-selected', 'false');
+      });
+      tab.classList.add('active');
+      tab.setAttribute('aria-selected', 'true');
+      activeTab = tab.dataset.tab;
+      if (lastData) {
+        renderResults();
+      }
+    });
+  });
+
+  function formatDuration(sec) {
+    if (!sec || sec <= 0) return '';
+    var m = Math.floor(sec / 60);
+    var s = Math.floor(sec % 60);
+    return m + ':' + (s < 10 ? '0' : '') + s;
+  }
+
+  var songIconSvg = '<svg class="search-fallback-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>';
+  var albumIconSvg = '<svg class="search-fallback-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>';
+
+  function formatArtists(str) {
+    if (!str) return '';
+    return str.replace(/\s*[;•|]\s*|\s+\/\s+/g, ' • ').trim();
+  }
+
+  function renderTrackItem(t) {
+    var qual = t.lossless ? 'LOSSLESS' : (t.codec || '');
+    var dur = formatDuration(t.duration);
+    var metaParts = [];
+    if (t.artist) metaParts.push(escapeHTML(formatArtists(t.artist)));
+    if (t.album) metaParts.push('<em>' + escapeHTML(t.album) + '</em>');
+    var metaStr = metaParts.length > 0 ? metaParts.join(' · ') : '';
+
+    var badgeContent = '';
+    if (qual) badgeContent += '<span class="badge-quality">' + escapeHTML(qual) + '</span>';
+    if (dur) badgeContent += '<span class="badge-duration">' + escapeHTML(dur) + '</span>';
+
+    var artHTML = t.artworkURL
+      ? '<img class="search-thumb" src="' + escapeHTML(t.artworkURL) + '" alt="" loading="lazy" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\';"><div class="search-fallback-wrap" style="display:none">' + songIconSvg + '</div>'
+      : '<div class="search-fallback-wrap">' + songIconSvg + '</div>';
+
+    return '<div class="search-track-item">' +
+      '<div class="search-media-left">' +
+        artHTML +
+        '<div class="search-track-info">' +
+          '<span class="search-track-title">' + escapeHTML(t.title) + '</span>' +
+          (metaStr ? '<span class="search-track-meta">' + metaStr + '</span>' : '') +
+        '</div>' +
+      '</div>' +
+      (badgeContent ? '<span class="search-track-badge">' + badgeContent + '</span>' : '') +
+    '</div>';
+  }
+
+  function renderAlbumCard(alb) {
+    var artHTML = alb.artworkURL
+      ? '<img class="search-album-art" src="' + escapeHTML(alb.artworkURL) + '" alt="" loading="lazy" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\';"><div class="search-fallback-wrap album-fallback" style="display:none">' + albumIconSvg + '</div>'
+      : '<div class="search-fallback-wrap album-fallback">' + albumIconSvg + '</div>';
+
+    var subParts = [];
+    if (alb.artist) subParts.push(escapeHTML(formatArtists(alb.artist)));
+    if (alb.year) subParts.push(alb.year);
+    if (alb.trackCount) subParts.push(alb.trackCount + (alb.trackCount === 1 ? ' track' : ' tracks'));
+
+    return '<div class="search-album-card">' +
+      '<div class="search-album-art-wrap">' + artHTML + '</div>' +
+      '<div class="search-album-name" title="' + escapeHTML(alb.name) + '">' + escapeHTML(alb.name) + '</div>' +
+      '<div class="search-album-sub" title="' + escapeHTML(subParts.join(' · ')) + '">' + escapeHTML(subParts.join(' · ')) + '</div>' +
+    '</div>';
+  }
+
+  function renderResults() {
+    if (!lastData) return;
+    var data = lastData;
+
+    var tokenList = (data.tokens || []).map(function (tk) {
+      return '<code>' + escapeHTML(tk) + '</code>';
+    }).join(' ');
+
+    var tracks = data.tracks || [];
+    var albums = data.albums || [];
+    var hasAny = tracks.length > 0 || albums.length > 0;
+
+    var summary = '<div class="search-summary">' +
+      '<div class="search-summary-left">' +
+        '<span>' + tracks.length + ' song' + (tracks.length === 1 ? '' : 's') + ', ' +
+        albums.length + ' album' + (albums.length === 1 ? '' : 's') + '</span>' +
+        (tokenList ? ' · <span>Tokens: ' + tokenList + '</span>' : '') +
+      '</div>' +
+      '<div class="search-summary-right">' +
+        '<span>' + data.strict + ' strict</span> · <span>' + data.fallback + ' fallback</span>' +
+      '</div>' +
+    '</div>';
+
+    if (!hasAny) {
+      out.innerHTML = summary + '<div class="search-empty-box"><p class="hint">No matching songs or albums found in index.</p></div>';
+      return;
+    }
+
+    var html = summary + '<div class="search-content-body">';
+
+    if (activeTab === 'all') {
+      if (tracks.length > 0) {
+        html += '<div class="search-section">' +
+          '<div class="search-section-title">Songs <span class="search-section-count">(' + tracks.length + ')</span></div>' +
+          '<div class="search-track-list">' +
+          tracks.map(renderTrackItem).join('') +
+          '</div></div>';
+      }
+      if (albums.length > 0) {
+        html += '<div class="search-section">' +
+          '<div class="search-section-title">Albums <span class="search-section-count">(' + albums.length + ')</span></div>' +
+          '<div class="search-album-grid">' +
+          albums.map(renderAlbumCard).join('') +
+          '</div></div>';
+      }
+    } else if (activeTab === 'songs') {
+      if (tracks.length === 0) {
+        html += '<div class="search-empty-box"><p class="hint">No songs matching this query.</p></div>';
+      } else {
+        html += '<div class="search-track-list">' + tracks.map(renderTrackItem).join('') + '</div>';
+      }
+    } else if (activeTab === 'albums') {
+      if (albums.length === 0) {
+        html += '<div class="search-empty-box"><p class="hint">No albums matching this query.</p></div>';
+      } else {
+        html += '<div class="search-album-grid">' + albums.map(renderAlbumCard).join('') + '</div>';
+      }
+    }
+
+    html += '</div>';
+    out.innerHTML = html;
+  }
+
+  function runSearch() {
+    var query = input.value.trim();
+    if (!query) {
+      out.innerHTML = '<p class="hint" style="margin: 0.5rem 0;">Enter a search query.</p>';
+      lastData = null;
+      return;
+    }
+    btn.disabled = true;
+    if (!lastData) {
+      out.innerHTML = '<p class="hint" style="margin: 0.5rem 0;">Searching…</p>';
+    }
+    fetch('/setup/servers/' + encodeURIComponent(slug) + '/test-search?q=' + encodeURIComponent(query))
+      .then(function (res) {
+        if (!res.ok) {
+          return res.text().then(function (txt) {
+            throw new Error(txt.trim() || ('HTTP ' + res.status));
+          });
+        }
+        return res.json();
+      })
+      .then(function (data) {
+        btn.disabled = false;
+        if (!data.ok) {
+          out.innerHTML = '<p class="error" style="margin: 0.5rem 0;">' + escapeHTML(data.error || 'Search failed') + '</p>';
+          lastData = null;
+          return;
+        }
+        lastData = data;
+        renderResults();
+      })
+      .catch(function (err) {
+        btn.disabled = false;
+        out.innerHTML = '<p class="error" style="margin: 0.5rem 0;">Error: ' + escapeHTML(err.message) + '</p>';
+        lastData = null;
+      });
+  }
+
+  input.addEventListener('input', function () {
+    updateClearVisibility();
+    var query = input.value.trim();
+    if (!query) {
+      clearSearch();
+      return;
+    }
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(runSearch, 220);
+  });
+
+  btn.addEventListener('click', function () {
+    clearTimeout(debounceTimer);
+    runSearch();
+  });
+
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      clearSearch();
+      input.blur();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      clearTimeout(debounceTimer);
+      runSearch();
+    }
+  });
+
+  out.addEventListener('wheel', function (e) {
+    var scroller = out.querySelector('.search-content-body');
+    if (scroller && scroller.scrollHeight > scroller.clientHeight) {
+      scroller.scrollTop += e.deltaY;
+    }
+  }, { passive: true });
 });
+
+document.addEventListener('keydown', function (e) {
+  if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    var active = document.activeElement;
+    var isInput = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT' || active.isContentEditable);
+    if (!isInput) {
+      e.preventDefault();
+      var searchBoxes = document.querySelectorAll('.accordion.search-box');
+      if (searchBoxes.length === 0) return;
+      var targetBox = null;
+      for (var i = 0; i < searchBoxes.length; i++) {
+        if (searchBoxes[i].open) {
+          targetBox = searchBoxes[i];
+          break;
+        }
+      }
+      if (!targetBox) targetBox = searchBoxes[0];
+      targetBox.open = true;
+      var qInput = targetBox.querySelector('.search-q');
+      if (qInput) {
+        qInput.focus();
+        qInput.select();
+      }
+    }
+  }
+});
+
+var activityDetails = document.querySelector('.activity-accordion');
+if (activityDetails) {
+  var activityList = activityDetails.querySelector('.activity-list');
+  var activityTabs = activityDetails.querySelectorAll('.activity-tab');
+  var activeActivityFilter = 'all';
+  var activityTimer = null;
+
+  function filterActivityRows() {
+    var rows = activityList.querySelectorAll('.activity-row');
+    var visibleCount = 0;
+    rows.forEach(function (row) {
+      var kind = row.dataset.kind || '';
+      var matches = true;
+      if (activeActivityFilter === 'sync') {
+        matches = (kind === 'sync' || kind === 'sync_error');
+      } else if (activeActivityFilter === 'playback') {
+        matches = (kind === 'scrobble' || kind === 'now_playing' || kind === 'playback');
+      }
+      row.style.display = matches ? 'flex' : 'none';
+      if (matches) visibleCount++;
+    });
+
+    var emptyHint = activityList.querySelector('.empty-filter-hint');
+    if (visibleCount === 0 && rows.length > 0) {
+      if (!emptyHint) {
+        emptyHint = document.createElement('p');
+        emptyHint.className = 'hint empty-filter-hint';
+        emptyHint.style.margin = '16px 0';
+        emptyHint.style.textAlign = 'center';
+        activityList.appendChild(emptyHint);
+      }
+      emptyHint.style.display = 'block';
+      emptyHint.textContent = 'No ' + (activeActivityFilter === 'sync' ? 'sync' : 'playback') + ' activity recorded yet.';
+    } else if (emptyHint) {
+      emptyHint.style.display = 'none';
+    }
+  }
+
+  var clearForm = activityDetails.querySelector('.activity-clear-form');
+  var clearFilterInput = activityDetails.querySelector('.activity-clear-filter');
+
+  activityTabs.forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      activityTabs.forEach(function (t) {
+        t.classList.remove('active');
+        t.setAttribute('aria-selected', 'false');
+      });
+      tab.classList.add('active');
+      tab.setAttribute('aria-selected', 'true');
+      activeActivityFilter = tab.dataset.filter;
+      if (clearFilterInput) {
+        clearFilterInput.value = activeActivityFilter;
+      }
+      filterActivityRows();
+    });
+  });
+
+  if (clearForm) {
+    clearForm.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var label = activeActivityFilter === 'all' ? 'recent activity' : activeActivityFilter + ' activity';
+      if (!confirm('Clear ' + label + ' log?')) return;
+      var formData = new FormData(clearForm);
+      formData.set('filter', activeActivityFilter);
+      fetch('/setup/activity/clear', {
+        method: 'POST',
+        body: formData,
+        headers: { 'Accept': 'application/json' }
+      })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data && data.ok) {
+          if (activeActivityFilter === 'all') {
+            activityList.innerHTML = '<p class="hint empty-activity">No recent activity yet.</p>';
+          } else {
+            var rows = activityList.querySelectorAll('.activity-row');
+            rows.forEach(function (row) {
+              var kind = row.dataset.kind || '';
+              if (activeActivityFilter === 'sync' && (kind === 'sync' || kind === 'sync_error')) {
+                row.remove();
+              } else if (activeActivityFilter === 'playback' && (kind === 'scrobble' || kind === 'now_playing' || kind === 'playback')) {
+                row.remove();
+              }
+            });
+            if (activityList.querySelectorAll('.activity-row').length === 0) {
+              activityList.innerHTML = '<p class="hint empty-activity">No recent activity yet.</p>';
+            }
+          }
+          filterActivityRows();
+        }
+      })
+      .catch(function () {
+        clearForm.submit();
+      });
+    });
+  }
+
+  function getActivityIcon(kind) {
+    if (kind === 'sync' || kind === 'sync_error') {
+      return '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>';
+    }
+    if (kind === 'scrobble' || kind === 'now_playing' || kind === 'playback') {
+      return '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>';
+    }
+    return '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/></svg>';
+  }
+
+  function refreshActivity() {
+    fetch('/setup/activity')
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!data.ok || !data.activities) return;
+        if (data.activities.length === 0) {
+          activityList.innerHTML = '<p class="hint empty-activity">No recent activity yet.</p>';
+          return;
+        }
+        var html = '';
+        data.activities.forEach(function (act) {
+          html += '<div class="activity-row" data-kind="' + escapeHTML(act.Kind || '') + '">' +
+            '<div class="activity-main">' +
+              '<span class="activity-icon-pill" title="' + escapeHTML(act.Kind || 'event') + '">' + getActivityIcon(act.Kind) + '</span>' +
+              '<span class="activity-server-tag">' + escapeHTML(act.Server) + '</span>' +
+              '<span class="activity-msg">' + escapeHTML(act.Message) + '</span>' +
+            '</div>' +
+            '<span class="activity-time">' + escapeHTML(act.TimeAgo) + '</span>' +
+          '</div>';
+        });
+        activityList.innerHTML = html;
+        filterActivityRows();
+      })
+      .catch(function () {});
+  }
+
+  activityDetails.addEventListener('toggle', function () {
+    if (activityDetails.open) {
+      refreshActivity();
+      if (!activityTimer) {
+        activityTimer = setInterval(refreshActivity, 5000);
+      }
+    } else {
+      if (activityTimer) {
+        clearInterval(activityTimer);
+        activityTimer = null;
+      }
+    }
+  });
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden && activityTimer) {
+      clearInterval(activityTimer);
+      activityTimer = null;
+    } else if (!document.hidden && activityDetails.open && !activityTimer) {
+      refreshActivity();
+      activityTimer = setInterval(refreshActivity, 5000);
+    }
+  });
+
+  filterActivityRows();
+}
+
+function escapeHTML(str) {
+  return (str || '').replace(/[&<>'"]/g, function (tag) {
+    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[tag] || tag;
+  });
+}
 </script>
 {{end}}

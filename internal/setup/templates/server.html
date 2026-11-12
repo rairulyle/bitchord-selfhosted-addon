@@ -1,81 +1,133 @@
 {{define "content"}}
-<h1>{{.Title}}</h1>
-<form method="post" action="{{.Action}}" class="stack" id="server-form" data-kind="{{.Kind}}" data-slug="{{.Slug}}" data-csrf="{{.CSRF}}">
-  <input type="hidden" name="csrf" value="{{.CSRF}}">
-  <input type="hidden" name="token_ref" id="token_ref" value="">
-
-  <fieldset>
-    <legend>Kind</legend>
-    {{range .Kinds}}
-    <label class="inline"><input type="radio" name="kind" value="{{.Kind}}" {{if eq .Kind $.Kind}}checked{{end}} {{if $.Editing}}disabled{{end}}> {{.Name}}</label>
-    {{end}}
-    {{if .Editing}}<input type="hidden" name="kind" value="{{.Kind}}">{{end}}
-  </fieldset>
-
-  <label>Name in BitChord
-    <span class="prefixed"><span class="prefix" id="kind-prefix">{{.KindName}} -</span><input type="text" name="label" value="{{.Label}}" maxlength="16" placeholder="Home"></span>
-  </label>
-
-  <label>Server URL <input type="url" name="url" id="url" value="{{.URL}}" placeholder="http://plex:32400" list="server-addresses" required></label>
-  <datalist id="server-addresses"></datalist>
-  <p class="hint">The address the addon container uses to reach the server, such as a Docker service name.</p>
-
-  <fieldset id="credentials">
-    <legend>Credentials</legend>
-    <div class="tabs" role="tablist">
-      <button type="button" class="tab active" data-tab="signin" role="tab" aria-selected="true" aria-controls="panel-signin">Sign in</button>
-      <button type="button" class="tab" data-tab="token" role="tab" aria-selected="false" aria-controls="panel-token">Paste a token</button>
-    </div>
-
-    <div class="panel" data-panel="signin" id="panel-signin" role="tabpanel">
-      {{if .Account}}<p class="ok" id="signed-in" role="status">Signed in as {{.Account}}. Save keeps this sign-in{{if eq .Kind "jellyfin"}} unless the URL changes{{end}}.</p>{{else}}<p class="ok" id="signed-in" role="status" hidden></p>{{end}}
-      <div data-kind-panel="plex" {{if ne .Kind "plex"}}hidden{{end}}>
-        <button type="button" id="plex-signin" class="secondary">Sign in with Plex</button>
-        <p class="hint">Opens app.plex.tv in a new tab. The addon container must be able to reach plex.tv.</p>
-      </div>
-      <div data-kind-panel="jellyfin" {{if ne .Kind "jellyfin"}}hidden{{end}}>
-        <label>Username <input type="text" id="jf-username" autocomplete="off"></label>
-        <label>Password <input type="password" id="jf-password" autocomplete="off"></label>
-        <button type="button" id="jf-signin" class="secondary">Sign in</button>
-        <p class="hint">The password is used once and never stored. The addon appears under this user's devices in Jellyfin, and this user's libraries are the ones it can see.</p>
-      </div>
-    </div>
-
-    <div class="panel" data-panel="token" id="panel-token" role="tabpanel" hidden>
-      <label><span id="token-label">Plex token</span> <input type="password" name="token" id="token" autocomplete="off" placeholder="{{if .Editing}}leave empty to keep the stored token{{end}}"></label>
-      <p class="hint" data-kind-panel="plex" {{if ne .Kind "plex"}}hidden{{end}}>In Plex Web, open any item, choose Get Info, then View XML. The address ends with <code>X-Plex-Token=</code> and the token.</p>
-      <p class="hint" data-kind-panel="jellyfin" {{if ne .Kind "jellyfin"}}hidden{{end}}>In Jellyfin, open Dashboard, then API Keys under Advanced, and add a key. An API key sees every library.</p>
-    </div>
-  </fieldset>
-
-  <div class="row">
-    <button type="button" id="test" class="secondary">Test connection</button>
-    <span id="test-result" class="hint" role="status"></span>
+<div class="form-container">
+  <div class="form-header">
+    <h1>{{.Title}}</h1>
+    <a class="button secondary" href="/setup">← Back to servers</a>
   </div>
 
-  <label>Library
-    <select name="library" id="library">
-      <option value="">All music libraries</option>
-      {{if .Library}}<option value="{{.Library}}" selected>{{or .LibraryName .Library}}</option>{{end}}
-    </select>
-  </label>
-  <p class="hint">Test the connection to list the server's music libraries.</p>
+  <form method="post" action="{{.Action}}" id="server-form" data-kind="{{.Kind}}" data-slug="{{.Slug}}" data-csrf="{{.CSRF}}" class="form-body">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <input type="hidden" name="token_ref" id="token_ref" value="">
 
-  <label class="inline"><input type="checkbox" name="enabled" value="1" {{if .Enabled}}checked{{end}}> Enabled</label>
+    <fieldset class="segmented-fieldset">
+      <legend>Server type</legend>
+      <div class="segmented-control" role="radiogroup">
+        {{range .Kinds}}
+        <label class="segmented-pill {{if eq .Kind $.Kind}}active{{end}} {{if $.Editing}}disabled{{end}}">
+          <input type="radio" name="kind" value="{{.Kind}}" {{if eq .Kind $.Kind}}checked{{end}} {{if $.Editing}}disabled{{end}} class="visually-hidden">
+          <span>{{.Name}}</span>
+        </label>
+        {{end}}
+      </div>
+      {{if .Editing}}<input type="hidden" name="kind" value="{{.Kind}}">{{end}}
+    </fieldset>
 
-  <div class="row">
-    <button>Save</button>
-    <a class="button secondary" href="/setup">Cancel</a>
-  </div>
-</form>
+    <div class="form-grid">
+      <div class="form-col">
+        <label>Name in BitChord
+          <span class="prefixed"><span class="prefix" id="kind-prefix">{{.KindName}} -</span><input type="text" name="label" value="{{.Label}}" maxlength="16" placeholder="Home"></span>
+        </label>
+
+        <label>Server URL
+          <input type="url" name="url" id="url" value="{{.URL}}" placeholder="http://plex:32400" list="server-addresses" required>
+        </label>
+        <datalist id="server-addresses"></datalist>
+        <p class="hint">The address the addon container uses to reach the server, such as a Docker service name.</p>
+
+        <fieldset id="credentials">
+          <legend>Credentials</legend>
+          <div class="tabs" role="tablist">
+            <button type="button" class="tab active" data-tab="signin" role="tab" aria-selected="true" aria-controls="panel-signin">Sign in</button>
+            <button type="button" class="tab" data-tab="token" id="token-tab-btn" role="tab" aria-selected="false" aria-controls="panel-token" {{if eq .Kind "navidrome"}}hidden{{end}}>Paste a token</button>
+          </div>
+
+          <div class="panel" data-panel="signin" id="panel-signin" role="tabpanel">
+            {{if .Account}}<p class="ok" id="signed-in" role="status">Signed in as {{.Account}}. Save keeps this sign-in{{if or (eq .Kind "jellyfin") (eq .Kind "navidrome")}} unless the URL changes{{end}}.</p>{{else}}<p class="ok" id="signed-in" role="status" hidden></p>{{end}}
+            <div data-kind-panel="plex" {{if ne .Kind "plex"}}hidden{{end}}>
+              <button type="button" id="plex-signin" class="secondary">Sign in with Plex</button>
+              <p class="hint" style="margin-top: 6px;">Opens app.plex.tv in a new tab. The addon container must be able to reach plex.tv.</p>
+            </div>
+            <div data-kind-panel="jellyfin" {{if ne .Kind "jellyfin"}}hidden{{end}}>
+              <label>Username <input type="text" id="jf-username" autocomplete="off"></label>
+              <label>Password <input type="password" id="jf-password" autocomplete="off"></label>
+              <button type="button" id="jf-signin" class="secondary" style="width: fit-content;">Sign in</button>
+              <p class="hint">The password is used once and never stored. The addon appears under this user's devices in Jellyfin, and this user's libraries are the ones it can see.</p>
+            </div>
+            <div data-kind-panel="navidrome" {{if ne .Kind "navidrome"}}hidden{{end}}>
+              <label>Username <input type="text" id="nd-username" autocomplete="off"></label>
+              <label>Password <input type="password" id="nd-password" autocomplete="off"></label>
+              <button type="button" id="nd-signin" class="secondary" style="width: fit-content;">Sign in</button>
+              <p class="hint">Uses the Subsonic API (compatible with Navidrome, Gonic, Lyrion/LMS, Airsonic, Funkwhale, Ampache, etc.). The username and password are checked once and stored to stream your library. <em>Tip: For best security, use a dedicated non-admin user account.</em></p>
+            </div>
+          </div>
+
+          <div class="panel" data-panel="token" id="panel-token" role="tabpanel" hidden>
+            <label><span id="token-label">Plex token</span> <input type="password" name="token" id="token" autocomplete="off" placeholder="{{if .Editing}}leave empty to keep the stored token{{end}}"></label>
+            <p class="hint" data-kind-panel="plex" {{if ne .Kind "plex"}}hidden{{end}}>In Plex Web, open any item, choose Get Info, then View XML. The address ends with <code>X-Plex-Token=</code> and the token.</p>
+            <p class="hint" data-kind-panel="jellyfin" {{if ne .Kind "jellyfin"}}hidden{{end}}>In Jellyfin, open Dashboard, then API Keys under Advanced, and add a key. An API key sees every library.</p>
+            <p class="hint" data-kind-panel="navidrome" {{if ne .Kind "navidrome"}}hidden{{end}}>Enter your username and password above and press Sign in. Subsonic servers use username and password authentication.</p>
+          </div>
+        </fieldset>
+
+        <div class="row" style="align-items: center; gap: 12px;">
+          <button type="button" id="test" class="secondary">Test connection</button>
+          <span id="test-result" class="hint" role="status"></span>
+        </div>
+      </div>
+
+      <div class="form-col">
+        <label>Library
+          <select name="library" id="library">
+            <option value="">All music libraries</option>
+            {{if .Library}}<option value="{{.Library}}" selected>{{or .LibraryName .Library}}</option>{{end}}
+          </select>
+        </label>
+        <p class="hint">Test the connection to list the server's music libraries.</p>
+
+        <label>Sync Interval
+          <select name="sync_interval" id="sync_interval">
+            <option value="" {{if or (eq .SyncInterval "") (eq .SyncInterval .DefaultInterval)}}selected{{end}}>Default ({{.DefaultInterval}})</option>
+            {{if ne .DefaultInterval "5m"}}<option value="5m" {{if eq .SyncInterval "5m"}}selected{{end}}>Every 5 minutes</option>{{end}}
+            {{if ne .DefaultInterval "15m"}}<option value="15m" {{if eq .SyncInterval "15m"}}selected{{end}}>Every 15 minutes</option>{{end}}
+            {{if ne .DefaultInterval "30m"}}<option value="30m" {{if eq .SyncInterval "30m"}}selected{{end}}>Every 30 minutes</option>{{end}}
+            {{if ne .DefaultInterval "1h"}}<option value="1h" {{if eq .SyncInterval "1h"}}selected{{end}}>Every 1 hour</option>{{end}}
+            {{if ne .DefaultInterval "6h"}}<option value="6h" {{if eq .SyncInterval "6h"}}selected{{end}}>Every 6 hours</option>{{end}}
+            {{if ne .DefaultInterval "24h"}}<option value="24h" {{if eq .SyncInterval "24h"}}selected{{end}}>Every 24 hours</option>{{end}}
+            <option value="manual" {{if or (eq .SyncInterval "manual") (eq .SyncInterval "0")}}selected{{end}}>Manual only (via button or webhook)</option>
+          </select>
+        </label>
+        <p class="hint">How often this server re-scans for new or changed tracks. Leave on Default to follow REFRESH_INTERVAL.</p>
+
+        <fieldset data-kind-panel="navidrome" {{if ne .Kind "navidrome"}}hidden{{end}}>
+          <legend class="visually-hidden">Scrobbling</legend>
+          <label class="inline"><input type="checkbox" name="scrobble_enabled" id="scrobble_enabled" value="1" {{if ne .ScrobblePercent -1}}checked{{end}}> Enable scrobbling to Navidrome</label>
+          <div id="scrobble-percent-group" {{if eq .ScrobblePercent -1}}style="display:none"{{end}} style="margin-top: 10px;">
+            <label>
+              <span>Scrobble threshold: <output id="scrobble-val">{{if gt .ScrobblePercent 0}}{{.ScrobblePercent}}{{else}}50{{end}}%</output> of track</span>
+              <input type="range" name="scrobble_percent" id="scrobble_percent" min="10" max="90" step="5" value="{{if gt .ScrobblePercent 0}}{{.ScrobblePercent}}{{else}}50{{end}}">
+            </label>
+            <p class="hint">How much of a track you must listen to before Navidrome registers a completed play. Default is 50%.</p>
+          </div>
+        </fieldset>
+
+        <label class="inline" style="margin-top: 4px;"><input type="checkbox" name="enabled" value="1" {{if .Enabled}}checked{{end}}> Enabled</label>
+      </div>
+    </div>
+
+    <div class="form-actions">
+      <button type="submit">{{if .Editing}}Save changes{{else}}Add server{{end}}</button>
+      <a class="button secondary" href="/setup">Cancel</a>
+    </div>
+  </form>
+</div>
 
 <script>
 (function () {
   var form = document.getElementById('server-form');
   var csrf = form.dataset.csrf;
-  var names = { plex: 'Plex', jellyfin: 'Jellyfin' };
-  var tokenLabels = { plex: 'Plex token', jellyfin: 'Jellyfin API key' };
-  var urlPlaceholders = { plex: 'http://plex:32400', jellyfin: 'http://jellyfin:8096' };
+  var names = { plex: 'Plex', jellyfin: 'Jellyfin', navidrome: 'Navidrome' };
+  var tokenLabels = { plex: 'Plex token', jellyfin: 'Jellyfin API key', navidrome: 'Navidrome user:password' };
+  var urlPlaceholders = { plex: 'http://plex:32400', jellyfin: 'http://jellyfin:8096', navidrome: 'http://navidrome:4533' };
   var result = document.getElementById('test-result');
 
   function kind() {
@@ -88,9 +140,29 @@
     document.getElementById('token-label').textContent = tokenLabels[k];
     document.getElementById('url').placeholder = urlPlaceholders[k];
     form.querySelectorAll('[data-kind-panel]').forEach(function (el) { el.hidden = el.dataset.kindPanel !== k; });
+    var tokenTab = document.getElementById('token-tab-btn');
+    if (tokenTab) {
+      tokenTab.hidden = (k === 'navidrome');
+      if (k === 'navidrome') {
+        var signinTab = form.querySelector('.tab[data-tab="signin"]');
+        if (signinTab) signinTab.click();
+      }
+    }
   }
-  form.querySelectorAll('input[name=kind]').forEach(function (radio) { radio.addEventListener('change', showKind); });
+  function updateSegmented() {
+    form.querySelectorAll('.segmented-pill').forEach(function (pill) {
+      var r = pill.querySelector('input[type=radio]');
+      pill.classList.toggle('active', !!(r && r.checked));
+    });
+  }
+  form.querySelectorAll('input[name=kind]').forEach(function (radio) {
+    radio.addEventListener('change', function () {
+      updateSegmented();
+      showKind();
+    });
+  });
   showKind();
+  updateSegmented();
 
   form.querySelectorAll('.tab').forEach(function (tab) {
     tab.addEventListener('click', function () {
@@ -203,6 +275,40 @@
         result.className = 'error';
       });
   });
+
+  document.getElementById('nd-signin').addEventListener('click', function () {
+    var password = document.getElementById('nd-password');
+    result.textContent = 'Signing in…';
+    result.className = 'hint';
+    post('/setup/navidrome/signin', { url: document.getElementById('url').value, username: document.getElementById('nd-username').value, password: password.value })
+      .then(function (answer) {
+        password.value = '';
+        if (!answer.ok) { result.textContent = answer.error; result.className = 'error'; return; }
+        document.getElementById('token_ref').value = answer.ref;
+        signedIn(answer.username);
+        document.getElementById('test').click();
+      })
+      .catch(function (error) {
+        password.value = '';
+        result.textContent = friendly(error, 'The addon did not answer.');
+        result.className = 'error';
+      });
+  });
+
+  var scrobbleEnabled = document.getElementById('scrobble_enabled');
+  var scrobbleSlider = document.getElementById('scrobble_percent');
+  var scrobbleVal = document.getElementById('scrobble-val');
+  var scrobbleGroup = document.getElementById('scrobble-percent-group');
+  if (scrobbleEnabled && scrobbleGroup) {
+    scrobbleEnabled.addEventListener('change', function () {
+      scrobbleGroup.style.display = this.checked ? '' : 'none';
+    });
+  }
+  if (scrobbleSlider && scrobbleVal) {
+    scrobbleSlider.addEventListener('input', function () {
+      scrobbleVal.textContent = this.value + '%';
+    });
+  }
 })();
 </script>
 {{end}}

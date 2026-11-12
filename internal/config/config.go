@@ -25,12 +25,14 @@ var logLevels = map[string]slog.Level{
 	"error": slog.LevelError,
 }
 
-// RemovedVariables were read by 0.4 and earlier. They are ignored now, and
-// Removed names the ones still set so main can say where they went.
+// RemovedVariables were read by 0.4 and earlier (or removed in favor of the
+// setup page). They are ignored now, and Removed names the ones still set so
+// main can say where they went.
 var RemovedVariables = []string{
 	"ADDON_SECRET", "PUBLIC_URL", "ADDON_NAME",
 	"PLEX_URL", "PLEX_TOKEN", "PLEX_SECTION",
 	"JELLYFIN_URL", "JELLYFIN_API_KEY", "JELLYFIN_LIBRARY",
+	"NAVIDROME_URL", "NAVIDROME_USERNAME", "NAVIDROME_PASSWORD",
 }
 
 func Load(getenv func(string) string) (Config, error) {

@@ -1,27 +1,34 @@
 package server
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
 	"fmt"
 	"strconv"
+	"time"
 
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/library"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
 )
 
 type manifestJSON struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Version     string   `json:"version"`
-	Description string   `json:"description"`
-	Resources   []string `json:"resources"`
-	Types       []string `json:"types"`
-	ContentType string   `json:"contentType"`
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Version      string   `json:"version"`
+	Description  string   `json:"description"`
+	Resources    []string `json:"resources"`
+	Types        []string `json:"types"`
+	ContentType  string   `json:"contentType"`
+	BitchordAuth bool     `json:"bitchordAuth"`
 }
 
 type searchJSON struct {
-	Tracks    []trackJSON `json:"tracks"`
-	Albums    []any       `json:"albums"`
-	Artists   []any       `json:"artists"`
-	Playlists []any       `json:"playlists"`
+	Tracks    []trackJSON  `json:"tracks"`
+	Albums    []albumJSON  `json:"albums"`
+	Artists   []artistJSON `json:"artists"`
+	Playlists []any        `json:"playlists"`
 }
 
 type trackJSON struct {
@@ -33,6 +40,22 @@ type trackJSON struct {
 	ArtworkURL   string `json:"artworkURL,omitempty"`
 	Format       string `json:"format"`
 	AudioQuality string `json:"audioQuality"`
+}
+
+type albumJSON struct {
+	ID         string `json:"id,omitempty"`
+	Title      string `json:"title"`
+	Artist     string `json:"artist"`
+	ArtworkURL string `json:"artworkURL,omitempty"`
+	TrackCount int    `json:"trackCount,omitempty"`
+	Year       int    `json:"year,omitempty"`
+}
+
+type artistJSON struct {
+	ID         string `json:"id,omitempty"`
+	Name       string `json:"name"`
+	ArtworkURL string `json:"artworkURL,omitempty"`
+	TrackCount int    `json:"trackCount,omitempty"`
 }
 
 type streamJSON struct {
@@ -51,7 +74,7 @@ func toTrackJSON(base string, track media.Track) trackJSON {
 	out := trackJSON{
 		ID:           track.ID,
 		Title:        track.Title,
-		Artist:       track.Artist,
+		Artist:       library.FormatArtists(track.Artist),
 		Album:        track.Album,
 		Duration:     track.DurationSec,
 		Format:       track.Codec,
@@ -66,11 +89,31 @@ func toTrackJSON(base string, track media.Track) trackJSON {
 	return out
 }
 
+func signMedia(secret, trackID string, exp int64) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(fmt.Sprintf("%s.%d", trackID, exp)))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func verifyMediaSig(secret, trackID, sigStr string, exp int64) bool {
+	if exp < time.Now().Unix()-60 {
+		return false
+	}
+	want := signMedia(secret, trackID, exp)
+	return subtle.ConstantTimeCompare([]byte(sigStr), []byte(want)) == 1
+}
+
 // Bitrate is sent in bits per second: BitChord reads any value above 3000 as
 // bits per second, and a hi-res FLAC in kbps would cross that line.
-func toStreamJSON(base string, track media.Track) streamJSON {
+func toStreamJSON(base, secret string, track media.Track) streamJSON {
+	fileURL := base + "/file/" + track.ID
+	if secret != "" {
+		exp := time.Now().Add(30 * time.Minute).Unix()
+		sig := signMedia(secret, track.ID, exp)
+		fileURL = fmt.Sprintf("%s?exp=%d&sig=%s", fileURL, exp, sig)
+	}
 	return streamJSON{
-		URL:        base + "/file/" + track.ID,
+		URL:        fileURL,
 		Format:     track.Codec,
 		Quality:    quality(track),
 		Codec:      track.Codec,

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -117,6 +118,32 @@ func (a *testApp) form(path string, values url.Values) *httptest.ResponseRecorde
 	return a.do(http.MethodPost, path, strings.NewReader(values.Encode()), "application/x-www-form-urlencoded")
 }
 
+func (a *testApp) multipartForm(path string, fieldName, filename string, content []byte) *httptest.ResponseRecorder {
+	return a.multipartFormWithFields(path, fieldName, filename, content, nil)
+}
+
+func (a *testApp) multipartFormWithFields(path string, fieldName, filename string, content []byte, extraFields map[string]string) *httptest.ResponseRecorder {
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	if a.cookie != "" {
+		_ = mw.WriteField("csrf", a.csrf())
+	}
+	for k, v := range extraFields {
+		_ = mw.WriteField(k, v)
+	}
+	fw, err := mw.CreateFormFile(fieldName, filename)
+	if err != nil {
+		a.t.Fatal(err)
+	}
+	if _, err := fw.Write(content); err != nil {
+		a.t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		a.t.Fatal(err)
+	}
+	return a.do(http.MethodPost, path, &buf, mw.FormDataContentType())
+}
+
 func (a *testApp) json(method, path string, body any) (*httptest.ResponseRecorder, map[string]any) {
 	a.t.Helper()
 	raw, _ := json.Marshal(body)
@@ -163,6 +190,11 @@ func TestWithoutAnAdminOnlyTheCreateFormExists(t *testing.T) {
 	first := a.get("/setup")
 	if first.Code != http.StatusOK || !strings.Contains(first.Body.String(), "Create a password") {
 		t.Fatalf("first visit: %d %s", first.Code, first.Body.String())
+	}
+	if first.Header().Get("X-Content-Type-Options") != "nosniff" ||
+		first.Header().Get("X-Frame-Options") != "DENY" ||
+		first.Header().Get("Referrer-Policy") != "same-origin" {
+		t.Fatalf("security headers missing: %+v", first.Header())
 	}
 	for _, path := range []string{"/setup/servers/new", "/setup/login", "/setup/password"} {
 		if rec := a.get(path); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/setup" {
@@ -361,6 +393,54 @@ func TestServerLifecycleThroughTheForms(t *testing.T) {
 	if rec := a.get("/setup"); !strings.Contains(rec.Body.String(), "5 tracks") || !strings.Contains(rec.Body.String(), "<dt>Library</dt><dd>Music</dd>") {
 		t.Fatalf("overview lacks the track count or the library name:\n%s", rec.Body.String())
 	}
+	if !strings.Contains(a.get("/setup").Body.String(), "Sync now") {
+		t.Fatal("overview lacks Sync now button")
+	}
+	if !strings.Contains(a.get("/setup").Body.String(), "Sync Webhook") {
+		t.Fatal("overview lacks Sync Webhook")
+	}
+	if !strings.Contains(a.get("/setup").Body.String(), "••••••••••/sync") {
+		t.Fatal("overview lacks masked sync webhook URL")
+	}
+	if !strings.Contains(a.get("/setup").Body.String(), "Default (1h)") {
+		t.Fatal("overview lacks default sync interval value")
+	}
+	if !strings.Contains(a.get("/setup").Body.String(), "Search tester") {
+		t.Fatal("overview lacks Search tester")
+	}
+	body := a.get("/setup").Body.String()
+	if !strings.Contains(body, "Webhook helper &amp; curl command") || !strings.Contains(body, `curl -X POST &quot;https://music.example.com/plex-1/`) {
+		t.Fatal("overview lacks webhook helper or curl command")
+	}
+	if !strings.Contains(body, `curl -X POST "https://music.example.com/plex-1/••••••••••/sync"`) {
+		t.Fatal("curl command did not mask secret")
+	}
+	if !strings.Contains(body, "Recent Activity") || !strings.Contains(body, "Synced 5 tracks") {
+		t.Fatalf("overview lacks recent activity: %s", body)
+	}
+	if actRec := a.get("/setup/activity"); actRec.Code != http.StatusOK || !strings.Contains(actRec.Body.String(), `"ok":true`) || !strings.Contains(actRec.Body.String(), "Synced 5 tracks") {
+		t.Fatalf("get activity endpoint failed: %d %s", actRec.Code, actRec.Body.String())
+	}
+	if searchRec := a.get("/setup/servers/plex-1/test-search?q=First+Song"); searchRec.Code != http.StatusOK || !strings.Contains(searchRec.Body.String(), `"ok":true`) {
+		t.Fatalf("test-search failed: %d %s", searchRec.Code, searchRec.Body.String())
+	}
+	if searchRec := a.get("/setup/servers/plex-1/search?q=First+Song"); searchRec.Code != http.StatusOK || !strings.Contains(searchRec.Body.String(), `"albums"`) {
+		t.Fatalf("search endpoint failed: %d %s", searchRec.Code, searchRec.Body.String())
+	}
+	// Searching an album name ("As You Found Me") returns both the album and its tracks.
+	albumSearchRec := a.get("/setup/servers/plex-1/test-search?q=As+You+Found+Me")
+	if albumSearchRec.Code != http.StatusOK || !strings.Contains(albumSearchRec.Body.String(), `"name":"As You Found Me"`) || !strings.Contains(albumSearchRec.Body.String(), `"title":"Closer"`) {
+		t.Fatalf("test-search album query failed: %d %s", albumSearchRec.Code, albumSearchRec.Body.String())
+	}
+	if searchRec := a.get("/setup/servers/plex-9/test-search?q=First+Song"); searchRec.Code != http.StatusNotFound {
+		t.Fatalf("test-search unknown server: %d", searchRec.Code)
+	}
+	if rec := a.form("/setup/servers/plex-1/refresh", url.Values{}); rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "synced") {
+		t.Fatalf("refresh: %d %s", rec.Code, rec.Header().Get("Location"))
+	}
+	if !strings.Contains(a.get("/setup").Body.String(), "Online") {
+		t.Fatal("overview lacks online status indicator")
+	}
 
 	edit := a.get("/setup/servers/plex-1/edit")
 	if edit.Code != http.StatusOK || !strings.Contains(edit.Body.String(), `value="Home"`) || !strings.Contains(edit.Body.String(), "leave empty to keep") || !strings.Contains(edit.Body.String(), `<option value="3" selected>Music</option>`) {
@@ -373,12 +453,12 @@ func TestServerLifecycleThroughTheForms(t *testing.T) {
 	if !strings.Contains(a.get("/setup").Body.String(), "<dt>Library</dt><dd>3</dd>") || !strings.Contains(a.get("/setup/servers/plex-1/edit").Body.String(), `<option value="3" selected>3</option>`) {
 		t.Fatal("a server saved without a library name does not fall back to its id")
 	}
-	rec := a.form("/setup/servers/plex-1", url.Values{"label": {"Parents"}, "url": {fake.URL}, "library": {""}, "enabled": {"1"}})
+	rec := a.form("/setup/servers/plex-1", url.Values{"label": {"Parents"}, "url": {fake.URL}, "library": {""}, "enabled": {"1"}, "sync_interval": {"30m"}})
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("edit: %d %s", rec.Code, rec.Body.String())
 	}
 	server, _ = a.store.Snapshot().Server(slug)
-	if server.Label != "Parents" || server.Token != fakes.PlexToken || server.Library != "" {
+	if server.Label != "Parents" || server.Token != fakes.PlexToken || server.Library != "" || server.SyncInterval != "30m" {
 		t.Fatalf("after edit = %+v", server)
 	}
 	if entry, _ := a.reg.Lookup(slug); entry.DisplayName() != "Plex - Parents" {
@@ -404,6 +484,12 @@ func TestServerLifecycleThroughTheForms(t *testing.T) {
 	if server, _ := a.store.Snapshot().Server(slug); server.Enabled {
 		t.Fatal("disabled flag not stored")
 	}
+	if strings.Contains(a.get("/setup").Body.String(), `action="/setup/servers/plex-1/refresh"`) {
+		t.Fatal("disabled server still has Sync now button")
+	}
+	if rec := a.form("/setup/servers/plex-1/refresh", url.Values{}); rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "Sync+failed") {
+		t.Fatalf("refresh disabled server: %d %s", rec.Code, rec.Header().Get("Location"))
+	}
 	second := a.addPlex(fakes.NewPlex(t), "")
 	if second != "plex-2" {
 		t.Fatalf("second slug = %q", second)
@@ -419,6 +505,9 @@ func TestServerLifecycleThroughTheForms(t *testing.T) {
 	}
 	if rec := a.form("/setup/servers/plex-9/enabled", url.Values{"enabled": {"false"}}); rec.Code != http.StatusNotFound {
 		t.Fatalf("disable unknown: %d", rec.Code)
+	}
+	if rec := a.form("/setup/servers/plex-9/refresh", url.Values{}); rec.Code != http.StatusNotFound {
+		t.Fatalf("refresh unknown: %d", rec.Code)
 	}
 	if rec := a.get("/setup/servers/plex-9/edit"); rec.Code != http.StatusNotFound {
 		t.Fatalf("edit unknown: %d", rec.Code)
@@ -592,6 +681,43 @@ func TestJellyfinSignInStoresTheTokenAndNeverThePassword(t *testing.T) {
 		t.Fatalf("logs carry a credential:\n%s", logs)
 	}
 	_ = plexURLs
+}
+
+func TestNavidromeSignInStoresTheTokenAndNeverThePassword(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	fake := fakes.NewNavidrome(t)
+	rec, answer := a.json(http.MethodPost, "/setup/navidrome/signin", navidromeSignInRequest{URL: fake.URL, Username: fakes.NavidromeUser, Password: fakes.NavidromePassword})
+	if rec.Code != http.StatusOK || answer["ok"] != true || answer["username"] != fakes.NavidromeUser || answer["ref"] == "" {
+		t.Fatalf("sign-in: %d %v", rec.Code, answer)
+	}
+	if strings.Contains(rec.Body.String(), fakes.NavidromePassword) {
+		t.Fatal("the password reached the browser")
+	}
+	ref := answer["ref"].(string)
+	if rec := a.form("/setup/servers", url.Values{"kind": {"navidrome"}, "label": {"NAS"}, "url": {fake.URL}, "token_ref": {ref}, "library": {"Music"}, "enabled": {"1"}, "scrobble_enabled": {"1"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
+	}
+	server, _ := a.store.Snapshot().Server("navidrome-1")
+	if server.Token != fakes.NavidromeToken || server.Auth != store.AuthNavidromeSignIn || server.Account != fakes.NavidromeUser || server.Library != fakes.NavidromeMusicFolder || server.ScrobblePercent != 50 {
+		t.Fatalf("stored = %+v", server)
+	}
+	if overviewBody := a.get("/setup").Body.String(); !strings.Contains(overviewBody, "<dt>Scrobbling</dt><dd>Enabled (at 50%)</dd>") {
+		t.Fatalf("overview lacks scrobble info: %s", overviewBody)
+	}
+	moved := a.form("/setup/servers/navidrome-1", url.Values{"label": {"NAS"}, "url": {fakes.NewNavidrome(t).URL}, "enabled": {"1"}})
+	if moved.Code != http.StatusBadRequest || !strings.Contains(moved.Body.String(), "sign in again") {
+		t.Fatalf("url change on a signed-in server: %d", moved.Code)
+	}
+	for i := range 5 {
+		rec, _ := a.json(http.MethodPost, "/setup/navidrome/signin", navidromeSignInRequest{URL: fake.URL, Username: fakes.NavidromeUser, Password: "nope"})
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: %d", i, rec.Code)
+		}
+	}
+	if rec, _ := a.json(http.MethodPost, "/setup/navidrome/signin", navidromeSignInRequest{URL: fake.URL, Username: fakes.NavidromeUser, Password: fakes.NavidromePassword}); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("after five failures: %d", rec.Code)
+	}
 }
 
 func TestConcurrentLoginAttemptsAreLimitedAtomically(t *testing.T) {
@@ -1201,5 +1327,321 @@ func TestTheFirstPasswordKeepsAPublicURLAlreadySet(t *testing.T) {
 	a.form("https://music.example.com/setup/password", url.Values{"password": {password}})
 	if got := a.store.Snapshot().PublicURL; got != "https://other.example.com" {
 		t.Fatalf("public url = %q", got)
+	}
+}
+
+func TestStaticAssetsCachingAndCompression(t *testing.T) {
+	a := newTestApp(t)
+
+	// Normal GET request
+	rec := a.get("/setup/static/style.css")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /setup/static/style.css = %d, want 200", rec.Code)
+	}
+	etag := rec.Header().Get("ETag")
+	if etag == "" {
+		t.Error("expected ETag header on static asset")
+	}
+	if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "max-age") {
+		t.Errorf("Cache-Control = %q, want max-age", cc)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/css") {
+		t.Errorf("Content-Type = %q, want text/css", ct)
+	}
+
+	// Conditional request with matching If-None-Match returns 304
+	a.headers.Set("If-None-Match", etag)
+	rec304 := a.get("/setup/static/style.css")
+	a.headers.Del("If-None-Match")
+	if rec304.Code != http.StatusNotModified {
+		t.Errorf("GET with matching If-None-Match = %d, want 304", rec304.Code)
+	}
+	if rec304.Body.Len() > 0 {
+		t.Errorf("304 response should have empty body, got %d bytes", rec304.Body.Len())
+	}
+
+	// Gzip compressed request
+	a.headers.Set("Accept-Encoding", "gzip")
+	recGz := a.get("/setup/static/style.css")
+	a.headers.Del("Accept-Encoding")
+	if recGz.Code != http.StatusOK {
+		t.Fatalf("GET with gzip = %d, want 200", recGz.Code)
+	}
+	if enc := recGz.Header().Get("Content-Encoding"); enc != "gzip" {
+		t.Errorf("Content-Encoding = %q, want gzip", enc)
+	}
+
+	// HEAD request
+	recHead := a.do(http.MethodHead, "/setup/static/style.css", nil, "")
+	if recHead.Code != http.StatusOK {
+		t.Errorf("HEAD /setup/static/style.css = %d, want 200", recHead.Code)
+	}
+	if recHead.Body.Len() > 0 {
+		t.Errorf("HEAD body should be empty, got %d bytes", recHead.Body.Len())
+	}
+	if recHead.Header().Get("Content-Length") == "" {
+		t.Error("HEAD expected Content-Length header")
+	}
+
+	// Non-existent static asset returns 404
+	rec404 := a.get("/setup/static/nonexistent.css")
+	if rec404.Code != http.StatusNotFound {
+		t.Errorf("GET non-existent asset = %d, want 404", rec404.Code)
+	}
+}
+
+func TestBackupExport(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+
+	if err := a.store.SetPublicURL("https://music.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	fake := fakes.NewPlex(t)
+	a.addPlex(fake, "Home Plex")
+
+	// Calling backup without password returns Bad Request
+	recBad := a.get("/setup/backup")
+	if recBad.Code != http.StatusBadRequest {
+		t.Fatalf("GET /setup/backup without password = %d, want 400", recBad.Code)
+	}
+
+	rec := a.get("/setup/backup?passphrase=backup-test-pass")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /setup/backup = %d, want 200", rec.Code)
+	}
+	cd := rec.Header().Get("Content-Disposition")
+	if !strings.Contains(cd, "attachment") || !strings.Contains(cd, "bitchord-addon-backup-encrypted") {
+		t.Errorf("Content-Disposition = %q, want attachment with filename", cd)
+	}
+
+	snap, err := store.DecryptSnapshot(rec.Body.Bytes(), "backup-test-pass")
+	if err != nil {
+		t.Fatalf("failed to decrypt backup payload: %v", err)
+	}
+	if snap.PublicURL != "https://music.example.com" {
+		t.Errorf("backup PublicURL = %q, want https://music.example.com", snap.PublicURL)
+	}
+	if len(snap.Servers) != 1 || snap.Servers[0].Label != "Home Plex" {
+		t.Errorf("backup Servers = %+v, want 1 server", snap.Servers)
+	}
+	if snap.Admin != nil {
+		t.Error("backup must omit Admin credentials to prevent hash leakage")
+	}
+}
+
+func TestBackupRestore(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+
+	adminBefore := a.store.Snapshot().Admin
+	if adminBefore == nil {
+		t.Fatal("expected admin credentials after signIn")
+	}
+
+	backupData := store.Snapshot{
+		PublicURL: "https://restored-music.example.com",
+		Admin: &store.Admin{
+			PasswordHash: "forged_hash",
+			SessionKey:   "forged_session",
+		},
+		Servers: []store.Server{
+			{
+				Slug:    "plex-1",
+				Kind:    store.Plex,
+				Label:   "Restored Plex",
+				URL:     "http://localhost:32400",
+				Token:   "tok",
+				Library: "1",
+				Auth:    store.AuthToken,
+				Enabled: true,
+			},
+		},
+	}
+	raw, _ := json.Marshal(backupData)
+
+	rec := a.multipartForm("/setup/restore", "backup_file", "backup.json", raw)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("POST /setup/restore = %d, want 303: %s", rec.Code, rec.Body.String())
+	}
+	loc := rec.Header().Get("Location")
+	if !strings.Contains(loc, "notice=") {
+		t.Errorf("redirect location = %q, want notice param", loc)
+	}
+
+	snap := a.store.Snapshot()
+	if snap.PublicURL != "https://restored-music.example.com" {
+		t.Errorf("PublicURL after restore = %q, want https://restored-music.example.com", snap.PublicURL)
+	}
+	if len(snap.Servers) != 1 || snap.Servers[0].Label != "Restored Plex" {
+		t.Errorf("Servers after restore = %+v, want 1 server", snap.Servers)
+	}
+	if snap.Admin == nil || snap.Admin.PasswordHash != adminBefore.PasswordHash {
+		t.Error("Admin credentials must be preserved after restore")
+	}
+
+	// Restore invalid JSON returns notice and leaves store intact
+	badRec := a.multipartForm("/setup/restore", "backup_file", "backup.json", []byte("invalid json"))
+	if badRec.Code != http.StatusSeeOther {
+		t.Fatalf("POST invalid json = %d, want 303", badRec.Code)
+	}
+	if snap := a.store.Snapshot(); snap.PublicURL != "https://restored-music.example.com" {
+		t.Errorf("PublicURL mutated after bad restore: %q", snap.PublicURL)
+	}
+}
+
+func TestEncryptedBackupExportAndRestore(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+
+	if err := a.store.SetPublicURL("https://secure.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	fake := fakes.NewPlex(t)
+	a.addPlex(fake, "Secure Plex")
+
+	// 1. Export with passphrase via POST /setup/backup
+	rec := a.form("/setup/backup", url.Values{"passphrase": {"my-backup-password-123"}})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /setup/backup = %d, want 200", rec.Code)
+	}
+	cd := rec.Header().Get("Content-Disposition")
+	if !strings.Contains(cd, "bitchord-addon-backup-encrypted") {
+		t.Errorf("Content-Disposition = %q, want encrypted filename", cd)
+	}
+	encBody := rec.Body.Bytes()
+	if !store.IsEncryptedBackup(encBody) {
+		t.Fatal("exported body is not marked as encrypted backup")
+	}
+	if strings.Contains(string(encBody), "Secure Plex") {
+		t.Fatal("plaintext server label found in encrypted backup body")
+	}
+
+	// 2. Attempt restore without passphrase -> fails with notice
+	recFailNoPass := a.multipartForm("/setup/restore", "backup_file", "backup.json", encBody)
+	if recFailNoPass.Code != http.StatusSeeOther {
+		t.Fatalf("POST restore without pass = %d, want 303", recFailNoPass.Code)
+	}
+	locNoPass := recFailNoPass.Header().Get("Location")
+	if !strings.Contains(locNoPass, "password") {
+		t.Errorf("expected password required notice, got location: %s", locNoPass)
+	}
+
+	// 3. Attempt restore with wrong passphrase -> fails with notice
+	recFailWrongPass := a.multipartFormWithFields("/setup/restore", "backup_file", "backup.json", encBody, map[string]string{
+		"passphrase": "wrong-password",
+	})
+	if recFailWrongPass.Code != http.StatusSeeOther {
+		t.Fatalf("POST restore with wrong pass = %d, want 303", recFailWrongPass.Code)
+	}
+	locWrong := recFailWrongPass.Header().Get("Location")
+	if !strings.Contains(locWrong, "incorrect") {
+		t.Errorf("expected incorrect password notice, got location: %s", locWrong)
+	}
+
+	// Change existing state so we can verify restoration
+	if err := a.store.SetPublicURL("https://mutated.example.com"); err != nil {
+		t.Fatal(err)
+	}
+
+	// 4. Restore with correct passphrase -> succeeds
+	recSuccess := a.multipartFormWithFields("/setup/restore", "backup_file", "backup.json", encBody, map[string]string{
+		"passphrase": "my-backup-password-123",
+	})
+	if recSuccess.Code != http.StatusSeeOther {
+		t.Fatalf("POST restore with correct pass = %d, want 303", recSuccess.Code)
+	}
+	locSuccess := recSuccess.Header().Get("Location")
+	if !strings.Contains(locSuccess, "restored") {
+		t.Errorf("expected success notice, got location: %s", locSuccess)
+	}
+
+	snap := a.store.Snapshot()
+	if snap.PublicURL != "https://secure.example.com" {
+		t.Errorf("restored PublicURL = %q, want https://secure.example.com", snap.PublicURL)
+	}
+	if len(snap.Servers) != 1 || snap.Servers[0].Label != "Secure Plex" {
+		t.Errorf("restored Servers = %+v, want 1 server", snap.Servers)
+	}
+}
+
+func TestRefreshAllServers(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+
+	// Sync all with no servers returns notice
+	recEmpty := a.form("/setup/sync-all", url.Values{})
+	if recEmpty.Code != http.StatusSeeOther || !strings.Contains(recEmpty.Header().Get("Location"), "No+enabled+servers") {
+		t.Fatalf("sync-all empty: %d, location: %s", recEmpty.Code, recEmpty.Header().Get("Location"))
+	}
+
+	fake1 := fakes.NewPlex(t)
+	a.addPlex(fake1, "Server 1")
+	fake2 := fakes.NewPlex(t)
+	a.addPlex(fake2, "Server 2")
+
+	rec := a.form("/setup/sync-all", url.Values{})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("POST /setup/sync-all = %d, want 303", rec.Code)
+	}
+	loc := rec.Header().Get("Location")
+	if !strings.Contains(loc, "synced+successfully") {
+		t.Errorf("expected success notice in location %q", loc)
+	}
+}
+
+func TestRecentActivityEndpoint(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+
+	a.reg.RecordActivity("plex-1", "Plex Server", "sync", "Synced 100 tracks")
+	a.reg.RecordActivity("sub-1", "Navidrome", "now_playing", "Now playing: Track A")
+
+	rec := a.get("/setup/activity")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /setup/activity = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Synced 100 tracks") || !strings.Contains(body, "Now playing: Track A") {
+		t.Fatalf("expected both activities in /setup/activity response: %s", body)
+	}
+
+	recSync := a.get("/setup/activity?filter=sync")
+	if recSync.Code != http.StatusOK {
+		t.Fatalf("GET /setup/activity?filter=sync = %d", recSync.Code)
+	}
+	bodySync := recSync.Body.String()
+	if !strings.Contains(bodySync, "Synced 100 tracks") || strings.Contains(bodySync, "Now playing: Track A") {
+		t.Fatalf("expected only sync in filtered response: %s", bodySync)
+	}
+
+	recPlayback := a.get("/setup/activity?filter=playback")
+	if recPlayback.Code != http.StatusOK {
+		t.Fatalf("GET /setup/activity?filter=playback = %d", recPlayback.Code)
+	}
+	bodyPlayback := recPlayback.Body.String()
+	if strings.Contains(bodyPlayback, "Synced 100 tracks") || !strings.Contains(bodyPlayback, "Now playing: Track A") {
+		t.Fatalf("expected only playback in filtered response: %s", bodyPlayback)
+	}
+
+	// POST /setup/activity/clear with filter=sync
+	clearSyncRec := a.form("/setup/activity/clear", url.Values{"filter": {"sync"}})
+	if clearSyncRec.Code != http.StatusSeeOther {
+		t.Fatalf("POST /setup/activity/clear = %d, want 303", clearSyncRec.Code)
+	}
+	if len(a.reg.RecentSyncActivity()) != 0 {
+		t.Fatalf("expected sync activities cleared, got %d", len(a.reg.RecentSyncActivity()))
+	}
+	if len(a.reg.RecentPlaybackActivity()) != 1 {
+		t.Fatalf("expected playback activities untouched, got %d", len(a.reg.RecentPlaybackActivity()))
+	}
+
+	// POST /setup/activity/clear with filter=all
+	clearAllRec := a.form("/setup/activity/clear", url.Values{"filter": {"all"}})
+	if clearAllRec.Code != http.StatusSeeOther {
+		t.Fatalf("POST /setup/activity/clear = %d, want 303", clearAllRec.Code)
+	}
+	if len(a.reg.RecentActivity()) != 0 {
+		t.Fatalf("expected all activities cleared, got %d", len(a.reg.RecentActivity()))
 	}
 }

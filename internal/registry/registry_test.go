@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -516,4 +517,127 @@ func TestDisplayNameIsSafeUnderConcurrentRelabel(t *testing.T) {
 	}
 	close(stop)
 	<-done
+}
+
+func TestRegistryRefresh(t *testing.T) {
+	fake := fakes.NewPlex(t)
+	r := newRegistry(t, snapshot(plexServer(fake, "plex-1")))
+	waitHealthy(t, r)
+
+	ctx := context.Background()
+	if err := r.Refresh(ctx, "plex-1"); err != nil {
+		t.Fatalf("refresh running server: %v", err)
+	}
+
+	if err := r.Refresh(ctx, "nonexistent"); err == nil {
+		t.Fatal("expected error refreshing nonexistent server, got nil")
+	}
+}
+
+func TestRegistrySearch(t *testing.T) {
+	fake := fakes.NewPlex(t)
+	r := newRegistry(t, snapshot(plexServer(fake, "plex-1")))
+	waitHealthy(t, r)
+
+	res, ok := r.Search("plex-1", "first song", 10)
+	if !ok {
+		t.Fatal("search returned not ok for running server")
+	}
+	if len(res.Tokens) == 0 {
+		t.Errorf("expected tokens, got none")
+	}
+
+	if _, ok := r.Search("nonexistent", "song", 10); ok {
+		t.Fatal("search returned ok for nonexistent server")
+	}
+}
+
+func TestRegistryServerInterval(t *testing.T) {
+	r := newRegistry(t, snapshot())
+	s := store.Server{}
+	if got := r.serverInterval(s); got != time.Hour {
+		t.Errorf("default interval = %v, want 1h", got)
+	}
+	s.SyncInterval = "30m"
+	if got := r.serverInterval(s); got != 30*time.Minute {
+		t.Errorf("custom interval = %v, want 30m", got)
+	}
+	s.SyncInterval = "manual"
+	if got := r.serverInterval(s); got != 0 {
+		t.Errorf("manual interval = %v, want 0", got)
+	}
+	s.SyncInterval = "0"
+	if got := r.serverInterval(s); got != 0 {
+		t.Errorf("zero interval = %v, want 0", got)
+	}
+}
+
+func TestRegistryActivity(t *testing.T) {
+	r := newRegistry(t, snapshot())
+	r.RecordActivity("server-1", "My Server", "sync", "Synced 100 tracks")
+	r.RecordActivity("server-1", "My Server", "now_playing", "Now playing: Song 1")
+	recent := r.RecentActivity()
+	if len(recent) != 2 {
+		t.Fatalf("expected 2 activities, got %d", len(recent))
+	}
+	if recent[0].Kind != "now_playing" || recent[1].Kind != "sync" {
+		t.Errorf("unexpected order of activities: %+v", recent)
+	}
+
+	// Verify sync activities are capped at 10
+	for i := 0; i < 15; i++ {
+		r.RecordActivity("server-1", "My Server", "sync", fmt.Sprintf("sync %d", i))
+	}
+	if syncs := r.RecentSyncActivity(); len(syncs) != 10 {
+		t.Fatalf("expected 10 sync activities, got %d", len(syncs))
+	}
+
+	// Verify now_playing / playback activities are capped at 30
+	for i := 0; i < 35; i++ {
+		r.RecordActivity("server-1", "My Server", "now_playing", fmt.Sprintf("now playing %d", i))
+	}
+	if playbacks := r.RecentPlaybackActivity(); len(playbacks) != 30 {
+		t.Fatalf("expected 30 playback activities, got %d", len(playbacks))
+	}
+
+	// Verify separate tracking: now_playing activities do not evict sync activities
+	if syncs := r.RecentSyncActivity(); len(syncs) != 10 {
+		t.Fatalf("expected sync activities preserved at 10 after playback flood, got %d", len(syncs))
+	}
+
+	// Verify merged RecentActivity contains both (10 sync + 30 playback = 40)
+	all := r.RecentActivity()
+	if len(all) != 40 {
+		t.Fatalf("expected 40 total merged activities, got %d", len(all))
+	}
+
+	// Verify reverse chronological order
+	for i := 0; i < len(all)-1; i++ {
+		if all[i].Time.Before(all[i+1].Time) {
+			t.Errorf("activities out of chronological order at index %d", i)
+		}
+	}
+
+	// Verify ClearActivity for specific categories and all
+	r.ClearActivity("sync")
+	if len(r.RecentSyncActivity()) != 0 {
+		t.Fatalf("expected sync activities cleared, got %d", len(r.RecentSyncActivity()))
+	}
+	if len(r.RecentPlaybackActivity()) != 30 {
+		t.Fatalf("expected playback activities untouched, got %d", len(r.RecentPlaybackActivity()))
+	}
+
+	r.RecordActivity("server-1", "My Server", "sync", "new sync")
+	r.ClearActivity("playback")
+	if len(r.RecentPlaybackActivity()) != 0 {
+		t.Fatalf("expected playback activities cleared, got %d", len(r.RecentPlaybackActivity()))
+	}
+	if len(r.RecentSyncActivity()) != 1 {
+		t.Fatalf("expected sync activity preserved, got %d", len(r.RecentSyncActivity()))
+	}
+
+	r.ClearActivity("all")
+	if len(r.RecentActivity()) != 0 {
+		t.Fatalf("expected all activities cleared, got %d", len(r.RecentActivity()))
+	}
 }
