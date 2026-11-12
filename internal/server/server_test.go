@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/bitchordauth"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/fakes"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/jellyfin"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/library"
@@ -74,6 +76,7 @@ func newServerWith(log *slog.Logger, entries ...*registry.Entry) *server {
 	return newServer(Options{
 		Site:     func() Site { return Site{PublicURL: testPublic, Secret: testSecret} },
 		Registry: stub, Version: "1.2.3", Log: log,
+		Auth: bitchordauth.New(bitchordauth.Options{Mode: "disabled"}),
 	})
 }
 
@@ -159,6 +162,7 @@ func TestManifest(t *testing.T) {
 		"id": "app.bitchord-selfhosted-addon.plex-1", "name": "Plex - Home", "version": "1.2.3",
 		"description": "Your Plex music library", "contentType": "music",
 		"resources": []any{"search", "stream"}, "types": []any{"track"},
+		"bitchordAuth": true,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("manifest = %v", got)
@@ -371,6 +375,7 @@ func TestRedact(t *testing.T) {
 		"/health": "/health", "/": "/", "/abc": "/***", "/abc/search": "/***/search", "/abc/file/12": "/***/file/12",
 		"//x/y": "/***", "/./x/y": "/***", "/x/../y": "/***", "/x/": "/***",
 		"/plex-1/abc/search": "/plex-1/***/search", "/jellyfin-2/abc/file/12": "/jellyfin-2/***/file/12",
+		"/navidrome-1/abc/search": "/navidrome-1/***/search", "/navidrome-1/abc": "/navidrome-1/***",
 		"/plex-1/abc": "/plex-1/***", "/plex-1": "/***", "/setup/login": "/***/login",
 	}
 	for in, want := range cases {
@@ -423,5 +428,89 @@ func TestRequestLinesAreDebugOnly(t *testing.T) {
 	handler.ServeHTTP(httptest.NewRecorder(), req)
 	if strings.Contains(logs.String(), `"msg":"request"`) {
 		t.Fatalf("request line logged at info:\n%s", logs.String())
+	}
+}
+
+func TestSyncWebhook(t *testing.T) {
+	h := newHarness(t)
+	rec := h.do(http.MethodPost, "/plex-1/"+testSecret+"/sync", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sync webhook POST status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	var res map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil || res["ok"] != true {
+		t.Fatalf("sync response = %v, err: %v", res, err)
+	}
+	if res["server"] != "plex-1" || res["tracks"] != float64(5) {
+		t.Fatalf("unexpected sync data: %v", res)
+	}
+
+	rec = h.do(http.MethodGet, "/plex-1/"+testSecret+"/sync", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sync webhook GET status = %d", rec.Code)
+	}
+
+	if rec := h.do(http.MethodPost, "/plex-1/wrong-secret/sync", nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("wrong secret = %d", rec.Code)
+	}
+
+	if rec := h.do(http.MethodPost, "/unknown/"+testSecret+"/sync", nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown server = %d", rec.Code)
+	}
+}
+
+func TestBitChordAddonAuthEnforce(t *testing.T) {
+	fake := fakes.NewPlex(t)
+	logs := &syncBuffer{}
+	log := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	entry := newEntry(t, "plex-1", store.Plex, "", plex.New(plex.Options{BaseURL: fake.URL, Token: fakes.PlexToken}), log, true)
+	stub := &stubRegistry{entries: map[string]*registry.Entry{"plex-1": entry}}
+	srv := newServer(Options{
+		Site:     func() Site { return Site{PublicURL: "https://addon.example.com", Secret: testSecret} },
+		Registry: stub, Version: "1.2.3", Log: log,
+		Auth: bitchordauth.New(bitchordauth.Options{Mode: "enforce", Hosts: []string{"addon.example.com"}}),
+	})
+	handler := srv.handler()
+
+	// Manifest is public without auth headers
+	manifestReq := httptest.NewRequest(http.MethodGet, "/plex-1/"+testSecret+"/manifest.json", nil)
+	manifestRec := httptest.NewRecorder()
+	handler.ServeHTTP(manifestRec, manifestReq)
+	if manifestRec.Code != http.StatusOK {
+		t.Fatalf("manifest status = %d, want 200", manifestRec.Code)
+	}
+	var manifestBody map[string]any
+	if err := json.Unmarshal(manifestRec.Body.Bytes(), &manifestBody); err != nil || manifestBody["bitchordAuth"] != true {
+		t.Fatalf("manifest body invalid: %v", manifestRec.Body.String())
+	}
+
+	// Unauthenticated search is rejected with 401
+	searchReq := httptest.NewRequest(http.MethodGet, "/plex-1/"+testSecret+"/search?q=test", nil)
+	searchRec := httptest.NewRecorder()
+	handler.ServeHTTP(searchRec, searchReq)
+	if searchRec.Code != http.StatusUnauthorized {
+		t.Fatalf("search status = %d, want 401", searchRec.Code)
+	}
+	authHeader := searchRec.Header().Get("WWW-Authenticate")
+	if !strings.Contains(authHeader, `BitChord realm="bitchord-addons"`) || !strings.Contains(authHeader, `error="missing"`) {
+		t.Fatalf("unexpected WWW-Authenticate: %q", authHeader)
+	}
+
+	// Unsigned media request in enforce mode is rejected with 403
+	fileReq := httptest.NewRequest(http.MethodGet, "/plex-1/"+testSecret+"/file/101", nil)
+	fileRec := httptest.NewRecorder()
+	handler.ServeHTTP(fileRec, fileReq)
+	if fileRec.Code != http.StatusForbidden {
+		t.Fatalf("unsigned file status = %d, want 403", fileRec.Code)
+	}
+
+	// Signed media request succeeds
+	exp := time.Now().Add(10 * time.Minute).Unix()
+	sig := signMedia(testSecret, "101", exp)
+	fileReqSigned := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/plex-1/%s/file/101?exp=%d&sig=%s", testSecret, exp, sig), nil)
+	fileRecSigned := httptest.NewRecorder()
+	handler.ServeHTTP(fileRecSigned, fileReqSigned)
+	if fileRecSigned.Code != http.StatusOK {
+		t.Fatalf("signed file status = %d, want 200", fileRecSigned.Code)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -43,7 +44,7 @@ func TestOpenCreatesTheFileWithASecretAndClientID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Errorf("mode = %o", info.Mode().Perm())
 	}
 	again, err := Open(dir)
@@ -213,20 +214,42 @@ func TestRegenerateSecretAndSetAdmin(t *testing.T) {
 	}
 }
 
+func TestNavidromeServerIsAccepted(t *testing.T) {
+	s := open(t)
+	server := Server{Kind: Navidrome, Label: "Home", URL: "http://navidrome:4533", Token: "lyle:secret", Auth: AuthNavidromeSignIn, Enabled: true}
+	added, err := s.AddServer(server)
+	if err != nil {
+		t.Fatalf("Navidrome server rejected: %v", err)
+	}
+	if added.Slug != "navidrome-1" {
+		t.Fatalf("slug = %q, want navidrome-1", added.Slug)
+	}
+	// A pasted token is fine too, since Navidrome sign-in also stores a token.
+	pasted := server
+	pasted.Auth = AuthToken
+	if _, err := s.AddServer(pasted); err != nil {
+		t.Fatalf("Navidrome server with pasted token rejected: %v", err)
+	}
+}
+
 func TestValidation(t *testing.T) {
 	s := open(t)
 	cases := map[string]struct {
 		change func(*Server)
 		want   string
 	}{
-		"bad url":          {func(v *Server) { v.URL = "plex:32400" }, "http or https"},
-		"no token":         {func(v *Server) { v.Token = "" }, "token or API key is required"},
-		"unknown kind":     {func(v *Server) { v.Kind = "emby" }, `unknown server kind "emby"`},
-		"unknown auth":     {func(v *Server) { v.Auth = "magic" }, `unknown auth "magic"`},
-		"auth kind clash":  {func(v *Server) { v.Auth = AuthJellyfinSignIn }, "only a Jellyfin server"},
-		"label too long":   {func(v *Server) { v.Label = strings.Repeat("é", 17) }, "at most 16 characters"},
-		"label at the cap": {func(v *Server) { v.Label = strings.Repeat("é", 16) }, ""},
-		"empty label":      {func(v *Server) { v.Label = "" }, ""},
+		"bad url":              {func(v *Server) { v.URL = "plex:32400" }, "http or https"},
+		"no token":             {func(v *Server) { v.Token = "" }, "token or API key is required"},
+		"unknown kind":         {func(v *Server) { v.Kind = "emby" }, `unknown server kind "emby"`},
+		"unknown auth":         {func(v *Server) { v.Auth = "magic" }, `unknown auth "magic"`},
+		"auth kind clash":      {func(v *Server) { v.Auth = AuthJellyfinSignIn }, "only a Jellyfin server"},
+		"navidrome auth clash": {func(v *Server) { v.Auth = AuthNavidromeSignIn }, "only a Navidrome server"},
+		"label too long":       {func(v *Server) { v.Label = strings.Repeat("é", 17) }, "at most 16 characters"},
+		"label at the cap":     {func(v *Server) { v.Label = strings.Repeat("é", 16) }, ""},
+		"empty label":          {func(v *Server) { v.Label = "" }, ""},
+		"valid interval":       {func(v *Server) { v.SyncInterval = "1h" }, ""},
+		"manual interval":      {func(v *Server) { v.SyncInterval = "manual" }, ""},
+		"bad interval":         {func(v *Server) { v.SyncInterval = "soon" }, "sync interval must be a positive duration"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -300,5 +323,96 @@ func TestSnapshotDoesNotWaitForAnUpdate(t *testing.T) {
 	}
 	if snap := s.Snapshot(); snap.PublicURL != "https://music.example.com" || snap.Servers[0].Label != "Home" {
 		t.Fatalf("after the update = %+v", snap)
+	}
+}
+
+func TestValidateServerURLRejectsCloudMetadata(t *testing.T) {
+	blocked := []string{
+		"http://169.254.169.254",
+		"http://169.254.169.254/latest/meta-data",
+		"http://169.254.1.1:8080",
+		"http://[fe80::1]:32400",
+		"http://instance-data",
+		"http://metadata.google.internal",
+	}
+	for _, raw := range blocked {
+		if err := ValidateServerURL(raw); err == nil || !strings.Contains(err.Error(), "cloud instance metadata") {
+			t.Errorf("ValidateServerURL(%q) = %v, want cloud instance metadata error", raw, err)
+		}
+	}
+	allowed := []string{
+		"http://192.168.1.50:32400",
+		"http://10.0.0.5:8096",
+		"http://127.0.0.1:4533",
+		"http://localhost:4533",
+		"https://plex.example.com",
+	}
+	for _, raw := range allowed {
+		if err := ValidateServerURL(raw); err != nil {
+			t.Errorf("ValidateServerURL(%q) unexpected error: %v", raw, err)
+		}
+	}
+}
+
+func TestStoreRestore(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetAdmin(&Admin{PasswordHash: "hashed", SessionKey: "sesskey"}); err != nil {
+		t.Fatal(err)
+	}
+	origSecret := s.Snapshot().Secret
+	origClientID := s.Snapshot().ClientID
+
+	restoreSnap := Snapshot{
+		PublicURL: "https://restored.example.com",
+		Admin: &Admin{
+			PasswordHash: "rogue_hash",
+			SessionKey:   "rogue_session",
+		},
+		Servers: []Server{
+			{
+				Slug:    "plex-1",
+				Kind:    Plex,
+				Label:   "Restored Plex",
+				URL:     "http://localhost:32400",
+				Token:   "tok",
+				Library: "1",
+				Auth:    AuthToken,
+				Enabled: true,
+			},
+		},
+	}
+	if err := s.Restore(restoreSnap); err != nil {
+		t.Fatalf("Restore failed: %v", err)
+	}
+
+	snap := s.Snapshot()
+	if snap.PublicURL != "https://restored.example.com" {
+		t.Errorf("PublicURL = %q, want https://restored.example.com", snap.PublicURL)
+	}
+	if len(snap.Servers) != 1 || snap.Servers[0].Label != "Restored Plex" {
+		t.Errorf("Servers = %+v, want 1 server", snap.Servers)
+	}
+	if snap.Admin == nil || snap.Admin.PasswordHash != "hashed" {
+		t.Errorf("Admin was not preserved or rogue admin was accepted: %+v", snap.Admin)
+	}
+	if snap.Secret != origSecret {
+		t.Errorf("Secret = %q, want %q", snap.Secret, origSecret)
+	}
+	if snap.ClientID != origClientID {
+		t.Errorf("ClientID = %q, want %q", snap.ClientID, origClientID)
+	}
+
+	badSnap := Snapshot{
+		Servers: []Server{{Slug: "invalid"}},
+	}
+	if err := s.Restore(badSnap); err == nil {
+		t.Error("Restore invalid snapshot expected error, got nil")
+	}
+	if snap := s.Snapshot(); snap.PublicURL != "https://restored.example.com" {
+		t.Errorf("Store state changed after failed restore: %+v", snap)
 	}
 }

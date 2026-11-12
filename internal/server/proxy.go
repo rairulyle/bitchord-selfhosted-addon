@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
@@ -19,6 +20,26 @@ func (s *server) file(w http.ResponseWriter, r *http.Request, src source) {
 	if status != http.StatusOK {
 		w.WriteHeader(status)
 		return
+	}
+	if s.auth != nil && s.auth.Mode() != "disabled" && s.Site().Secret != "" {
+		expStr := r.URL.Query().Get("exp")
+		sigStr := r.URL.Query().Get("sig")
+		exp, err := strconv.ParseInt(expStr, 10, 64)
+		if err != nil || !verifyMediaSig(s.Site().Secret, track.ID, sigStr, exp) {
+			if s.auth.Mode() == "log" {
+				src.Log.Warn("bitchord-auth: media signature invalid or missing in log mode", "id", track.ID)
+			} else {
+				http.Error(w, "Forbidden", http.StatusForbidden)
+				return
+			}
+		}
+	} else if expStr := r.URL.Query().Get("exp"); expStr != "" {
+		sigStr := r.URL.Query().Get("sig")
+		exp, err := strconv.ParseInt(expStr, 10, 64)
+		if err != nil || !verifyMediaSig(s.Site().Secret, track.ID, sigStr, exp) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
 	}
 	header := http.Header{}
 	for _, name := range forwardedRequestHeaders {
@@ -49,7 +70,68 @@ func (s *server) art(w http.ResponseWriter, r *http.Request, src source) {
 		w.WriteHeader(status)
 		return
 	}
-	pipe(w, r, src, func() (*http.Response, error) { return src.Backend.OpenArt(r.Context(), track) }, "public, max-age=86400")
+
+	cacheKey := src.Slug + ":" + track.ArtRef
+	if s.artCache != nil {
+		if item, ok := s.artCache.Get(cacheKey); ok {
+			serveCachedArt(w, r, item)
+			return
+		}
+	}
+
+	upstream, err := src.Backend.OpenArt(r.Context(), track)
+	switch {
+	case errors.Is(err, media.ErrNotFound):
+		w.WriteHeader(http.StatusNotFound)
+		return
+	case err != nil:
+		logFailure(r, src, err)
+		w.WriteHeader(http.StatusBadGateway)
+		return
+	}
+	defer upstream.Body.Close()
+
+	if upstream.StatusCode != http.StatusOK {
+		src.Log.Error("upstream answered the artwork request badly", "status", upstream.StatusCode)
+		w.WriteHeader(http.StatusBadGateway)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(upstream.Body, maxCachedItemSize+1))
+	if err != nil {
+		src.Log.Error("failed reading upstream artwork", "error", err.Error())
+		w.WriteHeader(http.StatusBadGateway)
+		return
+	}
+
+	contentType := upstream.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "image/jpeg"
+	}
+	etag := upstream.Header.Get("ETag")
+	lastModified := upstream.Header.Get("Last-Modified")
+
+	if s.artCache != nil && int64(len(body)) <= maxCachedItemSize {
+		item := s.artCache.Put(cacheKey, body, contentType, etag, lastModified)
+		if item != nil {
+			serveCachedArt(w, r, item)
+			return
+		}
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	if etag != "" {
+		w.Header().Set("ETag", etag)
+	}
+	if lastModified != "" {
+		w.Header().Set("Last-Modified", lastModified)
+	}
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.WriteHeader(http.StatusOK)
+	if r.Method != http.MethodHead {
+		w.Write(body)
+	}
 }
 
 type sent struct {

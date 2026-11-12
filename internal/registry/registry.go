@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/plex"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/store"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/subsonic"
 )
 
 type Options struct {
@@ -58,21 +60,42 @@ func DisplayName(kind, label string) string {
 	return kind + " - " + label
 }
 
+type Activity struct {
+	Seq     uint64
+	Time    time.Time
+	Slug    string
+	Server  string
+	Kind    string
+	Message string
+}
+
 type Status struct {
 	Ready     bool
 	Tracks    int
+	Artists   int
+	Albums    int
+	Duration  time.Duration
 	Refreshed time.Time
 	LastError string
 }
 
+const (
+	maxSyncActivities     = 10
+	maxPlaybackActivities = 30
+)
+
 type Registry struct {
-	opts      Options
-	clientID  string
-	mu        sync.RWMutex
-	entries   map[string]*Entry
-	pending   map[string]*handover
-	handovers sync.WaitGroup
-	changed   chan struct{}
+	opts               Options
+	clientID           string
+	mu                 sync.RWMutex
+	entries            map[string]*Entry
+	pending            map[string]*handover
+	handovers          sync.WaitGroup
+	changed            chan struct{}
+	activityMu         sync.RWMutex
+	activitySeq        uint64
+	syncActivities     []Activity
+	playbackActivities []Activity
 }
 
 // handover is a restarted server's new entry, waiting for its first refresh
@@ -132,6 +155,9 @@ func NewBackend(server store.Server, clientID, version string, log *slog.Logger)
 			deviceID = clientID
 		}
 		return jellyfin.New(jellyfin.Options{BaseURL: server.URL, APIKey: server.Token, DeviceID: deviceID, Version: version}), nil
+	case store.Navidrome:
+		username, password := subsonic.SplitCredential(server.Token)
+		return subsonic.New(subsonic.Options{BaseURL: server.URL, Username: username, Password: password, ScrobblePercent: server.ScrobblePercent, Log: log}), nil
 	default:
 		return nil, fmt.Errorf("unknown server kind %q", server.Kind)
 	}
@@ -144,13 +170,149 @@ func (r *Registry) Lookup(slug string) (*Entry, bool) {
 	return entry, ok
 }
 
+func isSyncActivity(kind string) bool {
+	return kind == "sync" || strings.HasPrefix(kind, "sync")
+}
+
+func (r *Registry) RecordActivity(slug, server, kind, message string) {
+	r.activityMu.Lock()
+	defer r.activityMu.Unlock()
+	r.activitySeq++
+	act := Activity{
+		Seq:     r.activitySeq,
+		Time:    time.Now(),
+		Slug:    slug,
+		Server:  server,
+		Kind:    kind,
+		Message: message,
+	}
+	if isSyncActivity(kind) {
+		r.syncActivities = append([]Activity{act}, r.syncActivities...)
+		if len(r.syncActivities) > maxSyncActivities {
+			r.syncActivities = r.syncActivities[:maxSyncActivities]
+		}
+	} else {
+		r.playbackActivities = append([]Activity{act}, r.playbackActivities...)
+		if len(r.playbackActivities) > maxPlaybackActivities {
+			r.playbackActivities = r.playbackActivities[:maxPlaybackActivities]
+		}
+	}
+}
+
+func (r *Registry) RecentActivity() []Activity {
+	r.activityMu.RLock()
+	defer r.activityMu.RUnlock()
+
+	res := make([]Activity, 0, len(r.syncActivities)+len(r.playbackActivities))
+	i, j := 0, 0
+	for i < len(r.syncActivities) && j < len(r.playbackActivities) {
+		sAct := r.syncActivities[i]
+		pAct := r.playbackActivities[j]
+		if sAct.Time.After(pAct.Time) || (sAct.Time.Equal(pAct.Time) && sAct.Seq > pAct.Seq) {
+			res = append(res, sAct)
+			i++
+		} else {
+			res = append(res, pAct)
+			j++
+		}
+	}
+	for i < len(r.syncActivities) {
+		res = append(res, r.syncActivities[i])
+		i++
+	}
+	for j < len(r.playbackActivities) {
+		res = append(res, r.playbackActivities[j])
+		j++
+	}
+	return res
+}
+
+func (r *Registry) RecentSyncActivity() []Activity {
+	r.activityMu.RLock()
+	defer r.activityMu.RUnlock()
+	res := make([]Activity, len(r.syncActivities))
+	copy(res, r.syncActivities)
+	return res
+}
+
+func (r *Registry) RecentPlaybackActivity() []Activity {
+	r.activityMu.RLock()
+	defer r.activityMu.RUnlock()
+	res := make([]Activity, len(r.playbackActivities))
+	copy(res, r.playbackActivities)
+	return res
+}
+
+func (r *Registry) ClearActivity(filter string) {
+	r.activityMu.Lock()
+	defer r.activityMu.Unlock()
+	switch filter {
+	case "sync":
+		r.syncActivities = nil
+	case "playback":
+		r.playbackActivities = nil
+	default:
+		r.syncActivities = nil
+		r.playbackActivities = nil
+	}
+}
+
 func (r *Registry) Status(slug string) (Status, bool) {
 	entry, ok := r.Lookup(slug)
 	if !ok {
 		return Status{}, false
 	}
 	stats := entry.Library.Stats()
-	return Status{Ready: entry.Library.Ready(), Tracks: stats.Tracks, Refreshed: stats.Refreshed, LastError: stats.LastError}, true
+	return Status{
+		Ready:     entry.Library.Ready(),
+		Tracks:    stats.Tracks,
+		Artists:   stats.Artists,
+		Albums:    stats.Albums,
+		Duration:  stats.Duration,
+		Refreshed: stats.Refreshed,
+		LastError: stats.LastError,
+	}, true
+}
+
+// Refresh triggers an immediate library sync for the server named by slug.
+func (r *Registry) Refresh(ctx context.Context, slug string) error {
+	entry, ok := r.Lookup(slug)
+	if !ok {
+		return fmt.Errorf("server %q is not running", slug)
+	}
+	return entry.Library.Refresh(ctx)
+}
+
+type SearchResult struct {
+	Strict   int                   `json:"strict"`
+	Fallback int                   `json:"fallback"`
+	Tokens   []string              `json:"tokens"`
+	Tracks   []media.Track         `json:"tracks"`
+	Albums   []library.AlbumMatch  `json:"albums"`
+	Artists  []library.ArtistMatch `json:"artists"`
+}
+
+// Search queries a server's in-memory index directly for testing and diagnostics.
+func (r *Registry) Search(slug, query string, limit int) (SearchResult, bool) {
+	entry, ok := r.Lookup(slug)
+	if !ok {
+		return SearchResult{}, false
+	}
+	tokens := library.Tokens(query)
+	res := entry.Library.Find(query, limit)
+	return SearchResult{
+		Strict:   res.Strict,
+		Fallback: res.Fallback,
+		Tokens:   tokens,
+		Tracks:   res.Tracks,
+		Albums:   res.Albums,
+		Artists:  res.Artists,
+	}, true
+}
+
+// DefaultInterval reports the registry's configured default sync interval.
+func (r *Registry) DefaultInterval() time.Duration {
+	return r.opts.Interval
 }
 
 // Healthy is true once every running server has loaded an index, and true
@@ -260,7 +422,19 @@ func (e *Entry) setLabel(label string) {
 }
 
 func sameConnection(a, b store.Server) bool {
-	return a.Kind == b.Kind && a.URL == b.URL && a.Token == b.Token && a.DeviceID == b.DeviceID && a.Library == b.Library
+	return a.Kind == b.Kind && a.URL == b.URL && a.Token == b.Token && a.DeviceID == b.DeviceID && a.Library == b.Library && a.SyncInterval == b.SyncInterval
+}
+
+func (r *Registry) serverInterval(server store.Server) time.Duration {
+	if server.SyncInterval == "manual" || server.SyncInterval == "0" {
+		return 0
+	}
+	if server.SyncInterval != "" {
+		if d, err := time.ParseDuration(server.SyncInterval); err == nil && d > 0 {
+			return d
+		}
+	}
+	return r.opts.Interval
 }
 
 func (r *Registry) start(server store.Server) (*Entry, error) {
@@ -269,12 +443,22 @@ func (r *Registry) start(server store.Server) (*Entry, error) {
 	if err != nil {
 		return nil, err
 	}
+	slug := server.Slug
+	name := DisplayName(backend.Name(), server.Label)
+	if sub, ok := backend.(interface{ SetOnActivity(func(string, string)) }); ok {
+		sub.SetOnActivity(func(kind, message string) {
+			r.RecordActivity(slug, name, kind, message)
+		})
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	entry := &Entry{
 		Slug: server.Slug, Kind: server.Kind, Label: server.Label, Backend: backend,
-		Library: library.NewLibrary(backend, server.Library, r.opts.Interval, log),
+		Library: library.NewLibrary(backend, server.Library, r.serverInterval(server), log),
 		Log:     log, config: server, cancel: cancel, done: make(chan struct{}),
 	}
+	entry.Library.SetOnActivity(func(kind, message string) {
+		r.RecordActivity(slug, name, kind, message)
+	})
 	go func() {
 		defer close(entry.done)
 		entry.Library.Run(ctx)

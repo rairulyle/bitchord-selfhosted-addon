@@ -4,6 +4,7 @@ package setup
 
 import (
 	"context"
+	"crypto/sha256"
 	"embed"
 	"fmt"
 	"html/template"
@@ -20,11 +21,23 @@ import (
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/store"
 )
 
-//go:embed templates/*.html
-var templateFiles embed.FS
+var (
+	//go:embed templates/*.html
+	templateFiles embed.FS
 
-//go:embed static/style.css
-var staticFiles embed.FS
+	//go:embed static/style.css
+	staticFiles embed.FS
+
+	styleHash string
+)
+
+func init() {
+	raw, err := staticFiles.ReadFile("static/style.css")
+	if err == nil {
+		h := sha256.Sum256(raw)
+		styleHash = fmt.Sprintf("%x", h[:8])
+	}
+}
 
 const (
 	cookieName      = "addon_setup"
@@ -38,12 +51,18 @@ const (
 type Runtime interface {
 	Apply(snapshot store.Snapshot)
 	Status(slug string) (registry.Status, bool)
+	Refresh(ctx context.Context, slug string) error
+	DefaultInterval() time.Duration
+	RecentActivity() []registry.Activity
+	ClearActivity(filter string)
+	Search(slug, query string, limit int) (registry.SearchResult, bool)
 	Probe(ctx context.Context, server store.Server) (registry.Probe, error)
 	PlexPIN(ctx context.Context) (registry.PIN, error)
 	PlexClaim(ctx context.Context, id int) (registry.Account, bool, error)
 	PlexServers(ctx context.Context, token string) ([]registry.PlexServer, error)
 	JellyfinSignIn(ctx context.Context, serverURL, username, password string) (registry.Account, error)
 	JellyfinSignOut(ctx context.Context, serverURL, deviceID, token string) error
+	NavidromeSignIn(ctx context.Context, serverURL, username, password string) (registry.Account, error)
 	TokenInUse(slug, token string) (bool, <-chan struct{})
 }
 
@@ -139,6 +158,18 @@ func parsePages() map[string]*template.Template {
 		page := strings.TrimSuffix(strings.TrimPrefix(name, "templates/"), ".html")
 		pages[page] = template.Must(template.New("layout.html").Funcs(template.FuncMap{
 			"since": since,
+			"formatVersion": func(v string) string {
+				if v == "" || v == "dev" {
+					return "dev"
+				}
+				if strings.HasPrefix(v, "v") {
+					return v
+				}
+				return "v" + v
+			},
+			"styleHash": func() string {
+				return styleHash
+			},
 		}).ParseFS(templateFiles, "templates/layout.html", name))
 	}
 	return pages
@@ -154,6 +185,9 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /setup/logout", a.logout)
 	mux.HandleFunc("POST /setup/public-url", a.setPublicURL)
 	mux.HandleFunc("POST /setup/secret/regenerate", a.regenerateSecret)
+	mux.HandleFunc("GET /setup/backup", a.exportBackup)
+	mux.HandleFunc("POST /setup/backup", a.exportBackup)
+	mux.HandleFunc("POST /setup/restore", a.restoreBackup)
 	mux.HandleFunc("GET /setup/servers/new", a.newServerForm)
 	mux.HandleFunc("POST /setup/servers", a.createServer)
 	mux.HandleFunc("POST /setup/servers/test", a.testServer)
@@ -161,13 +195,20 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /setup/servers/{slug}", a.updateServer)
 	mux.HandleFunc("POST /setup/servers/{slug}/delete", a.deleteServer)
 	mux.HandleFunc("POST /setup/servers/{slug}/enabled", a.setServerEnabled)
+	mux.HandleFunc("POST /setup/servers/{slug}/refresh", a.refreshServer)
+	mux.HandleFunc("POST /setup/sync-all", a.refreshAllServers)
+	mux.HandleFunc("GET /setup/servers/{slug}/test-search", a.testSearch)
+	mux.HandleFunc("GET /setup/servers/{slug}/search", a.testSearch)
+	mux.HandleFunc("GET /setup/activity", a.recentActivity)
+	mux.HandleFunc("POST /setup/activity/clear", a.clearActivity)
 	mux.HandleFunc("POST /setup/plex/pin", a.plexPIN)
 	mux.HandleFunc("GET /setup/plex/pin/{id}", a.plexPoll)
 	mux.HandleFunc("POST /setup/jellyfin/signin", a.jellyfinSignIn)
+	mux.HandleFunc("POST /setup/navidrome/signin", a.navidromeSignIn)
 	mux.HandleFunc("/setup/", func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "not found", http.StatusNotFound) })
 
 	outer := http.NewServeMux()
-	outer.Handle("GET /setup/static/", http.StripPrefix("/setup/", http.FileServerFS(staticFiles)))
+	outer.Handle("/setup/static/", http.StripPrefix("/setup/static", newStaticServer(staticFiles)))
 	outer.Handle("/setup", a.gate(mux))
 	outer.Handle("/setup/", a.gate(mux))
 	return outer
@@ -185,6 +226,9 @@ type session struct {
 // session must carry the CSRF token and come from this origin.
 func (a *app) gate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "same-origin")
 		r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
 		if r.Method == http.MethodPost && crossSite(r) {
 			http.Error(w, "cross-site request refused", http.StatusForbidden)
@@ -242,7 +286,11 @@ func crossSite(r *http.Request) bool {
 func (a *app) csrfOK(r *http.Request, key []byte, cookie string) bool {
 	token := r.Header.Get("X-CSRF-Token")
 	if token == "" {
-		if err := r.ParseForm(); err != nil {
+		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+			if err := r.ParseMultipartForm(1 << 20); err != nil {
+				return false
+			}
+		} else if err := r.ParseForm(); err != nil {
 			return false
 		}
 		token = r.PostFormValue("csrf")

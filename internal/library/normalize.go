@@ -21,6 +21,21 @@ func Tokens(s string) []string {
 	return strings.Fields(b.String())
 }
 
+// CleanString returns s lowercased, accent-folded and with punctuation replaced by single spaces.
+func CleanString(s string) string {
+	var b strings.Builder
+	for _, r := range norm.NFKD.String(s) {
+		switch {
+		case unicode.Is(unicode.M, r), r == '\'', r == '’', r == '‘', r == '`':
+		case unicode.IsLetter(r), unicode.IsDigit(r):
+			b.WriteRune(unicode.ToLower(r))
+		default:
+			b.WriteByte(' ')
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
+}
+
 // bitchordWords spells s the way BitChord's TrackMatcher spells a title before
 // it searches: split on spaces and dots, then everything outside a-z0-9 deleted
 // from each word. "Time‐Bomb" is "timebomb" there, "Naïve" is "nave".

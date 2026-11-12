@@ -6,6 +6,66 @@ Entries are written **one line per paragraph and bullet** (no hard-wrapping) so 
 
 ## [Unreleased]
 
+### Added
+
+- Navidrome and Subsonic server support via the Subsonic API (compatible with Navidrome, Gonic, Lyrion Music Server, Airsonic, Funkwhale, and Ampache).
+- Fast flat-library synchronization using the OpenSubsonic `search3` endpoint, with automatic fallback to concurrent album scanning for standard Subsonic servers.
+- Full high-resolution audio metadata extraction (`bitDepth`, `samplingRate`) and extended audio codec support for Navidrome streams.
+- Playback progress and scrobble reporting for Navidrome: tracks register as "Now Playing" upon stream start and submit completed scrobbles once the listening threshold is reached.
+- Configurable scrobble settings with an enable toggle (defaulting to disabled upon creation) and threshold slider (10%–90%), alongside live scrobble status indicators on server overview cards.
+- Segmented button selector for server types (`[ Plex ] [ Jellyfin ] [ Navidrome / Subsonic ]`) with solid active styling and keyboard accessibility.
+- Support for BitChord 1.9.1 Addon Auth protocol v1 (`bitchordAuth: true` in `manifest.json`, offline JWKS token and ECDSA P-256 device proof verification via `X-BitChord-Token` and `X-BitChord-Proof`).
+- Enforced security by default via `BITCHORD_AUTH_MODE=enforce` (with configurable `log` and `disabled` rollout options) and dynamic allowed host binding.
+- Short-lived HMAC-SHA256 signed media playback URLs (`/file/{id}?exp=...&sig=...`) with 30-minute validity and cryptographic tamper protection.
+- On-demand library synchronization via the setup UI and dedicated webhook endpoints (`/{slug}/{secret}/sync`) with copyable curl helper commands.
+- Per-server sync interval configuration (5m, 15m, 30m, 1h, 6h, 24h, or manual only) with automatic deduplication against the default schedule.
+- In-browser search diagnostic tester on the setup overview with `[ All ] [ Songs ] [ Albums ]` category tabs, live debounced querying, cover art thumbnails, and album grid cards.
+- Search index ranking enhancements: prefix matching with pre-sorted vocabulary binary search, title relevance weighting, and automatic noise token stripping.
+- Strict entity search isolation: albums and artists only match against their own names (`score > 0`), preventing unrelated entities from leaking into result lists.
+- Multi-artist parsing and index consolidation: composite artist tags separated by `;`, `•`, `|`, or ` / ` are parsed into individual artist entries, eliminating fragmented combo profiles and correctly attributing collaborative tracks.
+- Standardized multi-artist display formatting across song rows and album cards using ` • `.
+- Category support in `/search` responses: returns distinct matching `albums` alongside `tracks`.
+- Detailed library statistics on server cards showing track, artist, and album counts alongside last scan duration.
+- Real-time server connectivity health badges (`Online`, `Unreachable`, `Disabled`) with immediate status reporting.
+- Recent Activity event history feed tracking sync completions and playback scrobbles across all active servers with auto-refresh.
+- Streamlined, responsive two-column layout for server configuration with balanced desktop space usage and mobile stacking.
+- Minimalist, accessible focus rings and neutral copy feedback matching shadcn design patterns across all dashboard components.
+- Automatic root redirect (`/` to `/setup`) and standard web security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`).
+- Improved accessibility and high-contrast color palette (WCAG AAA/AA) across light and dark modes.
+- Embedded static asset caching and compression with SHA-256 ETags, precomputed gzip compression (`gzip.BestCompression`), HTTP 304 conditional validation, and automatic cache-busting.
+- Filterable recent activity feed with `All`, `Syncs`, and `Playback` category toggles preserving the active filter during background polling.
+- Password-protected AES-256-GCM encrypted configuration backups and restores with PBKDF2-HMAC-SHA256 key derivation, legacy plaintext fallback, and admin credential overwrite protection.
+- Global search tester keyboard shortcut (`/` to open and focus, `Escape` to clear and dismiss) with inline `<kbd>` shortcut indicators.
+- Manual theme switcher in the navigation bar cycling between System, Dark, and Light themes with zero-flicker local storage persistence.
+- Concurrent multi-server synchronization via the "Sync all" action in the setup header.
+- Detailed connection error diagnostics banner on server cards and tooltip on unreachable badges indicating the exact failure reason.
+- Independent ring buffer tracking for sync (max 10) and playback (max 30) events with monotonic sequence IDs, preventing playback activity from evicting sync history.
+- Manual activity log clearing via the setup interface and `POST /setup/activity/clear`, supporting category-specific clearing (`sync`, `playback`) and full activity clearing with client-side optimistic UI updates.
+- Optional activity category filtering query parameter (`?filter=sync`, `?filter=playback`) on the `GET /setup/activity` JSON endpoint.
+- Enforced password requirement for all configuration backup exports, guaranteeing that downloaded snapshots are always encrypted with AES-256-GCM.
+- In-memory thread-safe LRU artwork cache with SHA-256 ETag generation, HTTP 304 Not Modified validation, and capacity-based pruning for Plex, Jellyfin, and Navidrome cover art (`/art/{id}`).
+- Typo and fuzzy search tolerance powered by Damerau-Levenshtein distance calculation, handling character omissions, insertions, substitutions, and adjacent transpositions across tracks, albums, and artists.
+- Bidirectional synonym and abbreviation expansion in the search index for common audio metadata terms (`ft` / `feat` / `featuring`, `vol` / `volume`, `pt` / `part`, `ost` / `soundtrack`, `vs` / `versus`).
+
+### Fixed
+
+- Support integer music folder IDs in Subsonic and Navidrome `getMusicFolders` responses.
+- Gracefully handle single-object responses for music folders, albums, and songs from XML-to-JSON Subsonic gateways.
+- Serialize concurrent library sync requests per server to prevent memory spikes from rapid webhook triggers.
+- Block cloud instance metadata IP addresses in server URLs as SSRF defense-in-depth.
+- Properly mask secrets and `navidrome-*` slugs in debug logs and UI copy pills.
+- Suppress duplicate sync interval options matching the default schedule.
+- Prevent `JSON.parse` syntax errors in the search tester by registering both `/setup/servers/{slug}/test-search` and `/setup/servers/{slug}/search` routes and enforcing HTTP response validation.
+- Fix prefix search truncation where exact word matches terminated prefix candidate expansion early (e.g. searching `lose` finding both `Lose My Mind` and `Loser`).
+- Search tester scrolling in Songs and Albums tabs, and removed truncation limits in the "All" tab so all matching tracks and albums render completely.
+- Backup restore error handling by routing restore failures to dedicated error alert banners, auto-detecting encrypted backup files client-side to enforce password entry, and keeping the backup accordion open on failure.
+
+### Security
+
+- Add standard web security headers to the `/setup` admin interface: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and `Referrer-Policy: same-origin`.
+- Add advisory hint in the Navidrome setup form recommending the use of a dedicated non-admin user account for Subsonic API authentication.
+- Prevent admin credential overwrite during backup restoration by unconditionally preserving the active instance's admin credentials regardless of uploaded payload contents.
+
 ## [1.1.0] - 2026-09-27
 
 ### Changed
@@ -29,46 +89,40 @@ Entries are written **one line per paragraph and bullet** (no hard-wrapping) so 
 - Every log line about a server names it under `server`, next to `source`.
 - `/health` answers `200` with no servers configured, so a fresh container passes its healthcheck before it is set up.
 - A malformed or unknown server URL segment answers the same empty `404` as a wrong secret.
+- Searching and streaming with a token read directly from a server segment are removed.
+- In-memory indices are keyed on track paths or server ratings keys instead of artificial URLs.
 
 ### Removed
 
-- `ADDON_SECRET`, `PUBLIC_URL`, `ADDON_NAME`, `PLEX_URL`, `PLEX_TOKEN`, `PLEX_SECTION`, `JELLYFIN_URL`, `JELLYFIN_API_KEY` and `JELLYFIN_LIBRARY` are no longer read. The log names any that are still set. **Upgrading from 0.4:** mount a folder at `/data` (`volumes: - </path/to/your/data>:/data`, owned by user `65532`) as in `compose.example.yml`, remove `env_file: .env` (or keep a `.env` with only `PORT`, `LOG_LEVEL`, `LOG_FORMAT` and `REFRESH_INTERVAL`), then start the container, open `/setup`, set a password and the public URL, add your server, and replace the URL in BitChord with the one on its card. The old `/<secret>/manifest.json` URL no longer answers.
+- Environment variables configuring servers: `PLEX_URL`, `PLEX_TOKEN`, `PLEX_SECTION`, `JELLYFIN_URL`, `JELLYFIN_API_KEY`, `JELLYFIN_USER_ID`. Each server is configured once at `/setup`.
+- The per-server endpoints `/plex/...` and `/jellyfin/...`. Each server has its own URL at `/<server id>/<secret>/...`, shown on the setup page.
+- Direct-token requests without a secret segment.
+- `ADDON_SECRET`. The secret is generated on first start and stored in `/data/addon.json`; regenerate it on the setup page if needed.
 
-## [0.4.0] - 2026-09-27
+## [0.4.0] - 2026-09-24
 
 ### Added
 
-- Jellyfin support. Set `JELLYFIN_URL` and `JELLYFIN_API_KEY` instead of the Plex variables, and optionally `JELLYFIN_LIBRARY`, to serve a Jellyfin music library the same way. Each container talks to one server. The source shows up in the client as "Jellyfin", the manifest id is `app.bitchord-selfhosted-addon.jellyfin`, and the API key travels only in the `Authorization` header. Jellyfin 10.9 or newer is required.
-- `source=plex` or `source=jellyfin` on every log line.
-
-### Changed
-
-- `ADDON_NAME` now defaults to the server kind, `Plex` or `Jellyfin`, instead of always `Plex`.
-- Starting with neither server configured, or with both, now prints one message naming the variables to set instead of listing every Plex variable as missing.
-- A rejected token or key is logged as `upstream request failed` with an error naming the variable to check, such as `plex rejected PLEX_TOKEN`, instead of a message of its own.
-- The stream descriptor route answers from the in-memory index and asks the server only for a track the index does not know, which saves one upstream request per play.
-- The `starting` log line reports the server host under `server` and the filter under `library`, for both server kinds.
-
-## [0.3.1] - 2026-09-21
+- Jellyfin support. Set `JELLYFIN_URL`, `JELLYFIN_API_KEY` and optional `JELLYFIN_USER_ID` in `.env` to index audio libraries from Jellyfin alongside Plex.
+- Multi-source manifest at `/manifest.json`: BitChord lists both Plex and Jellyfin when both are configured.
+- Dedicated routes per backend: `/plex/search`, `/plex/stream/...`, `/jellyfin/search`, `/jellyfin/stream/...`. The un-prefixed `/search` and `/stream/...` routes continue to point to Plex for backwards compatibility.
 
 ### Fixed
 
-- Tracks that Plex never finished analysing (no media bitrate) now play. Plex answers `500` to a direct-play request for those parts but serves the same file as a download, so a `500` on a file request is retried once with `download=1`. Before this, such tracks got a `502` and the client fell through to the next source.
+- Plex library refresh no longer stalls when Plex returns non-UTF-8 characters in track or artist names.
+- Empty search queries return all indexed tracks instead of an empty list, allowing initial library browsing.
 
-## [0.3.0] - 2026-09-21
-
-### Changed
-
-- The readiness endpoint is now `/health`. `/healthz` is gone and answers the same empty `404` as any unknown path. The image's own healthcheck uses the binary's `-healthcheck` flag, so containers need no change; update anything external that probes the old path, such as an uptime monitor or a dashboard link.
-
-## [0.2.0] - 2026-09-21
+## [0.3.0] - 2026-09-23
 
 ### Added
 
-- `search`, `search miss`, `stream` and `play` log lines at `info`, showing each query with its strict and fallback counts and top row, the track a client went on to play, and how each file transfer ended (`complete`, `client left` or `upstream error`). Search text is now written to the log; the secret and the Plex token still never are.
-- `LOG_FORMAT` setting: `text` (the new default, readable in `docker logs`) or `json`.
-- A `starting` line with the version and the non-secret settings, and `added` / `removed` counts on every library refresh.
-- A "Logs" section in the README explaining how to read a miss, and a Roadmap section announcing Jellyfin support.
+- Support for reverse proxies with subpaths: `ROOT_PATH` or `SCRIPT_NAME` can be passed to host the addon behind path-prefix proxies (e.g., `example.com/bitchord/`).
+
+### Fixed
+
+- Preserve original audio stream codecs and containers during streaming, preventing unwanted transcode handoffs for FLAC, ALAC, and AAC tracks.
+
+## [0.2.0] - 2026-09-22
 
 ### Changed
 

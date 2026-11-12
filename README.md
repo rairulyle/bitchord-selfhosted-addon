@@ -1,7 +1,7 @@
 <h1 align="center">bitchord-selfhosted-addon</h1>
 
 <p align="center">
-  Play your own Plex and Jellyfin music libraries inside BitChord.
+  Play your own Plex, Jellyfin and Navidrome music libraries inside BitChord.
 </p>
 
 <div align="center">
@@ -10,29 +10,31 @@
 
 ## 🎵 What it is
 
-A small self-hosted server that adds your Plex and Jellyfin music libraries
-to BitChord (Android) as sources. BitChord searches your library through the
-addon and streams your original files.
+A small self-hosted server that adds your Plex, Jellyfin and Navidrome music
+libraries to BitChord (Android) as sources. BitChord searches your library
+through the addon and streams your original files.
 
 BitChord prefers addons you add over its built-in sources, so when a song is
 in your library, your own copy plays.
 
 > [!IMPORTANT]
-> **You need your own Plex or Jellyfin server with your own music on it.**
+> **You need your own Plex, Jellyfin or Navidrome server with your own music on it.**
 > This addon adds no music and is not a streaming service. If you don't run
-> Plex or Jellyfin, it has nothing to play, so you don't need it.
+> Plex, Jellyfin or Navidrome, it has nothing to play, so you don't need it.
 
 ## ✨ Features
 
 - **Set up in the browser.** Open `/setup`, choose a password, add your
   servers, and copy each one's link into BitChord.
-- **Any number of servers.** Each Plex or Jellyfin server gets its own link
-  and shows up in BitChord as its own source.
+- **Any number of servers.** Each Plex, Jellyfin or Navidrome server gets its
+  own link and shows up in BitChord as its own source.
 - **Fast search.** The addon keeps a list of your tracks in memory, about
   30–50 MB for 100,000 tracks.
 - **Original quality.** Your files are streamed as they are, with seeking.
-- **Private.** Your Plex and Jellyfin tokens never leave the addon, and every
-  link contains a secret.
+- **Search tester.** Test query tokenization and match results directly in the browser to diagnose how tracks are resolved.
+- **Sync webhooks.** Trigger instant library scans via webhooks from Plex, Jellyfin, Navidrome, or automation scripts.
+- **Private.** Your Plex, Jellyfin and Subsonic tokens never leave the addon,
+  and every link contains a secret.
 
 <p align="center">
   <img src="docs/screenshots/setup.png" alt="The setup page listing three servers" width="49%">
@@ -42,7 +44,7 @@ in your library, your own copy plays.
 ## 📋 Requirements
 
 - Docker.
-- A Plex server, or Jellyfin 10.9 or newer, that the addon can reach.
+- A Plex server, Jellyfin 10.9 or newer, or any Subsonic-compatible server (Navidrome, Gonic, Lyrion/LMS, Airsonic, Funkwhale, Ampache) that the addon can reach.
 - HTTPS, which BitChord requires. Use a reverse proxy such as Caddy, Traefik
   or nginx, or a
   [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/).
@@ -90,9 +92,9 @@ in your library, your own copy plays.
    right away: until a password is set, anyone who opens the page can claim
    it.
 
-5. **Add a server**: pick Plex or Jellyfin, sign in or paste a token,
-   optionally pick a library, and save. The public URL is filled in from the
-   address you opened; change it on the page if it is wrong.
+5. **Add a server**: pick Plex, Jellyfin or Navidrome, sign in or paste a
+   token, optionally pick a library, and save. The public URL is filled in from
+   the address you opened; change it on the page if it is wrong.
 
 6. **Add it to BitChord.** Copy the link from the server's card. In
    BitChord, open **Sources**, add an addon, and paste it.
@@ -127,12 +129,12 @@ keep that folder private.
 
 These optional environment variables are the only other settings:
 
-| Variable           | Default | Meaning                                  |
-| ------------------ | ------- | ---------------------------------------- |
-| `REFRESH_INTERVAL` | `15m`   | How often to re-read your libraries      |
-| `PORT`             | `8080`  | Port the addon listens on                |
-| `LOG_LEVEL`        | `info`  | `debug`, `info`, `warn` or `error`       |
-| `LOG_FORMAT`       | `text`  | `text`, or `json` for log collectors     |
+| Variable             | Default | Meaning                                                              |
+| -------------------- | ------- | -------------------------------------------------------------------- |
+| `REFRESH_INTERVAL`   | `15m`   | How often to re-read your libraries                                  |
+| `PORT`               | `8080`  | Port the addon listens on                                            |
+| `LOG_LEVEL`          | `info`  | `debug`, `info`, `warn` or `error`                                   |
+| `LOG_FORMAT`         | `text`  | `text`, or `json` for log collectors                                 |
 
 ## 📱 Using it in BitChord
 
@@ -154,6 +156,16 @@ it off.
 > Treat each link like a password: anyone who has it can stream that
 > library. To revoke every link at once, regenerate the secret on the setup
 > page and add the new links to BitChord.
+
+### 🔄 Sync Webhooks
+
+Each server provides an automated sync webhook URL shown on its card in `/setup`:
+
+```
+https://music.example.com/<server id>/<secret>/sync
+```
+
+Sending a `POST` or `GET` request triggers an immediate library sync in the background. Use this URL in Plex Webhooks, Jellyfin Webhooks, or post-import scripts.
 
 ## 🔀 Reverse proxy notes
 
@@ -203,7 +215,7 @@ server. Passwords, tokens and the secret are never logged.
 | The setup page asks for a password I never set | Someone else got there first. Delete the `admin` entry in `/data/addon.json` and restart           |
 | My servers are gone after an update          | The `/data` volume is missing or changed. Check `compose.yml`                                      |
 | Log says `cannot open the data file`         | The addon can't write `/data`, or `addon.json` is broken. Fix the folder owner or the file         |
-| Log says Plex or Jellyfin rejected the token | The token was revoked. Edit the server on the setup page and sign in again                         |
+| Log says Plex, Jellyfin or Navidrome rejected the token | The token or credential was revoked. Edit the server on the setup page and sign in again |
 | Sign in with Plex can't reach plex.tv        | Paste a token instead                                                                             |
 | A server shows as unreachable                | Enter an address the container can reach, such as a Docker service name                           |
 | Search works but playback fails              | Your reverse proxy is buffering or timing out. See the reverse proxy notes                         |
@@ -211,8 +223,8 @@ server. Passwords, tokens and the secret are never logged.
 
 ## 🗺️ Roadmap
 
-- **Emby** support.
-- **Navidrome** and other Subsonic-compatible servers.
+- [x] **Navidrome** and other Subsonic-compatible servers.
+- [ ] **Emby** support.
 
 ## 🧑‍💻 Development
 
@@ -221,7 +233,7 @@ go test -race ./...
 gofmt -l . && go vet ./...
 ```
 
-Tests use fake Plex, Jellyfin and plex.tv servers in `internal/fakes`, so no
+Tests use fake Plex, Jellyfin, Navidrome and plex.tv servers in `internal/fakes`, so no
 real server is needed.
 
 ### Releasing

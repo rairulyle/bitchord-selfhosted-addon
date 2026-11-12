@@ -25,33 +25,37 @@ const FileName = "addon.json"
 type Kind string
 
 const (
-	Plex     Kind = "plex"
-	Jellyfin Kind = "jellyfin"
+	Plex      Kind = "plex"
+	Jellyfin  Kind = "jellyfin"
+	Navidrome Kind = "navidrome"
 )
 
-var Kinds = []Kind{Plex, Jellyfin}
+var Kinds = []Kind{Plex, Jellyfin, Navidrome}
 
 type Auth string
 
 const (
-	AuthToken          Auth = "token"
-	AuthPlexSignIn     Auth = "plex-signin"
-	AuthJellyfinSignIn Auth = "jellyfin-signin"
+	AuthToken           Auth = "token"
+	AuthPlexSignIn      Auth = "plex-signin"
+	AuthJellyfinSignIn  Auth = "jellyfin-signin"
+	AuthNavidromeSignIn Auth = "navidrome-signin"
 )
 
 type Server struct {
-	Slug        string    `json:"slug"`
-	Label       string    `json:"label"`
-	Kind        Kind      `json:"kind"`
-	URL         string    `json:"url"`
-	Token       string    `json:"token"`
-	Auth        Auth      `json:"auth"`
-	Account     string    `json:"account"`
-	DeviceID    string    `json:"device_id,omitempty"`
-	Library     string    `json:"library"`
-	LibraryName string    `json:"library_name,omitempty"`
-	Enabled     bool      `json:"enabled"`
-	Created     time.Time `json:"created"`
+	Slug            string    `json:"slug"`
+	Label           string    `json:"label"`
+	Kind            Kind      `json:"kind"`
+	URL             string    `json:"url"`
+	Token           string    `json:"token"`
+	Auth            Auth      `json:"auth"`
+	Account         string    `json:"account"`
+	DeviceID        string    `json:"device_id,omitempty"`
+	Library         string    `json:"library"`
+	LibraryName     string    `json:"library_name,omitempty"`
+	SyncInterval    string    `json:"sync_interval,omitempty"`
+	ScrobblePercent int       `json:"scrobble_percent,omitempty"`
+	Enabled         bool      `json:"enabled"`
+	Created         time.Time `json:"created"`
 }
 
 type Admin struct {
@@ -242,9 +246,45 @@ func (s *Store) SetAdmin(admin *Admin) error {
 	})
 }
 
+// Restore validates and applies snap as the new configuration. If snap omits
+// secrets, the existing ones are preserved. Admin credentials from the current
+// instance are always preserved so uploaded backups cannot overwrite them.
+func (s *Store) Restore(snap Snapshot) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	curr := s.current.Load()
+	if curr != nil && curr.Admin != nil {
+		admin := *curr.Admin
+		snap.Admin = &admin
+	}
+	if snap.Secret == "" && curr != nil {
+		snap.Secret = curr.Secret
+	}
+	if snap.ClientID == "" && curr != nil {
+		snap.ClientID = curr.ClientID
+	}
+	if snap.ClientID == "" {
+		snap.ClientID = newClientID()
+	}
+	if snap.Secret == "" {
+		snap.Secret = NewSecret()
+	}
+	if snap.Servers == nil {
+		snap.Servers = []Server{}
+	}
+	if err := Validate(snap); err != nil {
+		return err
+	}
+	if err := s.save(snap); err != nil {
+		return err
+	}
+	s.current.Store(&snap)
+	return nil
+}
+
 var ErrNoServer = errors.New("no such server")
 
-var slugPattern = regexp.MustCompile(`^(plex|jellyfin)-[1-9][0-9]*$`)
+var slugPattern = regexp.MustCompile(`^(plex|jellyfin|navidrome)-[1-9][0-9]*$`)
 
 func nextSlug(kind Kind, servers []Server) string {
 	taken := map[string]bool{}

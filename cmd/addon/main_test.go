@@ -73,9 +73,14 @@ func jellyfinServer(fake *fakes.Jellyfin) store.Server {
 	return store.Server{Kind: store.Jellyfin, URL: fake.URL, Token: fakes.JellyfinToken, Auth: store.AuthToken, Enabled: true}
 }
 
+func navidromeServer(fake *fakes.Navidrome) store.Server {
+	return store.Server{Kind: store.Navidrome, URL: fake.URL, Token: fakes.NavidromeToken, Auth: store.AuthNavidromeSignIn, Enabled: true}
+}
+
 // start runs serve in the background and returns the base URL once it listens.
 func start(ctx context.Context, t *testing.T, cfg config.Config, st *store.Store, log *slog.Logger) (string, <-chan error) {
 	t.Helper()
+	t.Setenv("BITCHORD_AUTH_MODE", "disabled")
 	addrs := make(chan net.Addr, 1)
 	done := make(chan error, 1)
 	go func() { done <- serve(ctx, cfg, st, log, nil, func(addr net.Addr) { addrs <- addr }) }()
@@ -180,8 +185,15 @@ func TestAnEmptyStoreServesTheSetupPageAndIsHealthy(t *testing.T) {
 	if status, body := get(t, base+"/setup"); status != http.StatusOK || !strings.Contains(body, "Create a password") {
 		t.Fatalf("setup page: %d %s", status, body)
 	}
+	noFollow := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	if res, err := noFollow.Get(base + "/"); err != nil || res.StatusCode != http.StatusFound || res.Header.Get("Location") != "/setup" {
+		t.Fatalf("root redirect: err=%v, status=%d, location=%s", err, res.StatusCode, res.Header.Get("Location"))
+	}
 	if status, _ := get(t, base+"/setup/static/style.css"); status != http.StatusOK {
 		t.Fatalf("stylesheet: %d", status)
+	}
+	if status, body := get(t, base+"/favicon.ico"); status != http.StatusOK || !strings.Contains(body, "<svg") {
+		t.Fatalf("favicon: %d %s", status, body)
 	}
 	if status, body := get(t, base+"/plex-1/"+st.Snapshot().Secret+"/manifest.json"); status != http.StatusNotFound || body != "" {
 		t.Fatalf("unknown server: %d %q", status, body)
@@ -198,14 +210,14 @@ func TestAnEmptyStoreServesTheSetupPageAndIsHealthy(t *testing.T) {
 }
 
 func TestServeAnswersEveryServerAndShutsDownOnCancel(t *testing.T) {
-	plexFake, jellyfinFake := fakes.NewPlex(t), fakes.NewJellyfin(t)
-	st := newStore(t, plexServer(plexFake), jellyfinServer(jellyfinFake))
+	plexFake, jellyfinFake, navidromeFake := fakes.NewPlex(t), fakes.NewJellyfin(t), fakes.NewNavidrome(t)
+	st := newStore(t, plexServer(plexFake), jellyfinServer(jellyfinFake), navidromeServer(navidromeFake))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	logs := &syncBuffer{}
 	base, done := start(ctx, t, testConfig(), st, newLogger("text", slog.LevelInfo, logs))
 	waitHealthy(t, base)
-	cases := map[string]string{"plex-1": `"id":"101"`, "jellyfin-1": `"id":"f101"`}
+	cases := map[string]string{"plex-1": `"id":"101"`, "jellyfin-1": `"id":"f101"`, "navidrome-1": `"id":"s-1"`}
 	for slug, wantID := range cases {
 		if status, body := get(t, base+"/"+slug+"/"+testSecret+"/search?q=new+religion"); status != http.StatusOK || !strings.Contains(body, wantID) {
 			t.Fatalf("%s search: %d %s", slug, status, body)
@@ -229,12 +241,12 @@ func TestServeAnswersEveryServerAndShutsDownOnCancel(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("serve did not return after cancel")
 	}
-	for _, want := range []string{"msg=listening", "msg=\"library indexed\"", "server=plex-1", "server=jellyfin-1", "servers=2"} {
+	for _, want := range []string{"msg=listening", "msg=\"library indexed\"", "server=plex-1", "server=jellyfin-1", "server=navidrome-1", "servers=3"} {
 		if !strings.Contains(logs.String(), want) {
 			t.Errorf("logs lack %s:\n%s", want, logs.String())
 		}
 	}
-	if strings.Contains(logs.String(), fakes.PlexToken) || strings.Contains(logs.String(), testSecret) {
+	if strings.Contains(logs.String(), fakes.PlexToken) || strings.Contains(logs.String(), testSecret) || strings.Contains(logs.String(), fakes.NavidromePassword) {
 		t.Error("a credential reached the logs")
 	}
 }
@@ -352,4 +364,40 @@ func TestNewLoggerFormats(t *testing.T) {
 	if strings.Contains(text.String(), "quiet") {
 		t.Error("level not applied")
 	}
+}
+
+func TestServeBitChordAuthEnforcesByDefault(t *testing.T) {
+	fake := fakes.NewPlex(t)
+	st := newStore(t, plexServer(fake))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	logs := &syncBuffer{}
+	addrs := make(chan net.Addr, 1)
+	done := make(chan error, 1)
+	// Default auth mode must be enforce.
+	go func() {
+		done <- serve(ctx, testConfig(), st, newLogger("text", slog.LevelInfo, logs), nil, func(addr net.Addr) { addrs <- addr })
+	}()
+	var base string
+	select {
+	case addr := <-addrs:
+		base = "http://127.0.0.1:" + strconv.Itoa(addr.(*net.TCPAddr).Port)
+	case err := <-done:
+		t.Fatalf("serve error: %v", err)
+	}
+	waitHealthy(t, base)
+
+	// Manifest is public
+	status, body := get(t, base+"/plex-1/"+testSecret+"/manifest.json")
+	if status != http.StatusOK || !strings.Contains(body, `"bitchordAuth":true`) {
+		t.Fatalf("manifest should be public with bitchordAuth:true, got status %d body %s", status, body)
+	}
+
+	// Unauthenticated search is rejected with 401
+	status, body = get(t, base+"/plex-1/"+testSecret+"/search?q=test")
+	if status != http.StatusUnauthorized || !strings.Contains(body, `"error":"bitchord_auth"`) {
+		t.Fatalf("expected 401 Unauthorized for unauthenticated search, got %d %s", status, body)
+	}
+	cancel()
+	<-done
 }

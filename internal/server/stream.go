@@ -9,7 +9,7 @@ import (
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
 )
 
-var idPattern = regexp.MustCompile(`^[0-9a-fA-F-]{1,36}$`)
+var idPattern = regexp.MustCompile(`^[0-9A-Za-z_-]{1,128}$`)
 
 func trackID(r *http.Request) (string, bool) {
 	id := r.PathValue("id")
@@ -17,12 +17,15 @@ func trackID(r *http.Request) (string, bool) {
 }
 
 func (s *server) stream(w http.ResponseWriter, r *http.Request, src source) {
+	if !s.checkAuth(w, r, src) {
+		return
+	}
 	track, status := s.resolve(r, src)
 	if status != http.StatusOK {
 		w.WriteHeader(status)
 		return
 	}
-	descriptor := toStreamJSON(src.base, track)
+	descriptor := toStreamJSON(src.base, s.Site().Secret, track)
 	src.Log.Info("stream", "id", track.ID, "track", label(track), "quality", descriptor.Quality, "format", descriptor.Format)
 	writeJSON(w, descriptor)
 }
