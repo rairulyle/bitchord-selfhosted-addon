@@ -22,6 +22,9 @@ func TestAudioFormatAndLossless(t *testing.T) {
 		{"mp3", "mp3", "mp3", false},
 		{"aac", "mp4", "aac", false},
 		{"", "ogg", "ogg", false},
+		{"wavpack", "wv", "wavpack", true},
+		{"ape", "ape", "ape", true},
+		{"dsd", "dsf", "dsd", true},
 	}
 	for _, tc := range cases {
 		format := AudioFormat(tc.codec, tc.container)

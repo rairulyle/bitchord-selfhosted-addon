@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -43,7 +45,7 @@ func TestOpenCreatesTheFileWithASecretAndClientID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Errorf("mode = %o", info.Mode().Perm())
 	}
 	again, err := Open(dir)
@@ -213,20 +215,42 @@ func TestRegenerateSecretAndSetAdmin(t *testing.T) {
 	}
 }
 
+func TestNavidromeServerIsAccepted(t *testing.T) {
+	s := open(t)
+	server := Server{Kind: Navidrome, Label: "Home", URL: "http://navidrome:4533", Token: "lyle:secret", Auth: AuthNavidromeSignIn, Enabled: true}
+	added, err := s.AddServer(server)
+	if err != nil {
+		t.Fatalf("Navidrome server rejected: %v", err)
+	}
+	if added.Slug != "navidrome-1" {
+		t.Fatalf("slug = %q, want navidrome-1", added.Slug)
+	}
+	// A pasted token is fine too, since Navidrome sign-in also stores a token.
+	pasted := server
+	pasted.Auth = AuthToken
+	if _, err := s.AddServer(pasted); err != nil {
+		t.Fatalf("Navidrome server with pasted token rejected: %v", err)
+	}
+}
+
 func TestValidation(t *testing.T) {
 	s := open(t)
 	cases := map[string]struct {
 		change func(*Server)
 		want   string
 	}{
-		"bad url":          {func(v *Server) { v.URL = "plex:32400" }, "http or https"},
-		"no token":         {func(v *Server) { v.Token = "" }, "token or API key is required"},
-		"unknown kind":     {func(v *Server) { v.Kind = "emby" }, `unknown server kind "emby"`},
-		"unknown auth":     {func(v *Server) { v.Auth = "magic" }, `unknown auth "magic"`},
-		"auth kind clash":  {func(v *Server) { v.Auth = AuthJellyfinSignIn }, "only a Jellyfin server"},
-		"label too long":   {func(v *Server) { v.Label = strings.Repeat("é", 17) }, "at most 16 characters"},
-		"label at the cap": {func(v *Server) { v.Label = strings.Repeat("é", 16) }, ""},
-		"empty label":      {func(v *Server) { v.Label = "" }, ""},
+		"bad url":              {func(v *Server) { v.URL = "plex:32400" }, "http or https"},
+		"no token":             {func(v *Server) { v.Token = "" }, "token or API key is required"},
+		"unknown kind":         {func(v *Server) { v.Kind = "emby" }, `unknown server kind "emby"`},
+		"unknown auth":         {func(v *Server) { v.Auth = "magic" }, `unknown auth "magic"`},
+		"auth kind clash":      {func(v *Server) { v.Auth = AuthJellyfinSignIn }, "only a Jellyfin server"},
+		"navidrome auth clash": {func(v *Server) { v.Auth = AuthNavidromeSignIn }, "only a Navidrome server"},
+		"label too long":       {func(v *Server) { v.Label = strings.Repeat("é", 17) }, "at most 16 characters"},
+		"label at the cap":     {func(v *Server) { v.Label = strings.Repeat("é", 16) }, ""},
+		"empty label":          {func(v *Server) { v.Label = "" }, ""},
+		"valid interval":       {func(v *Server) { v.SyncInterval = "1h" }, ""},
+		"manual interval":      {func(v *Server) { v.SyncInterval = "manual" }, ""},
+		"bad interval":         {func(v *Server) { v.SyncInterval = "soon" }, "sync interval must be a positive duration"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -300,5 +324,233 @@ func TestSnapshotDoesNotWaitForAnUpdate(t *testing.T) {
 	}
 	if snap := s.Snapshot(); snap.PublicURL != "https://music.example.com" || snap.Servers[0].Label != "Home" {
 		t.Fatalf("after the update = %+v", snap)
+	}
+}
+
+func TestStoreRestore(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetAdmin(&Admin{PasswordHash: "hashed", SessionKey: "sesskey"}); err != nil {
+		t.Fatal(err)
+	}
+	origSecret := s.Snapshot().Secret
+	origClientID := s.Snapshot().ClientID
+
+	restoreSnap := Snapshot{
+		PublicURL: "https://restored.example.com",
+		Admin: &Admin{
+			PasswordHash: "rogue_hash",
+			SessionKey:   "rogue_session",
+		},
+		Servers: []Server{
+			{
+				Slug:    "plex-1",
+				Kind:    Plex,
+				Label:   "Restored Plex",
+				URL:     "http://localhost:32400",
+				Token:   "tok",
+				Library: "1",
+				Auth:    AuthToken,
+				Enabled: true,
+			},
+		},
+	}
+	if err := s.Restore(restoreSnap); err != nil {
+		t.Fatalf("Restore failed: %v", err)
+	}
+
+	snap := s.Snapshot()
+	if snap.PublicURL != "https://restored.example.com" {
+		t.Errorf("PublicURL = %q, want https://restored.example.com", snap.PublicURL)
+	}
+	if len(snap.Servers) != 1 || snap.Servers[0].Label != "Restored Plex" {
+		t.Errorf("Servers = %+v, want 1 server", snap.Servers)
+	}
+	if snap.Admin == nil || snap.Admin.PasswordHash != "hashed" {
+		t.Errorf("Admin was not preserved or rogue admin was accepted: %+v", snap.Admin)
+	}
+	if snap.Secret != origSecret {
+		t.Errorf("Secret = %q, want %q", snap.Secret, origSecret)
+	}
+	if snap.ClientID != origClientID {
+		t.Errorf("ClientID = %q, want %q", snap.ClientID, origClientID)
+	}
+
+	badSnap := Snapshot{
+		Servers: []Server{{Slug: "invalid"}},
+	}
+	if err := s.Restore(badSnap); err == nil {
+		t.Error("Restore invalid snapshot expected error, got nil")
+	}
+	if snap := s.Snapshot(); snap.PublicURL != "https://restored.example.com" {
+		t.Errorf("Store state changed after failed restore: %+v", snap)
+	}
+}
+
+func TestRestoreNeverTakesTheBackupsAdmin(t *testing.T) {
+	forged := &Admin{PasswordHash: "forged_hash", SessionKey: "forged_session"}
+	backup := Snapshot{Admin: forged, Servers: []Server{}}
+
+	s := open(t)
+	if err := s.Restore(backup); err != nil {
+		t.Fatal(err)
+	}
+	if admin := s.Snapshot().Admin; admin != nil {
+		t.Fatalf("a store without an admin took the backup's: %+v", admin)
+	}
+
+	if err := s.SetAdmin(&Admin{PasswordHash: "hashed", SessionKey: "sesskey"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Restore(backup); err != nil {
+		t.Fatal(err)
+	}
+	if admin := s.Snapshot().Admin; admin == nil || admin.PasswordHash != "hashed" || admin.SessionKey != "sesskey" {
+		t.Fatalf("admin = %+v", admin)
+	}
+}
+
+func TestRestoreRejectsAnInvalidBackupWithAClearError(t *testing.T) {
+	s := open(t)
+	before := s.Snapshot()
+	err := s.Restore(Snapshot{PublicURL: "ftp://nope", Servers: []Server{{Slug: "plex-1", Kind: Plex, URL: "plex:32400", Auth: AuthToken}}})
+	if err == nil || !strings.Contains(err.Error(), "the backup is not a valid configuration") || !strings.Contains(err.Error(), "http or https") {
+		t.Fatalf("err = %v", err)
+	}
+	if after := s.Snapshot(); after.PublicURL != before.PublicURL || len(after.Servers) != 0 {
+		t.Fatalf("store changed: %+v", after)
+	}
+}
+
+func TestValidateSubmittedServerURLRejectsCloudMetadata(t *testing.T) {
+	blocked := []string{
+		"http://169.254.169.254",
+		"http://169.254.169.254/latest/meta-data",
+		"http://169.254.1.1:8080",
+		"http://[fe80::1]:32400",
+		"http://instance-data",
+		"http://metadata.google.internal",
+	}
+	for _, raw := range blocked {
+		if err := ValidateSubmittedServerURL(raw); err == nil || !strings.Contains(err.Error(), "cloud instance metadata") {
+			t.Errorf("ValidateSubmittedServerURL(%q) = %v, want cloud instance metadata error", raw, err)
+		}
+	}
+	allowed := []string{
+		"http://192.168.1.50:32400",
+		"http://10.0.0.5:8096",
+		"http://127.0.0.1:4533",
+		"http://localhost:4533",
+		"https://plex.example.com",
+	}
+	for _, raw := range allowed {
+		if err := ValidateSubmittedServerURL(raw); err != nil {
+			t.Errorf("ValidateSubmittedServerURL(%q) unexpected error: %v", raw, err)
+		}
+	}
+}
+
+func TestAnOlderFileGetsDefaultAppAuthAndALinkKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, FileName)
+	os.WriteFile(path, []byte(`{"secret":"abcdefghijklmnop","client_id":"c","servers":[]}`), 0o600)
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := s.Snapshot()
+	if snap.AppAuth.EffectiveMode() != AppAuthDisabled || len(snap.AppAuth.Hosts) != 0 || snap.AppAuth.Issuer != "" {
+		t.Errorf("app auth = %+v", snap.AppAuth)
+	}
+	if !linkKeyPattern.MatchString(snap.LinkKey) {
+		t.Fatalf("link key = %q", snap.LinkKey)
+	}
+	again, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Snapshot().LinkKey != snap.LinkKey {
+		t.Error("the link key changed on reopen")
+	}
+}
+
+func TestAppAuthValidation(t *testing.T) {
+	s := open(t)
+	cases := map[string]struct {
+		settings AppAuth
+		want     string
+	}{
+		"defaults":           {AppAuth{}, ""},
+		"enforce":            {AppAuth{Mode: AppAuthEnforce, Hosts: []string{"music.example.com", "192.168.1.5", "::1"}, Issuer: "https://auth.example.com"}, ""},
+		"log":                {AppAuth{Mode: AppAuthLog}, ""},
+		"unknown mode":       {AppAuth{Mode: "strict"}, "must be disabled, log or enforce"},
+		"host with scheme":   {AppAuth{Hosts: []string{"https://music.example.com"}}, "allowed host"},
+		"host with port":     {AppAuth{Hosts: []string{"music.example.com:443"}}, "allowed host"},
+		"upper-case host":    {AppAuth{Hosts: []string{"Music.example.com"}}, "allowed host"},
+		"bracketed ipv6":     {AppAuth{Hosts: []string{"[::1]"}}, "allowed host"},
+		"too many hosts":     {AppAuth{Hosts: slices.Repeat([]string{"a.example.com"}, MaxAppAuthHosts+1)}, "at most"},
+		"http issuer":        {AppAuth{Issuer: "http://auth.example.com"}, "must start with https://"},
+		"localhost issuer":   {AppAuth{Issuer: "http://localhost:8787"}, ""},
+		"issuer with query":  {AppAuth{Issuer: "https://auth.example.com?x=1"}, "no query"},
+		"issuer with slash":  {AppAuth{Issuer: "https://auth.example.com/"}, "trailing slash"},
+		"issuer with a path": {AppAuth{Issuer: "https://example.com/auth"}, ""},
+		"not a url":          {AppAuth{Issuer: "auth"}, "full URL"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := s.SetAppAuth(tc.settings)
+			if tc.want == "" && err != nil || tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+	if err := s.Update(func(data *Snapshot) error { data.LinkKey = "short"; return nil }); err == nil {
+		t.Error("a short link key was accepted")
+	}
+}
+
+func TestSnapshotClonesTheAllowedHosts(t *testing.T) {
+	s := open(t)
+	if err := s.SetAppAuth(AppAuth{Hosts: []string{"a.example.com"}}); err != nil {
+		t.Fatal(err)
+	}
+	s.Snapshot().AppAuth.Hosts[0] = "changed.example.com"
+	if got := s.Snapshot().AppAuth.Hosts[0]; got != "a.example.com" {
+		t.Fatalf("a caller changed the stored hosts: %q", got)
+	}
+}
+
+func TestRestoreKeepsTheBackupsAppAuthAndMakesANewLinkKey(t *testing.T) {
+	s := open(t)
+	before := s.Snapshot().LinkKey
+	backup := Snapshot{
+		Secret: NewSecret(), ClientID: "c", LinkKey: strings.Repeat("k", 43),
+		AppAuth: AppAuth{Mode: AppAuthLog, Hosts: []string{"music.example.com"}},
+	}
+	if err := s.Restore(backup); err != nil {
+		t.Fatal(err)
+	}
+	snap := s.Snapshot()
+	if snap.AppAuth.Mode != AppAuthLog || len(snap.AppAuth.Hosts) != 1 {
+		t.Errorf("app auth = %+v", snap.AppAuth)
+	}
+	if snap.LinkKey == before || snap.LinkKey == backup.LinkKey || !linkKeyPattern.MatchString(snap.LinkKey) {
+		t.Errorf("link key = %q, want a new one", snap.LinkKey)
+	}
+}
+
+func TestAFileWithALinkLocalServerStillOpens(t *testing.T) {
+	dir := t.TempDir()
+	content := `{"secret":"abcdefghijklmnop","client_id":"c","servers":[{"slug":"plex-1","kind":"plex","url":"http://169.254.10.20:32400","token":"t","auth":"token","enabled":true}]}`
+	os.WriteFile(filepath.Join(dir, FileName), []byte(content), 0o600)
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatalf("Open = %v", err)
+	}
+	if err := s.UpdateServer("plex-1", func(server *Server) error { server.Label = "Home"; return nil }); err != nil {
+		t.Fatalf("a later save refused the stored URL: %v", err)
 	}
 }

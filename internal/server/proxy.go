@@ -1,12 +1,16 @@
 package server
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/store"
 )
 
 var (
@@ -15,6 +19,10 @@ var (
 )
 
 func (s *server) file(w http.ResponseWriter, r *http.Request, src source) {
+	if !s.fileLinkAllowed(r, src) {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
 	track, status := s.resolve(r, src)
 	if status != http.StatusOK {
 		w.WriteHeader(status)
@@ -40,6 +48,33 @@ func (s *server) file(w http.ResponseWriter, r *http.Request, src source) {
 	}
 }
 
+var errUnsigned = errors.New("the link is not signed")
+
+// fileLinkAllowed runs before resolve, so a forged link costs no upstream
+// lookup. With auth off nothing is checked; in log mode a bad or missing
+// signature is only logged, so links handed out before auth was turned on
+// keep playing.
+func (s *server) fileLinkAllowed(r *http.Request, src source) bool {
+	mode := s.authMode(src.site)
+	if mode == store.AppAuthDisabled {
+		return true
+	}
+	query := r.URL.Query()
+	err := errUnsigned
+	if query.Has("exp") || query.Has("sig") {
+		err = checkFileLink(src.site.LinkKey, src.Slug, r.PathValue("id"), query.Get("exp"), query.Get("sig"), time.Now())
+	}
+	switch {
+	case err == nil:
+		return true
+	case mode == store.AppAuthLog:
+		src.Log.Warn("bitchord-auth would refuse file link", "id", r.PathValue("id"), "reason", err.Error())
+		return true
+	}
+	src.Log.Debug("file link refused", "id", r.PathValue("id"), "reason", err.Error())
+	return false
+}
+
 func (s *server) art(w http.ResponseWriter, r *http.Request, src source) {
 	track, status := s.resolve(r, src)
 	if status == http.StatusOK && track.ArtRef == "" {
@@ -49,7 +84,77 @@ func (s *server) art(w http.ResponseWriter, r *http.Request, src source) {
 		w.WriteHeader(status)
 		return
 	}
-	pipe(w, r, src, func() (*http.Response, error) { return src.Backend.OpenArt(r.Context(), track) }, "public, max-age=86400")
+
+	cacheKey := src.Slug + "\x00" + src.URL() + "\x00" + track.ArtRef
+	if s.artCache != nil {
+		if item, ok := s.artCache.Get(cacheKey); ok {
+			serveCachedArt(w, r, item)
+			return
+		}
+	}
+
+	upstream, err := src.Backend.OpenArt(r.Context(), track)
+	switch {
+	case errors.Is(err, media.ErrNotFound):
+		w.WriteHeader(http.StatusNotFound)
+		return
+	case err != nil:
+		logFailure(r, src, err)
+		w.WriteHeader(http.StatusBadGateway)
+		return
+	}
+	defer upstream.Body.Close()
+
+	if upstream.StatusCode != http.StatusOK {
+		src.Log.Error("upstream answered the artwork request badly", "status", upstream.StatusCode)
+		w.WriteHeader(http.StatusBadGateway)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(upstream.Body, maxCachedItemSize+1))
+	if err != nil {
+		src.Log.Error("failed reading upstream artwork", "error", err.Error())
+		w.WriteHeader(http.StatusBadGateway)
+		return
+	}
+
+	contentType := upstream.Header.Get("Content-Type")
+	cacheable := strings.HasPrefix(contentType, "image/")
+	if contentType == "" {
+		contentType = "image/jpeg"
+	}
+	etag := upstream.Header.Get("ETag")
+	lastModified := upstream.Header.Get("Last-Modified")
+
+	if s.artCache != nil && cacheable && int64(len(body)) <= maxCachedItemSize {
+		item := s.artCache.Put(cacheKey, body, contentType, etag, lastModified)
+		if item != nil {
+			serveCachedArt(w, r, item)
+			return
+		}
+	}
+
+	content := io.Reader(bytes.NewReader(body))
+	length := strconv.Itoa(len(body))
+	if int64(len(body)) > maxCachedItemSize {
+		content = io.MultiReader(content, upstream.Body)
+		length = upstream.Header.Get("Content-Length")
+	}
+	w.Header().Set("Content-Type", contentType)
+	if length != "" {
+		w.Header().Set("Content-Length", length)
+	}
+	if etag != "" {
+		w.Header().Set("ETag", etag)
+	}
+	if lastModified != "" {
+		w.Header().Set("Last-Modified", lastModified)
+	}
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.WriteHeader(http.StatusOK)
+	if r.Method != http.MethodHead {
+		io.Copy(w, content)
+	}
 }
 
 type sent struct {

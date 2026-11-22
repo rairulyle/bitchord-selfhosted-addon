@@ -1,17 +1,24 @@
 package setup
 
 import (
+	"cmp"
 	"context"
+	"crypto/hmac"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/bitchordauth"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/library"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/registry"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/store"
@@ -55,8 +62,27 @@ func (a *app) apply() {
 	a.Registry.Apply(a.Store.Snapshot())
 }
 
-func redirectNotice(w http.ResponseWriter, r *http.Request, notice string) {
-	http.Redirect(w, r, "/setup?notice="+url.QueryEscape(notice), http.StatusSeeOther)
+func (a *app) redirectNotice(w http.ResponseWriter, r *http.Request, notice string) {
+	a.redirectMessage(w, r, "notice", notice)
+}
+
+func (a *app) redirectError(w http.ResponseWriter, r *http.Request, err string) {
+	a.redirectMessage(w, r, "error", err)
+}
+
+// redirectMessage signs the message so the page shows only text this app
+// wrote, never text a crafted link puts in the query.
+func (a *app) redirectMessage(w http.ResponseWriter, r *http.Request, kind, message string) {
+	query := url.Values{kind: {message}, "sig": {sign(a.messageKey, kind+":"+message)}}
+	http.Redirect(w, r, "/setup?"+query.Encode(), http.StatusSeeOther)
+}
+
+func (a *app) signedMessage(query url.Values, kind string) string {
+	message := query.Get(kind)
+	if message == "" || !hmac.Equal([]byte(query.Get("sig")), []byte(sign(a.messageKey, kind+":"+message))) {
+		return ""
+	}
+	return message
 }
 
 // ---- password and session
@@ -82,10 +108,10 @@ func (a *app) createPassword(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.Log.Info("public url set", "public_url", origin)
-		redirectNotice(w, r, "Password set. The public URL is "+origin+"; change it below if that is wrong. Now add a server.")
+		a.redirectNotice(w, r, "Password set. The public URL is "+origin+"; change it below if that is wrong. Now add a server.")
 		return
 	}
-	redirectNotice(w, r, "Password set. Add your public URL and a server.")
+	a.redirectNotice(w, r, "Password set. Add your public URL and a server.")
 }
 
 func (a *app) login(w http.ResponseWriter, r *http.Request, admin *store.Admin) {
@@ -152,7 +178,7 @@ func (a *app) changePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	a.Log.Info("admin password changed", "from", clientAddress(r))
 	a.setSessionCookie(w, r, admin)
-	redirectNotice(w, r, "Password changed. Other browsers have been signed out.")
+	a.redirectNotice(w, r, "Password changed. Other browsers have been signed out.")
 }
 
 // ---- overview, public URL, secret
@@ -178,11 +204,11 @@ func (a *app) setPublicURL(w http.ResponseWriter, r *http.Request) {
 	}
 	if value == "" {
 		a.Log.Info("public url cleared")
-		redirectNotice(w, r, "Public URL cleared. Server URLs cannot be shown until it is set again.")
+		a.redirectNotice(w, r, "Public URL cleared. Server URLs cannot be shown until it is set again.")
 		return
 	}
 	a.Log.Info("public url set", "public_url", value)
-	redirectNotice(w, r, "Public URL saved.")
+	a.redirectNotice(w, r, "Public URL saved.")
 }
 
 func (a *app) regenerateSecret(w http.ResponseWriter, r *http.Request) {
@@ -191,7 +217,137 @@ func (a *app) regenerateSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.Log.Warn("secret regenerated, every server URL has changed")
-	redirectNotice(w, r, "Secret regenerated. Every server URL has changed; update your clients.")
+	a.redirectNotice(w, r, "Secret regenerated. Every server URL has changed; update your clients.")
+}
+
+func (a *app) setAppAuth(w http.ResponseWriter, r *http.Request) {
+	snapshot := a.Store.Snapshot()
+	settings := store.AppAuth{
+		Mode:   r.PostFormValue("mode"),
+		Hosts:  splitHosts(r.PostFormValue("hosts")),
+		Issuer: strings.TrimRight(strings.TrimSpace(r.PostFormValue("issuer")), "/"),
+	}
+	if settings.Issuer == bitchordauth.DefaultIssuer {
+		settings.Issuer = ""
+	}
+	if err := store.ValidateAppAuth(settings); err != nil {
+		view := a.overviewView(r, snapshot)
+		view.Error = err.Error()
+		view.AppAuth = newAppAuthView(settings, snapshot.PublicURL)
+		view.AppAuth.Hosts, view.AppAuth.Open = r.PostFormValue("hosts"), true
+		a.render(w, r, http.StatusBadRequest, "overview", view)
+		return
+	}
+	if err := a.Store.SetAppAuth(settings); err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	a.logAppAuth(snapshot.AppAuth, settings)
+	a.redirectNotice(w, r, map[string]string{
+		store.AppAuthDisabled: "App authentication is off.",
+		store.AppAuthLog:      "App authentication is logging only: requests it would refuse are logged and still answered.",
+		store.AppAuthEnforce:  "App authentication is enforced. BitChord versions without Addon Auth now get 401.",
+	}[settings.EffectiveMode()])
+}
+
+// splitHosts takes hosts separated by commas or whitespace, as host names or
+// pasted URLs, and keeps each bare host once.
+func splitHosts(raw string) []string {
+	var hosts []string
+	for _, field := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || unicode.IsSpace(r) }) {
+		if host := bitchordauth.NormalizeHost(field); host != "" && !slices.Contains(hosts, host) {
+			hosts = append(hosts, host)
+		}
+	}
+	return hosts
+}
+
+func (a *app) logAppAuth(before, after store.AppAuth) {
+	attrs := []any{"mode", after.EffectiveMode(), "hosts", len(after.Hosts), "issuer", cmp.Or(after.Issuer, bitchordauth.DefaultIssuer)}
+	if before.EffectiveMode() != after.EffectiveMode() {
+		a.Log.Info("app authentication mode changed", append(attrs, "was", before.EffectiveMode())...)
+		return
+	}
+	if before.Issuer != after.Issuer || !slices.Equal(before.Hosts, after.Hosts) {
+		a.Log.Info("app authentication settings changed", attrs...)
+	}
+}
+
+func (a *app) exportBackup(w http.ResponseWriter, r *http.Request) {
+	passphrase := r.PostFormValue("passphrase")
+	if passphrase == "" {
+		http.Error(w, "password is required to encrypt backup", http.StatusBadRequest)
+		return
+	}
+
+	snap := a.Store.Snapshot()
+	snap.Admin, snap.LinkKey = nil, ""
+	raw, err := store.EncryptSnapshot(snap, passphrase)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	filename := fmt.Sprintf("bitchord-addon-backup-encrypted-%s.json", a.Now().Format("2006-01-02-150405"))
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(append(raw, '\n'))
+}
+
+func (a *app) restoreBackup(w http.ResponseWriter, r *http.Request) {
+	raw, err := uploadedBackup(r)
+	if err != nil {
+		a.redirectError(w, r, "Restore failed: "+err.Error())
+		return
+	}
+
+	snap, err := store.DecryptSnapshot(raw, r.PostFormValue("passphrase"))
+	if err != nil {
+		a.redirectError(w, r, fmt.Sprintf("Restore failed: %s", err.Error()))
+		return
+	}
+
+	before := a.Store.Snapshot()
+	if err := a.Store.Restore(snap); err != nil {
+		a.redirectError(w, r, fmt.Sprintf("Restore failed: %s", err.Error()))
+		return
+	}
+
+	a.apply()
+	a.signOutRestoredOver(before, a.Store.Snapshot())
+	a.logAppAuth(before.AppAuth, a.Store.Snapshot().AppAuth)
+	count := len(snap.Servers)
+	serverWord := "server"
+	if count != 1 {
+		serverWord = "servers"
+	}
+	a.redirectNotice(w, r, fmt.Sprintf("Configuration restored successfully (%d %s configured).", count, serverWord))
+}
+
+func uploadedBackup(r *http.Request) ([]byte, error) {
+	file, _, err := r.FormFile("backup_file")
+	if err != nil {
+		return nil, errors.New("no backup file provided")
+	}
+	defer file.Close()
+	raw, err := io.ReadAll(file)
+	if err != nil {
+		return nil, errors.New("unable to read uploaded file")
+	}
+	return raw, nil
+}
+
+// signOutRestoredOver signs out the Jellyfin sessions a restore replaced or
+// removed, unless a restored server still sends the same token.
+func (a *app) signOutRestoredOver(before, after store.Snapshot) {
+	for _, old := range before.Servers {
+		if slices.ContainsFunc(after.Servers, func(server store.Server) bool { return server.Token == old.Token }) {
+			continue
+		}
+		saved, _ := after.Server(old.Slug)
+		a.signOutReplaced(old, saved)
+	}
 }
 
 // ---- server forms
@@ -209,30 +365,45 @@ func (a *app) editServerForm(w http.ResponseWriter, r *http.Request) {
 	view := a.formView(r, "Edit "+registry.DisplayName(kindName(server.Kind), server.Label))
 	view.Editing, view.Slug, view.Kind, view.KindName = true, server.Slug, server.Kind, kindName(server.Kind)
 	view.Label, view.URL, view.Library, view.LibraryName, view.Account, view.Auth, view.Enabled = server.Label, server.URL, server.Library, server.LibraryName, server.Account, server.Auth, server.Enabled
+	view.ScrobblePercent = server.ScrobblePercent
+	view.SyncInterval = server.SyncInterval
 	view.Action = "/setup/servers/" + server.Slug
 	a.render(w, r, http.StatusOK, "server", view)
 }
 
 // submitted is what the form posts, before any of it has been checked.
 type submitted struct {
-	kind     store.Kind
-	label    string
-	url      string
-	token    string
-	tokenRef string
-	library  string
-	enabled  bool
+	kind            store.Kind
+	label           string
+	url             string
+	token           string
+	tokenRef        string
+	library         string
+	enabled         bool
+	scrobblePercent int
+	syncInterval    string
 }
 
 func readSubmitted(r *http.Request) submitted {
+	scrobblePercent := -1
+	if r.PostFormValue("scrobble_enabled") != "" {
+		scrobblePercent = 50
+		if raw := r.PostFormValue("scrobble_percent"); raw != "" {
+			if p, err := strconv.Atoi(raw); err == nil && p >= 10 && p <= 90 {
+				scrobblePercent = p
+			}
+		}
+	}
 	return submitted{
-		kind:     store.Kind(r.PostFormValue("kind")),
-		label:    strings.TrimSpace(r.PostFormValue("label")),
-		url:      strings.TrimRight(strings.TrimSpace(r.PostFormValue("url")), "/"),
-		token:    strings.TrimSpace(r.PostFormValue("token")),
-		tokenRef: r.PostFormValue("token_ref"),
-		library:  r.PostFormValue("library"),
-		enabled:  r.PostFormValue("enabled") != "",
+		kind:            store.Kind(r.PostFormValue("kind")),
+		label:           strings.TrimSpace(r.PostFormValue("label")),
+		url:             strings.TrimRight(strings.TrimSpace(r.PostFormValue("url")), "/"),
+		token:           strings.TrimSpace(r.PostFormValue("token")),
+		tokenRef:        r.PostFormValue("token_ref"),
+		library:         r.PostFormValue("library"),
+		enabled:         r.PostFormValue("enabled") != "",
+		scrobblePercent: scrobblePercent,
+		syncInterval:    strings.TrimSpace(r.PostFormValue("sync_interval")),
 	}
 }
 
@@ -252,7 +423,7 @@ func (a *app) createServer(w http.ResponseWriter, r *http.Request) {
 	}
 	a.apply()
 	a.Log.Info("server added", "server", added.Slug, "source", string(added.Kind), "host", hostOf(added.URL), "auth", string(added.Auth))
-	redirectNotice(w, r, registry.DisplayName(kindName(added.Kind), added.Label)+" added. Copy its URL into BitChord.")
+	a.redirectNotice(w, r, registry.DisplayName(kindName(added.Kind), added.Label)+" added. Copy its URL into BitChord.")
 }
 
 func (a *app) updateServer(w http.ResponseWriter, r *http.Request) {
@@ -286,7 +457,7 @@ func (a *app) updateServer(w http.ResponseWriter, r *http.Request) {
 	a.apply()
 	a.Log.Info("server updated", "server", slug, "source", string(server.Kind), "host", hostOf(server.URL), "auth", string(server.Auth))
 	a.signOutReplaced(existing, server)
-	redirectNotice(w, r, registry.DisplayName(kindName(server.Kind), server.Label)+" saved.")
+	a.redirectNotice(w, r, registry.DisplayName(kindName(server.Kind), server.Label)+" saved.")
 }
 
 // resolveServer turns a submitted form into a validated server: it settles
@@ -303,7 +474,11 @@ func (a *app) resolveServer(ctx context.Context, form submitted, existing store.
 	}()
 	server = existing
 	server.Label, server.URL, server.Enabled = form.label, form.url, form.enabled
-	if err = store.ValidateServerURL(server.URL); err != nil {
+	server.SyncInterval = form.syncInterval
+	if form.kind == store.Navidrome {
+		server.ScrobblePercent = form.scrobblePercent
+	}
+	if err = store.ValidateSubmittedServerURL(server.URL); err != nil {
 		return server, giveBack, err
 	}
 	if utf8.RuneCountInString(server.Label) > store.LabelMaxLength {
@@ -320,13 +495,15 @@ func (a *app) resolveServer(ctx context.Context, form submitted, existing store.
 			return server, giveBack, fmt.Errorf("the sign-in belongs to %s, not %s; sign in again", kindName(pending.kind), kindName(server.Kind))
 		}
 		server.Token, server.Account, server.DeviceID = pending.token, pending.account, pending.deviceID
-		server.Auth = map[store.Kind]store.Auth{store.Plex: store.AuthPlexSignIn, store.Jellyfin: store.AuthJellyfinSignIn}[server.Kind]
+		server.Auth = map[store.Kind]store.Auth{store.Plex: store.AuthPlexSignIn, store.Jellyfin: store.AuthJellyfinSignIn, store.Navidrome: store.AuthNavidromeSignIn}[server.Kind]
 	case form.token != "":
 		server.Token, server.Account, server.DeviceID, server.Auth = form.token, "", "", store.AuthToken
 	case existing.Token == "":
 		return server, giveBack, errors.New("sign in or paste a token")
 	case existing.Auth == store.AuthJellyfinSignIn && existing.URL != server.URL:
 		return server, giveBack, errors.New("the Jellyfin sign-in belongs to the old address, sign in again")
+	case existing.Auth == store.AuthNavidromeSignIn && existing.URL != server.URL:
+		return server, giveBack, errors.New("the Navidrome sign-in belongs to the old address, sign in again")
 	}
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
@@ -352,6 +529,8 @@ func (a *app) resolveServer(ctx context.Context, form submitted, existing store.
 func (a *app) renderServerError(w http.ResponseWriter, r *http.Request, view serverFormView, form submitted, err error) {
 	view.Error = err.Error()
 	view.Kind, view.KindName, view.Label, view.URL, view.Library, view.Enabled = form.kind, kindName(form.kind), form.label, form.url, form.library, form.enabled
+	view.ScrobblePercent = form.scrobblePercent
+	view.SyncInterval = form.syncInterval
 	a.render(w, r, http.StatusBadRequest, "server", view)
 }
 
@@ -370,7 +549,7 @@ func (a *app) deleteServer(w http.ResponseWriter, r *http.Request) {
 	a.apply()
 	a.Log.Info("server removed", "server", slug)
 	a.signOutReplaced(existing, store.Server{})
-	redirectNotice(w, r, slug+" removed. Its URL no longer answers.")
+	a.redirectNotice(w, r, slug+" removed. Its URL no longer answers.")
 }
 
 func (a *app) setServerEnabled(w http.ResponseWriter, r *http.Request) {
@@ -390,7 +569,173 @@ func (a *app) setServerEnabled(w http.ResponseWriter, r *http.Request) {
 	}
 	a.apply()
 	a.Log.Info("server enabled changed", "server", slug, "enabled", enabled)
-	redirectNotice(w, r, slug+" "+map[bool]string{true: "enabled", false: "disabled"}[enabled]+".")
+	a.redirectNotice(w, r, slug+" "+map[bool]string{true: "enabled", false: "disabled"}[enabled]+".")
+}
+
+func (a *app) refreshServer(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	server, ok := a.Store.Snapshot().Server(slug)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	name := registry.DisplayName(kindName(server.Kind), server.Label)
+	if _, running := a.Registry.Status(slug); !running {
+		a.redirectNotice(w, r, "Sync failed for "+name+": it is not running.")
+		return
+	}
+	a.syncInBackground([]store.Server{server})
+	a.redirectNotice(w, r, "Syncing "+name+". Recent activity shows when it finishes.")
+}
+
+func (a *app) refreshAllServers(w http.ResponseWriter, r *http.Request) {
+	servers := slices.DeleteFunc(a.Store.Snapshot().Ordered(), func(server store.Server) bool { return !server.Enabled })
+	if len(servers) == 0 {
+		a.redirectNotice(w, r, "No enabled servers to sync.")
+		return
+	}
+	a.Log.Info("syncing all servers", "count", len(servers))
+	a.syncInBackground(servers)
+	a.redirectNotice(w, r, fmt.Sprintf("Syncing %d %s. Recent activity shows when each finishes.", len(servers), map[bool]string{true: "server", false: "servers"}[len(servers) == 1]))
+}
+
+// syncInBackground refreshes detached from the request, so a browser that
+// leaves or times out does not cancel the sync and mark the server failed.
+func (a *app) syncInBackground(servers []store.Server) {
+	for _, server := range servers {
+		a.goBackground(func() {
+			ctx, cancel := context.WithTimeout(a.ctx, library.ManualTimeout)
+			defer cancel()
+			if err := a.Registry.Refresh(ctx, server.Slug); err != nil {
+				a.Log.Error("manual sync failed", "server", server.Slug, "error", err.Error())
+			}
+		})
+	}
+}
+
+func (a *app) testSearch(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	query := r.URL.Query().Get("q")
+	res, ok := a.Registry.Search(slug, query, 50)
+	if !ok {
+		jsonError(w, http.StatusNotFound, "server is not running or ready")
+		return
+	}
+	type matchTrack struct {
+		ID          string `json:"id"`
+		Title       string `json:"title"`
+		Artist      string `json:"artist"`
+		Album       string `json:"album"`
+		DurationSec int    `json:"duration"`
+		Codec       string `json:"codec"`
+		BitDepth    int    `json:"bitDepth,omitempty"`
+		SampleRate  int    `json:"sampleRate,omitempty"`
+		Lossless    bool   `json:"lossless"`
+		ArtworkURL  string `json:"artworkURL,omitempty"`
+	}
+	type matchAlbum struct {
+		Name       string `json:"name"`
+		Artist     string `json:"artist"`
+		ArtworkURL string `json:"artworkURL,omitempty"`
+		TrackCount int    `json:"trackCount"`
+	}
+	type matchArtist struct {
+		Name       string `json:"name"`
+		ArtworkURL string `json:"artworkURL,omitempty"`
+		TrackCount int    `json:"trackCount"`
+	}
+
+	snapshot := a.Store.Snapshot()
+	base := ""
+	if snapshot.PublicURL != "" && snapshot.Secret != "" {
+		base = snapshot.PublicURL + "/" + slug + "/" + snapshot.Secret
+	}
+
+	matches := make([]matchTrack, len(res.Tracks))
+	for i, t := range res.Tracks {
+		art := ""
+		if t.ArtRef != "" && base != "" {
+			art = base + "/art/" + t.ID
+		}
+		matches[i] = matchTrack{
+			ID:          t.ID,
+			Title:       t.Title,
+			Artist:      library.FormatArtists(t.Artist),
+			Album:       t.Album,
+			DurationSec: t.DurationSec,
+			Codec:       t.Codec,
+			BitDepth:    t.BitDepth,
+			SampleRate:  t.SampleRate,
+			Lossless:    media.Lossless(t.Codec),
+			ArtworkURL:  art,
+		}
+	}
+
+	albums := make([]matchAlbum, len(res.Albums))
+	for i, alb := range res.Albums {
+		art := ""
+		if alb.ArtRef != "" && alb.SampleID != "" && base != "" {
+			art = base + "/art/" + alb.SampleID
+		}
+		albums[i] = matchAlbum{
+			Name:       alb.Name,
+			Artist:     library.FormatArtists(alb.Artist),
+			ArtworkURL: art,
+			TrackCount: alb.TrackCount,
+		}
+	}
+
+	artists := make([]matchArtist, len(res.Artists))
+	for i, art := range res.Artists {
+		artURL := ""
+		if art.ArtRef != "" && art.SampleID != "" && base != "" {
+			artURL = base + "/art/" + art.SampleID
+		}
+		artists[i] = matchArtist{
+			Name:       art.Name,
+			ArtworkURL: artURL,
+			TrackCount: art.TrackCount,
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":       true,
+		"query":    query,
+		"tokens":   res.Tokens,
+		"strict":   res.Strict,
+		"fallback": res.Fallback,
+		"total":    res.Strict + res.Fallback,
+		"tracks":   matches,
+		"albums":   albums,
+		"artists":  artists,
+	})
+}
+
+func (a *app) recentActivity(w http.ResponseWriter, r *http.Request) {
+	filter := r.URL.Query().Get("filter")
+	items := slices.DeleteFunc(a.activityViews(a.Store.Snapshot()), func(item ActivityView) bool {
+		switch filter {
+		case "sync":
+			return item.Kind != "sync" && item.Kind != "sync_error"
+		case "playback":
+			return item.Kind != "now_playing" && item.Kind != "scrobble" && item.Kind != "playback"
+		}
+		return false
+	})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":         true,
+		"activities": items,
+	})
+}
+
+func (a *app) clearActivity(w http.ResponseWriter, r *http.Request) {
+	filter := r.FormValue("filter")
+	a.Registry.ClearActivity(filter)
+	if strings.Contains(r.Header.Get("Accept"), "application/json") || r.Header.Get("X-Requested-With") == "XMLHttpRequest" {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+	a.redirectNotice(w, r, "Activity log cleared.")
 }
 
 // ---- JSON endpoints used by the form's buttons
@@ -412,7 +757,7 @@ func (a *app) testServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.URL = strings.TrimRight(strings.TrimSpace(req.URL), "/")
-	if err := store.ValidateServerURL(req.URL); err != nil {
+	if err := store.ValidateSubmittedServerURL(req.URL); err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -519,7 +864,7 @@ func (a *app) jellyfinSignIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.URL = strings.TrimRight(strings.TrimSpace(req.URL), "/")
-	if err := store.ValidateServerURL(req.URL); err != nil {
+	if err := store.ValidateSubmittedServerURL(req.URL); err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -543,6 +888,55 @@ func (a *app) jellyfinSignIn(w http.ResponseWriter, r *http.Request) {
 	a.signins.reset(req.URL)
 	ref := a.refs.put(store.Jellyfin, account.Token, account.Username, account.DeviceID)
 	a.Log.Info("jellyfin sign-in completed", "host", hostOf(req.URL), "username", account.Username)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "username": account.Username, "ref": ref})
+}
+
+type navidromeSignInRequest struct {
+	URL      string `json:"url"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// navidromeSignIn verifies a Navidrome username and password against its
+// Subsonic API and remembers the credential for the "Paste a token/sign in"
+// tab. Navidrome offers no separate API token, so the pair is stored as the
+// server's token once the form is saved.
+func (a *app) navidromeSignIn(w http.ResponseWriter, r *http.Request) {
+	var req navidromeSignInRequest
+	if err := readJSON(r, &req); err != nil {
+		jsonError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	req.URL = strings.TrimRight(strings.TrimSpace(req.URL), "/")
+	if err := store.ValidateSubmittedServerURL(req.URL); err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.Username = strings.TrimSpace(req.Username)
+	if req.Username == "" || req.Password == "" {
+		jsonError(w, http.StatusBadRequest, "a username and password are required")
+		return
+	}
+	if !a.signins.attempt(req.URL) {
+		jsonError(w, http.StatusTooManyRequests, "too many failed sign-ins for this server, try again in a minute")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), probeTimeout)
+	defer cancel()
+	account, err := a.Registry.NavidromeSignIn(ctx, req.URL, req.Username, req.Password)
+	switch {
+	case errors.Is(err, media.ErrUnauthorized):
+		a.Log.Warn("navidrome sign-in rejected", "host", hostOf(req.URL), "username", req.Username)
+		jsonError(w, http.StatusUnauthorized, "navidrome rejected the username or password")
+		return
+	case err != nil:
+		a.signins.forgive(req.URL)
+		jsonError(w, http.StatusBadGateway, describe(err).Error())
+		return
+	}
+	a.signins.reset(req.URL)
+	ref := a.refs.put(store.Navidrome, account.Token, account.Username, "")
+	a.Log.Info("navidrome sign-in completed", "host", hostOf(req.URL), "username", account.Username)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "username": account.Username, "ref": ref})
 }
 

@@ -5,11 +5,13 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"time"
 
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/store"
 )
 
-var idPattern = regexp.MustCompile(`^[0-9a-fA-F-]{1,36}$`)
+var idPattern = regexp.MustCompile(`^[0-9A-Za-z_-]{1,128}$`)
 
 func trackID(r *http.Request) (string, bool) {
 	id := r.PathValue("id")
@@ -17,12 +19,19 @@ func trackID(r *http.Request) (string, bool) {
 }
 
 func (s *server) stream(w http.ResponseWriter, r *http.Request, src source) {
+	if !s.checkAuth(w, r, src) {
+		return
+	}
 	track, status := s.resolve(r, src)
 	if status != http.StatusOK {
 		w.WriteHeader(status)
 		return
 	}
-	descriptor := toStreamJSON(src.base, track)
+	key := src.site.LinkKey
+	if s.authMode(src.site) == store.AppAuthDisabled {
+		key = ""
+	}
+	descriptor := toStreamJSON(fileLink(src.base, key, src.Slug, track.ID, time.Now()), track)
 	src.Log.Info("stream", "id", track.ID, "track", label(track), "quality", descriptor.Quality, "format", descriptor.Format)
 	writeJSON(w, descriptor)
 }

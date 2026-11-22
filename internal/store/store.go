@@ -5,7 +5,9 @@
 package store
 
 import (
+	"cmp"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,33 +27,37 @@ const FileName = "addon.json"
 type Kind string
 
 const (
-	Plex     Kind = "plex"
-	Jellyfin Kind = "jellyfin"
+	Plex      Kind = "plex"
+	Jellyfin  Kind = "jellyfin"
+	Navidrome Kind = "navidrome"
 )
 
-var Kinds = []Kind{Plex, Jellyfin}
+var Kinds = []Kind{Plex, Jellyfin, Navidrome}
 
 type Auth string
 
 const (
-	AuthToken          Auth = "token"
-	AuthPlexSignIn     Auth = "plex-signin"
-	AuthJellyfinSignIn Auth = "jellyfin-signin"
+	AuthToken           Auth = "token"
+	AuthPlexSignIn      Auth = "plex-signin"
+	AuthJellyfinSignIn  Auth = "jellyfin-signin"
+	AuthNavidromeSignIn Auth = "navidrome-signin"
 )
 
 type Server struct {
-	Slug        string    `json:"slug"`
-	Label       string    `json:"label"`
-	Kind        Kind      `json:"kind"`
-	URL         string    `json:"url"`
-	Token       string    `json:"token"`
-	Auth        Auth      `json:"auth"`
-	Account     string    `json:"account"`
-	DeviceID    string    `json:"device_id,omitempty"`
-	Library     string    `json:"library"`
-	LibraryName string    `json:"library_name,omitempty"`
-	Enabled     bool      `json:"enabled"`
-	Created     time.Time `json:"created"`
+	Slug            string    `json:"slug"`
+	Label           string    `json:"label"`
+	Kind            Kind      `json:"kind"`
+	URL             string    `json:"url"`
+	Token           string    `json:"token"`
+	Auth            Auth      `json:"auth"`
+	Account         string    `json:"account"`
+	DeviceID        string    `json:"device_id,omitempty"`
+	Library         string    `json:"library"`
+	LibraryName     string    `json:"library_name,omitempty"`
+	SyncInterval    string    `json:"sync_interval,omitempty"`
+	ScrobblePercent int       `json:"scrobble_percent,omitempty"`
+	Enabled         bool      `json:"enabled"`
+	Created         time.Time `json:"created"`
 }
 
 type Admin struct {
@@ -59,12 +65,34 @@ type Admin struct {
 	SessionKey   string `json:"session_key"`
 }
 
+const (
+	AppAuthDisabled = "disabled"
+	AppAuthLog      = "log"
+	AppAuthEnforce  = "enforce"
+)
+
+// AppAuth is the BitChord app authentication set on the setup page. An empty
+// field means its default: disabled, no extra hosts, the default issuer.
+type AppAuth struct {
+	Mode   string   `json:"mode,omitempty"`
+	Hosts  []string `json:"hosts,omitempty"`
+	Issuer string   `json:"issuer,omitempty"`
+}
+
+func (a AppAuth) EffectiveMode() string {
+	return cmp.Or(a.Mode, AppAuthDisabled)
+}
+
 type Snapshot struct {
-	PublicURL string   `json:"public_url"`
-	Secret    string   `json:"secret"`
-	ClientID  string   `json:"client_id"`
-	Admin     *Admin   `json:"admin,omitempty"`
-	Servers   []Server `json:"servers"`
+	PublicURL string `json:"public_url"`
+	Secret    string `json:"secret"`
+	ClientID  string `json:"client_id"`
+	// LinkKey signs the file links handed to BitChord. It never leaves this
+	// server: a backup omits it and a restore makes a new one.
+	LinkKey string   `json:"link_key,omitempty"`
+	AppAuth AppAuth  `json:"app_auth,omitzero"`
+	Admin   *Admin   `json:"admin,omitempty"`
+	Servers []Server `json:"servers"`
 }
 
 func (s Snapshot) Server(slug string) (Server, bool) {
@@ -79,6 +107,7 @@ func (s Snapshot) Server(slug string) (Server, bool) {
 func (s Snapshot) clone() Snapshot {
 	out := s
 	out.Servers = slices.Clone(s.Servers)
+	out.AppAuth.Hosts = slices.Clone(s.AppAuth.Hosts)
 	if s.Admin != nil {
 		admin := *s.Admin
 		out.Admin = &admin
@@ -102,7 +131,7 @@ func Open(dir string) (*Store, error) {
 	raw, err := os.ReadFile(s.path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		data := Snapshot{Secret: NewSecret(), ClientID: newClientID(), Servers: []Server{}}
+		data := Snapshot{Secret: NewSecret(), ClientID: newClientID(), LinkKey: NewLinkKey(), Servers: []Server{}}
 		if err := s.save(data); err != nil {
 			return nil, err
 		}
@@ -120,6 +149,12 @@ func Open(dir string) (*Store, error) {
 	}
 	if data.Servers == nil {
 		data.Servers = []Server{}
+	}
+	if data.LinkKey == "" {
+		data.LinkKey = NewLinkKey()
+		if err := s.save(data); err != nil {
+			return nil, err
+		}
 	}
 	s.current.Store(&data)
 	return s, nil
@@ -235,6 +270,13 @@ func (s *Store) RegenerateSecret() (string, error) {
 	})
 }
 
+func (s *Store) SetAppAuth(settings AppAuth) error {
+	return s.Update(func(data *Snapshot) error {
+		data.AppAuth = settings
+		return nil
+	})
+}
+
 func (s *Store) SetAdmin(admin *Admin) error {
 	return s.Update(func(data *Snapshot) error {
 		data.Admin = admin
@@ -242,9 +284,31 @@ func (s *Store) SetAdmin(admin *Admin) error {
 	})
 }
 
+// Restore replaces the configuration with snap through the same validation as
+// any save. The current admin is always kept, so a backup can never change the
+// password or sign anyone in; a backup without a secret or client id keeps the
+// current ones. The link key is always new, so a backup never carries one.
+func (s *Store) Restore(snap Snapshot) error {
+	return s.Update(func(data *Snapshot) error {
+		restored := snap.clone()
+		restored.Admin = data.Admin
+		restored.Secret = cmp.Or(restored.Secret, data.Secret)
+		restored.ClientID = cmp.Or(restored.ClientID, data.ClientID)
+		restored.LinkKey = NewLinkKey()
+		if restored.Servers == nil {
+			restored.Servers = []Server{}
+		}
+		if err := Validate(restored); err != nil {
+			return fmt.Errorf("the backup is not a valid configuration: %w", err)
+		}
+		*data = restored
+		return nil
+	})
+}
+
 var ErrNoServer = errors.New("no such server")
 
-var slugPattern = regexp.MustCompile(`^(plex|jellyfin)-[1-9][0-9]*$`)
+var slugPattern = regexp.MustCompile(`^(plex|jellyfin|navidrome)-[1-9][0-9]*$`)
 
 func nextSlug(kind Kind, servers []Server) string {
 	taken := map[string]bool{}
@@ -280,6 +344,12 @@ func NewSecret() string {
 		raw[i] = secretAlphabet[int(b)%len(secretAlphabet)]
 	}
 	return string(raw)
+}
+
+func NewLinkKey() string {
+	raw := make([]byte, 32)
+	rand.Read(raw)
+	return base64.RawURLEncoding.EncodeToString(raw)
 }
 
 func newClientID() string {

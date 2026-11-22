@@ -4,7 +4,10 @@ package setup
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"embed"
+	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -20,15 +23,28 @@ import (
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/store"
 )
 
-//go:embed templates/*.html
-var templateFiles embed.FS
+var (
+	//go:embed templates/*.html
+	templateFiles embed.FS
 
-//go:embed static/style.css
-var staticFiles embed.FS
+	//go:embed static/style.css
+	staticFiles embed.FS
+
+	styleHash string
+)
+
+func init() {
+	raw, err := staticFiles.ReadFile("static/style.css")
+	if err == nil {
+		h := sha256.Sum256(raw)
+		styleHash = fmt.Sprintf("%x", h[:8])
+	}
+}
 
 const (
 	cookieName      = "addon_setup"
 	maxFormBytes    = 64 << 10
+	maxBackupBytes  = 1 << 20
 	loginAttempts   = 5
 	lockoutWindow   = time.Minute
 	tokenRefTTL     = 10 * time.Minute
@@ -38,12 +54,18 @@ const (
 type Runtime interface {
 	Apply(snapshot store.Snapshot)
 	Status(slug string) (registry.Status, bool)
+	Refresh(ctx context.Context, slug string) error
+	Search(slug, query string, limit int) (registry.SearchResult, bool)
+	DefaultInterval() time.Duration
+	RecentActivity() []registry.Activity
+	ClearActivity(filter string)
 	Probe(ctx context.Context, server store.Server) (registry.Probe, error)
 	PlexPIN(ctx context.Context) (registry.PIN, error)
 	PlexClaim(ctx context.Context, id int) (registry.Account, bool, error)
 	PlexServers(ctx context.Context, token string) ([]registry.PlexServer, error)
 	JellyfinSignIn(ctx context.Context, serverURL, username, password string) (registry.Account, error)
 	JellyfinSignOut(ctx context.Context, serverURL, deviceID, token string) error
+	NavidromeSignIn(ctx context.Context, serverURL, username, password string) (registry.Account, error)
 	TokenInUse(slug, token string) (bool, <-chan struct{})
 }
 
@@ -65,6 +87,7 @@ type app struct {
 	signins    *limiter
 	refs       *tokenRefs
 	verifySem  chan struct{}
+	messageKey []byte
 	applyMu    sync.Mutex
 	ctx        context.Context
 	shutdown   context.CancelFunc
@@ -115,13 +138,15 @@ func New(o Options) *Handler {
 		o.SignOutWait = signOutWait
 	}
 	a := &app{
-		Options:   o,
-		pages:     parsePages(),
-		logins:    newLimiter(o.Now, loginAttempts, lockoutWindow),
-		signins:   newLimiter(o.Now, loginAttempts, lockoutWindow),
-		refs:      newTokenRefs(o.Now, tokenRefTTL),
-		verifySem: make(chan struct{}, verifyPasswords),
+		Options:    o,
+		pages:      parsePages(),
+		logins:     newLimiter(o.Now, loginAttempts, lockoutWindow),
+		signins:    newLimiter(o.Now, loginAttempts, lockoutWindow),
+		refs:       newTokenRefs(o.Now, tokenRefTTL),
+		verifySem:  make(chan struct{}, verifyPasswords),
+		messageKey: make([]byte, 32),
 	}
+	rand.Read(a.messageKey)
 	a.ctx, a.shutdown = context.WithCancel(context.Background())
 	return &Handler{Handler: a.handler(), app: a}
 }
@@ -139,6 +164,18 @@ func parsePages() map[string]*template.Template {
 		page := strings.TrimSuffix(strings.TrimPrefix(name, "templates/"), ".html")
 		pages[page] = template.Must(template.New("layout.html").Funcs(template.FuncMap{
 			"since": since,
+			"formatVersion": func(v string) string {
+				if v == "" || v == "dev" {
+					return "dev"
+				}
+				if strings.HasPrefix(v, "v") {
+					return v
+				}
+				return "v" + v
+			},
+			"styleHash": func() string {
+				return styleHash
+			},
 		}).ParseFS(templateFiles, "templates/layout.html", name))
 	}
 	return pages
@@ -154,6 +191,9 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /setup/logout", a.logout)
 	mux.HandleFunc("POST /setup/public-url", a.setPublicURL)
 	mux.HandleFunc("POST /setup/secret/regenerate", a.regenerateSecret)
+	mux.HandleFunc("POST /setup/app-auth", a.setAppAuth)
+	mux.HandleFunc("POST /setup/backup", a.exportBackup)
+	mux.HandleFunc("POST /setup/restore", a.restoreBackup)
 	mux.HandleFunc("GET /setup/servers/new", a.newServerForm)
 	mux.HandleFunc("POST /setup/servers", a.createServer)
 	mux.HandleFunc("POST /setup/servers/test", a.testServer)
@@ -161,13 +201,20 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /setup/servers/{slug}", a.updateServer)
 	mux.HandleFunc("POST /setup/servers/{slug}/delete", a.deleteServer)
 	mux.HandleFunc("POST /setup/servers/{slug}/enabled", a.setServerEnabled)
+	mux.HandleFunc("POST /setup/servers/{slug}/refresh", a.refreshServer)
+	mux.HandleFunc("POST /setup/sync-all", a.refreshAllServers)
+	mux.HandleFunc("GET /setup/servers/{slug}/test-search", a.testSearch)
+	mux.HandleFunc("GET /setup/servers/{slug}/search", a.testSearch)
+	mux.HandleFunc("GET /setup/activity", a.recentActivity)
+	mux.HandleFunc("POST /setup/activity/clear", a.clearActivity)
 	mux.HandleFunc("POST /setup/plex/pin", a.plexPIN)
 	mux.HandleFunc("GET /setup/plex/pin/{id}", a.plexPoll)
 	mux.HandleFunc("POST /setup/jellyfin/signin", a.jellyfinSignIn)
+	mux.HandleFunc("POST /setup/navidrome/signin", a.navidromeSignIn)
 	mux.HandleFunc("/setup/", func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "not found", http.StatusNotFound) })
 
 	outer := http.NewServeMux()
-	outer.Handle("GET /setup/static/", http.StripPrefix("/setup/", http.FileServerFS(staticFiles)))
+	outer.Handle("/setup/static/", http.StripPrefix("/setup/static", newStaticServer(staticFiles)))
 	outer.Handle("/setup", a.gate(mux))
 	outer.Handle("/setup/", a.gate(mux))
 	return outer
@@ -180,12 +227,19 @@ type session struct {
 	cookie string
 }
 
+func securityHeaders(w http.ResponseWriter) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Referrer-Policy", "same-origin")
+}
+
 // gate decides who may reach the mux: with no admin only the create-password
 // form exists; with no valid session only the login form; a POST with a
 // session must carry the CSRF token and come from this origin.
 func (a *app) gate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
+		securityHeaders(w)
+		r.Body = http.MaxBytesReader(w, r.Body, bodyLimit(r))
 		if r.Method == http.MethodPost && crossSite(r) {
 			http.Error(w, "cross-site request refused", http.StatusForbidden)
 			return
@@ -215,9 +269,11 @@ func (a *app) gate(next http.Handler) http.Handler {
 			}
 			return
 		}
-		if r.Method == http.MethodPost && !a.csrfOK(r, key, cookie.Value) {
-			http.Error(w, "invalid or missing CSRF token", http.StatusForbidden)
-			return
+		if r.Method == http.MethodPost {
+			if err := checkCSRF(r, key, cookie.Value); err != nil {
+				a.refuseUnchecked(w, r, err)
+				return
+			}
 		}
 		ctx := context.WithValue(r.Context(), sessionKeyType{}, session{key: key, cookie: cookie.Value})
 		next.ServeHTTP(w, r.WithContext(ctx))
@@ -239,15 +295,45 @@ func crossSite(r *http.Request) bool {
 	return err != nil || !strings.EqualFold(parsed.Host, r.Host)
 }
 
-func (a *app) csrfOK(r *http.Request, key []byte, cookie string) bool {
+func bodyLimit(r *http.Request) int64 {
+	if r.Method == http.MethodPost && r.URL.Path == "/setup/restore" {
+		return maxBackupBytes
+	}
+	return maxFormBytes
+}
+
+var errBadCSRF = errors.New("invalid or missing CSRF token")
+
+func checkCSRF(r *http.Request, key []byte, cookie string) error {
 	token := r.Header.Get("X-CSRF-Token")
 	if token == "" {
-		if err := r.ParseForm(); err != nil {
-			return false
+		var err error
+		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+			err = r.ParseMultipartForm(maxBackupBytes)
+		} else {
+			err = r.ParseForm()
+		}
+		if err != nil {
+			return err
 		}
 		token = r.PostFormValue("csrf")
 	}
-	return csrfValid(key, cookie, token)
+	if !csrfValid(key, cookie, token) {
+		return errBadCSRF
+	}
+	return nil
+}
+
+func (a *app) refuseUnchecked(w http.ResponseWriter, r *http.Request, err error) {
+	var tooLarge *http.MaxBytesError
+	switch {
+	case !errors.As(err, &tooLarge):
+		http.Error(w, errBadCSRF.Error(), http.StatusForbidden)
+	case r.URL.Path == "/setup/restore":
+		a.redirectError(w, r, fmt.Sprintf("Restore failed: the backup file is larger than %d MB.", maxBackupBytes>>20))
+	default:
+		http.Error(w, "request too large", http.StatusRequestEntityTooLarge)
+	}
 }
 
 func currentSession(r *http.Request) session {

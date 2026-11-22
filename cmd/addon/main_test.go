@@ -73,6 +73,10 @@ func jellyfinServer(fake *fakes.Jellyfin) store.Server {
 	return store.Server{Kind: store.Jellyfin, URL: fake.URL, Token: fakes.JellyfinToken, Auth: store.AuthToken, Enabled: true}
 }
 
+func navidromeServer(fake *fakes.Navidrome) store.Server {
+	return store.Server{Kind: store.Navidrome, URL: fake.URL, Token: fakes.NavidromeToken, Auth: store.AuthNavidromeSignIn, Enabled: true}
+}
+
 // start runs serve in the background and returns the base URL once it listens.
 func start(ctx context.Context, t *testing.T, cfg config.Config, st *store.Store, log *slog.Logger) (string, <-chan error) {
 	t.Helper()
@@ -138,12 +142,15 @@ func TestRemovedVariablesAreWarnedAboutByName(t *testing.T) {
 	var logs bytes.Buffer
 	log := newLogger("text", slog.LevelInfo, &logs)
 	warnRemoved(log, config.Removed(func(key string) string {
-		return map[string]string{"PLEX_URL": "http://plex:32400", "ADDON_SECRET": "s3cr3t-s3cr3t-s3cr3t"}[key]
+		return map[string]string{"PLEX_URL": "http://plex:32400", "ADDON_SECRET": "s3cr3t-s3cr3t-s3cr3t", "NAVIDROME_PASSWORD": "s3cr3t-s3cr3t-s3cr3t"}[key]
 	}))
-	for _, want := range []string{"level=WARN", "PLEX_URL is no longer read", "ADDON_SECRET is no longer read", "setup page"} {
+	for _, want := range []string{"level=WARN", "PLEX_URL is no longer read", "ADDON_SECRET is no longer read", "setup page", "NAVIDROME_PASSWORD is not read; add Navidrome servers on the setup page"} {
 		if !strings.Contains(logs.String(), want) {
 			t.Errorf("logs lack %s:\n%s", want, logs.String())
 		}
+	}
+	if strings.Contains(logs.String(), "NAVIDROME_PASSWORD is no longer read") {
+		t.Error("a Navidrome variable was called removed, but it was never read")
 	}
 	if strings.Contains(logs.String(), "s3cr3t") {
 		t.Error("a removed variable's value was logged")
@@ -180,8 +187,15 @@ func TestAnEmptyStoreServesTheSetupPageAndIsHealthy(t *testing.T) {
 	if status, body := get(t, base+"/setup"); status != http.StatusOK || !strings.Contains(body, "Create a password") {
 		t.Fatalf("setup page: %d %s", status, body)
 	}
+	noFollow := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	if res, err := noFollow.Get(base + "/"); err != nil || res.StatusCode != http.StatusFound || res.Header.Get("Location") != "/setup" {
+		t.Fatalf("root redirect: err=%v, status=%d, location=%s", err, res.StatusCode, res.Header.Get("Location"))
+	}
 	if status, _ := get(t, base+"/setup/static/style.css"); status != http.StatusOK {
 		t.Fatalf("stylesheet: %d", status)
+	}
+	if status, body := get(t, base+"/favicon.ico"); status != http.StatusOK || !strings.Contains(body, "<svg") {
+		t.Fatalf("favicon: %d %s", status, body)
 	}
 	if status, body := get(t, base+"/plex-1/"+st.Snapshot().Secret+"/manifest.json"); status != http.StatusNotFound || body != "" {
 		t.Fatalf("unknown server: %d %q", status, body)
@@ -198,14 +212,14 @@ func TestAnEmptyStoreServesTheSetupPageAndIsHealthy(t *testing.T) {
 }
 
 func TestServeAnswersEveryServerAndShutsDownOnCancel(t *testing.T) {
-	plexFake, jellyfinFake := fakes.NewPlex(t), fakes.NewJellyfin(t)
-	st := newStore(t, plexServer(plexFake), jellyfinServer(jellyfinFake))
+	plexFake, jellyfinFake, navidromeFake := fakes.NewPlex(t), fakes.NewJellyfin(t), fakes.NewNavidrome(t)
+	st := newStore(t, plexServer(plexFake), jellyfinServer(jellyfinFake), navidromeServer(navidromeFake))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	logs := &syncBuffer{}
 	base, done := start(ctx, t, testConfig(), st, newLogger("text", slog.LevelInfo, logs))
 	waitHealthy(t, base)
-	cases := map[string]string{"plex-1": `"id":"101"`, "jellyfin-1": `"id":"f101"`}
+	cases := map[string]string{"plex-1": `"id":"101"`, "jellyfin-1": `"id":"f101"`, "navidrome-1": `"id":"s-1"`}
 	for slug, wantID := range cases {
 		if status, body := get(t, base+"/"+slug+"/"+testSecret+"/search?q=new+religion"); status != http.StatusOK || !strings.Contains(body, wantID) {
 			t.Fatalf("%s search: %d %s", slug, status, body)
@@ -229,12 +243,12 @@ func TestServeAnswersEveryServerAndShutsDownOnCancel(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("serve did not return after cancel")
 	}
-	for _, want := range []string{"msg=listening", "msg=\"library indexed\"", "server=plex-1", "server=jellyfin-1", "servers=2"} {
+	for _, want := range []string{"msg=listening", "msg=\"library indexed\"", "server=plex-1", "server=jellyfin-1", "server=navidrome-1", "servers=3"} {
 		if !strings.Contains(logs.String(), want) {
 			t.Errorf("logs lack %s:\n%s", want, logs.String())
 		}
 	}
-	if strings.Contains(logs.String(), fakes.PlexToken) || strings.Contains(logs.String(), testSecret) {
+	if strings.Contains(logs.String(), fakes.PlexToken) || strings.Contains(logs.String(), testSecret) || strings.Contains(logs.String(), fakes.NavidromePassword) {
 		t.Error("a credential reached the logs")
 	}
 }
@@ -352,4 +366,38 @@ func TestNewLoggerFormats(t *testing.T) {
 	if strings.Contains(text.String(), "quiet") {
 		t.Error("level not applied")
 	}
+}
+
+func TestServeTakesAppAuthFromTheSetupPageWithoutARestart(t *testing.T) {
+	fake := fakes.NewPlex(t)
+	st := newStore(t, plexServer(fake))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	logs := &syncBuffer{}
+	base, done := start(ctx, t, testConfig(), st, newLogger("text", slog.LevelInfo, logs))
+	waitHealthy(t, base)
+	if !strings.Contains(logs.String(), "app_auth=disabled") {
+		t.Errorf("the startup line lacks the app auth mode:\n%s", logs.String())
+	}
+
+	manifest := base + "/plex-1/" + testSecret + "/manifest.json"
+	search := base + "/plex-1/" + testSecret + "/search?q=test"
+	if status, body := get(t, manifest); status != http.StatusOK || strings.Contains(body, "bitchordAuth") {
+		t.Fatalf("manifest while disabled: %d %s", status, body)
+	}
+	if status, _ := get(t, search); status != http.StatusOK {
+		t.Fatalf("search while disabled: %d", status)
+	}
+
+	if err := st.SetAppAuth(store.AppAuth{Mode: store.AppAuthEnforce}); err != nil {
+		t.Fatal(err)
+	}
+	if status, body := get(t, manifest); status != http.StatusOK || !strings.Contains(body, `"bitchordAuth":true`) {
+		t.Fatalf("manifest while enforcing: %d %s", status, body)
+	}
+	if status, body := get(t, search); status != http.StatusUnauthorized || !strings.Contains(body, `"error":"bitchord_auth"`) {
+		t.Fatalf("unauthenticated search while enforcing: %d %s", status, body)
+	}
+	cancel()
+	<-done
 }

@@ -1,7 +1,7 @@
 <h1 align="center">bitchord-selfhosted-addon</h1>
 
 <p align="center">
-  Play your own Plex and Jellyfin music libraries inside BitChord.
+  Play your own Plex, Jellyfin and Navidrome music libraries inside BitChord.
 </p>
 
 <div align="center">
@@ -10,29 +10,36 @@
 
 ## 🎵 What it is
 
-A small self-hosted server that adds your Plex and Jellyfin music libraries
-to BitChord (Android) as sources. BitChord searches your library through the
-addon and streams your original files.
+A small self-hosted server that adds your Plex, Jellyfin and Navidrome music
+libraries to BitChord (Android) as sources. BitChord searches your library
+through the addon and streams your original files.
 
 BitChord prefers addons you add over its built-in sources, so when a song is
 in your library, your own copy plays.
 
 > [!IMPORTANT]
-> **You need your own Plex or Jellyfin server with your own music on it.**
+> **You need your own Plex, Jellyfin or Navidrome server with your own music on it.**
 > This addon adds no music and is not a streaming service. If you don't run
-> Plex or Jellyfin, it has nothing to play, so you don't need it.
+> Plex, Jellyfin or Navidrome, it has nothing to play, so you don't need it.
 
 ## ✨ Features
 
 - **Set up in the browser.** Open `/setup`, choose a password, add your
   servers, and copy each one's link into BitChord.
-- **Any number of servers.** Each Plex or Jellyfin server gets its own link
-  and shows up in BitChord as its own source.
-- **Fast search.** The addon keeps a list of your tracks in memory, about
-  30–50 MB for 100,000 tracks.
+- **Any number of servers.** Each Plex, Jellyfin or Navidrome server gets its
+  own link and shows up in BitChord as its own source.
+- **Fast, forgiving search.** The addon keeps a list of your tracks in
+  memory, about 60–80 MB for 100,000 tracks. Search finishes the last word
+  you typed, forgives a small typo in longer words, and knows abbreviations
+  such as ft., pt., vol. and OST.
+- **Search tester.** Try a query against a server's index on the setup page
+  to see the words it becomes and the songs and albums it matches. Press `/`
+  to jump to it and Escape to clear and close it.
 - **Original quality.** Your files are streamed as they are, with seeking.
-- **Private.** Your Plex and Jellyfin tokens never leave the addon, and every
-  link contains a secret.
+- **Sync webhooks.** Trigger instant library scans via webhooks from Plex, Jellyfin, Navidrome, or automation scripts.
+- **Private.** Your Plex, Jellyfin and Subsonic tokens never leave the addon,
+  and every link contains a secret. Optional app authentication can also
+  require that requests come from the BitChord app.
 
 <p align="center">
   <img src="docs/screenshots/setup.png" alt="The setup page listing three servers" width="49%">
@@ -42,7 +49,7 @@ in your library, your own copy plays.
 ## 📋 Requirements
 
 - Docker.
-- A Plex server, or Jellyfin 10.9 or newer, that the addon can reach.
+- A Plex server, Jellyfin 10.9 or newer, or any Subsonic-compatible server (Navidrome, Gonic, Lyrion/LMS, Airsonic, Funkwhale, Ampache) that the addon can reach.
 - HTTPS, which BitChord requires. Use a reverse proxy such as Caddy, Traefik
   or nginx, or a
   [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/).
@@ -90,14 +97,55 @@ in your library, your own copy plays.
    right away: until a password is set, anyone who opens the page can claim
    it.
 
-5. **Add a server**: pick Plex or Jellyfin, sign in or paste a token,
-   optionally pick a library, and save. The public URL is filled in from the
-   address you opened; change it on the page if it is wrong.
+5. **Add a server**: pick Plex, Jellyfin or Navidrome, sign in or paste a
+   token, optionally pick a library, and save. The public URL is filled in from
+   the address you opened; change it on the page if it is wrong.
 
 6. **Add it to BitChord.** Copy the link from the server's card. In
    BitChord, open **Sources**, add an addon, and paste it.
 
 To update, run `docker compose pull` and then `docker compose up -d`.
+
+### 🔐 App authentication
+
+App authentication is **off by default**. When it is on, the addon checks
+that searches and streams come from the BitChord app, using BitChord Addon
+Auth v1. Set it under **App authentication** on the setup page:
+
+- **Off**: no checks. Anyone with a server's link can search and play.
+- **Log only**: every request is checked, and each one that would be refused
+  is logged as `bitchord-auth would refuse ...`, but all are answered. Use it
+  to see whether your app sends Addon Auth before you enforce.
+- **Enforce**: a search or stream without a valid token gets `401`, and a
+  play link without a valid signature gets `403`. This needs a BitChord
+  version that sends Addon Auth headers; older versions get `401` and cannot
+  use the addon.
+
+BitChord gets a token from the issuer that is bound to a key on the phone,
+and sends it with each request in `X-BitChord-Token`, along with a fresh
+proof signed by that key for the host it calls in `X-BitChord-Proof`. The
+addon fetches the issuer's signing keys from
+`<issuer>/.well-known/jwks.json` and caches them for an hour. It refuses a
+token from another issuer or for another audience, an expired token, a proof
+for a host it does not serve, a proof dated more than a minute ahead or more
+than two minutes old, and a proof it has already accepted. While app
+authentication is on, each stream answer carries a play link signed with a
+key that never leaves the addon, valid for six hours so a long track or a
+paused queue keeps playing.
+
+- **Extra allowed hosts**: the host of your public URL is always allowed.
+  Add any other host name BitChord reaches the addon by, separated by commas
+  or one per line.
+- **Issuer URL**: prefilled with the default,
+  `https://bitchord-auth.kushagrasingh.in`. Change it to use another issuer.
+
+> [!IMPORTANT]
+> The default issuer is a third-party domain that this project has not
+> confirmed as BitChord's official one. That is why app authentication is off
+> by default. Turn it on only if you trust that issuer, or set one you do.
+
+These settings are saved in `/data/addon.json` and included in backups. The
+play link key is not: it is made on this server and replaced on restore.
 
 ### Upgrading from v0.4
 
@@ -125,6 +173,12 @@ Before pulling the new image:
 Everything is saved in `/data/addon.json`, including your server tokens, so
 keep that folder private.
 
+> [!WARNING]
+> **A Navidrome password is stored as is in `/data/addon.json`.** Subsonic
+> token authentication signs every request with the password itself, so the
+> addon has to keep it. Sign in with a dedicated non-admin Navidrome account,
+> not your admin account.
+
 These optional environment variables are the only other settings:
 
 | Variable           | Default | Meaning                                  |
@@ -133,6 +187,17 @@ These optional environment variables are the only other settings:
 | `PORT`             | `8080`  | Port the addon listens on                |
 | `LOG_LEVEL`        | `info`  | `debug`, `info`, `warn` or `error`       |
 | `LOG_FORMAT`       | `text`  | `text`, or `json` for log collectors     |
+
+### 💾 Backups
+
+**Backup and restore** on the setup page downloads your public URL, secret,
+servers and app authentication settings, tokens included, as one file encrypted with a password you choose
+(AES-256-GCM, key from PBKDF2-HMAC-SHA256). The setup password is never in
+it. Restoring a backup replaces every server and brings back its secret, so
+each BitChord link reverts to the one in the backup, and Jellyfin servers it
+drops or changes are signed out. Your setup password stays as it is. A
+backup file can be at most 1 MB, and an unencrypted copy of `addon.json`
+restores too.
 
 ## 📱 Using it in BitChord
 
@@ -154,6 +219,22 @@ it off.
 > Treat each link like a password: anyone who has it can stream that
 > library. To revoke every link at once, regenerate the secret on the setup
 > page and add the new links to BitChord.
+
+### 🔄 Sync Webhooks
+
+Each server provides an automated sync webhook URL shown on its card in `/setup`:
+
+```
+https://music.example.com/<server id>/<secret>/sync
+```
+
+A `POST` to it re-reads that server's library and answers once the sync is
+done. A `POST` that arrives while a sync is already running answers `202`
+and starts nothing, so bursts of calls cost one scan. Use it from a
+post-import script, Jellyfin's Webhook plugin (send only "Item Added"), or
+Plex Webhooks. Plex sends every event, including each play and pause, to a
+webhook, so point it at the addon only through something that passes on
+`library.new` alone.
 
 ## 🔀 Reverse proxy notes
 
@@ -203,16 +284,17 @@ server. Passwords, tokens and the secret are never logged.
 | The setup page asks for a password I never set | Someone else got there first. Delete the `admin` entry in `/data/addon.json` and restart           |
 | My servers are gone after an update          | The `/data` volume is missing or changed. Check `compose.yml`                                      |
 | Log says `cannot open the data file`         | The addon can't write `/data`, or `addon.json` is broken. Fix the folder owner or the file         |
-| Log says Plex or Jellyfin rejected the token | The token was revoked. Edit the server on the setup page and sign in again                         |
+| Log says Plex, Jellyfin or Navidrome rejected the token | The token or credential was revoked. Edit the server on the setup page and sign in again |
 | Sign in with Plex can't reach plex.tv        | Paste a token instead                                                                             |
 | A server shows as unreachable                | Enter an address the container can reach, such as a Docker service name                           |
 | Search works but playback fails              | Your reverse proxy is buffering or timing out. See the reverse proxy notes                         |
 | A new album doesn't show up                  | Wait for the next refresh, or disable and re-enable the server on the setup page                  |
+| BitChord gets `401` after enforcing app authentication | That BitChord version does not send Addon Auth, or reaches the addon by another host. Set the mode to Log only and read the log, add the host, or turn it off |
 
 ## 🗺️ Roadmap
 
-- **Emby** support.
-- **Navidrome** and other Subsonic-compatible servers.
+- [x] **Navidrome** and other Subsonic-compatible servers.
+- [ ] **Emby** support.
 
 ## 🧑‍💻 Development
 
@@ -221,7 +303,7 @@ go test -race ./...
 gofmt -l . && go vet ./...
 ```
 
-Tests use fake Plex, Jellyfin and plex.tv servers in `internal/fakes`, so no
+Tests use fake Plex, Jellyfin, Navidrome and plex.tv servers in `internal/fakes`, so no
 real server is needed.
 
 ### Releasing

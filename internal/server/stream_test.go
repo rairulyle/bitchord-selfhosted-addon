@@ -73,7 +73,7 @@ func TestStreamMisses(t *testing.T) {
 		}
 	}
 	before := len(h.fake.Requests())
-	h.get("/plex-1/" + testSecret + "/stream/xyz")
+	h.get("/plex-1/" + testSecret + "/stream/abc.def")
 	if len(h.fake.Requests()) != before {
 		t.Error("a malformed id must not reach Plex")
 	}

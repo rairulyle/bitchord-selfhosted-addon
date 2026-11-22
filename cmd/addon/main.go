@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"strconv"
 	"syscall"
 	"time"
@@ -76,6 +77,10 @@ func newLogger(format string, level slog.Level, w io.Writer) *slog.Logger {
 
 func warnRemoved(log *slog.Logger, names []string) {
 	for _, name := range names {
+		if slices.Contains(config.UnreadVariables, name) {
+			log.Warn(name+" is not read; add Navidrome servers on the setup page", "variable", name)
+			continue
+		}
 		log.Warn(name+" is no longer read; servers, the public URL and the secret are set on the setup page", "variable", name)
 	}
 }
@@ -96,7 +101,8 @@ func healthcheck(url string) int {
 func serve(ctx context.Context, cfg config.Config, st *store.Store, log *slog.Logger, removed []string, listening func(net.Addr)) error {
 	snapshot := st.Snapshot()
 	log.Info("starting", "version", version, "data", st.Path(), "servers", len(snapshot.Servers),
-		"public_url", snapshot.PublicURL, "refresh", cfg.RefreshInterval.String(), "log_level", cfg.LogLevel.String())
+		"public_url", snapshot.PublicURL, "refresh", cfg.RefreshInterval.String(), "log_level", cfg.LogLevel.String(),
+		"app_auth", snapshot.AppAuth.EffectiveMode())
 	warnRemoved(log, removed)
 	if snapshot.Admin == nil {
 		log.Warn("the setup page has no password yet; open /setup on your public URL and set one before anyone else does")
@@ -117,10 +123,18 @@ func serve(ctx context.Context, cfg config.Config, st *store.Store, log *slog.Lo
 	}()
 	mux.Handle("/setup", admin)
 	mux.Handle("/setup/", admin)
+	mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/svg+xml")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Write([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#212121" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><style>@media (prefers-color-scheme: dark){path,circle{stroke:#fff}}</style><path d="M21 16V3a1 1 0 0 0-1.28-.96l-10 2.917a1 1 0 0 0-.72.96V19"/><circle cx="18" cy="16" r="3"/><circle cx="6" cy="19" r="3"/></svg>`))
+	})
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/setup", http.StatusFound)
+	})
 	mux.Handle("/", server.New(server.Options{
 		Site: func() server.Site {
 			current := st.Snapshot()
-			return server.Site{PublicURL: current.PublicURL, Secret: current.Secret}
+			return server.Site{PublicURL: current.PublicURL, Secret: current.Secret, LinkKey: current.LinkKey, AppAuth: current.AppAuth}
 		},
 		Registry: reg, Version: version, Log: log,
 	}))

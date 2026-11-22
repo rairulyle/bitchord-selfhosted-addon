@@ -6,6 +6,32 @@ Entries are written **one line per paragraph and bullet** (no hard-wrapping) so 
 
 ## [Unreleased]
 
+### Added
+
+- Navidrome and other Subsonic-compatible servers, signed in with a username and password. Their password is stored in `/data/addon.json` because Subsonic token auth needs it, so use a non-admin account. Plays report "now playing" to Navidrome and scrobble once a set share of the track has played. `NAVIDROME_*` environment variables are not read; the log says so when one is set (thanks @1ofx9, #10).
+- A sync interval per server, including manual only, and a **Sync now** button on each server card plus **Sync all**.
+- A sync webhook per server, `POST https://<public url>/<server id>/<secret>/sync`, shown on its card. A call while a sync is already running answers `202` and starts nothing.
+- A recent activity log on the setup page with syncs, sync errors, now playing and scrobbles, filters for syncs and playback, and **Clear**.
+- Cover art is cached in memory and revalidated with an `ETag`.
+- Search forgives a typo in words of five letters or more, finishes the last word when nothing matches it exactly, treats ft./feat., pt./part, vol./volume, OST/soundtrack and vs./versus as the same word, and drops words such as "live", "remastered" or a year when the full query finds nothing (thanks @1ofx9, #10).
+- A search tester on each server card with All, Songs and Albums tabs and cover thumbnails. It shows the words a query becomes, how many tracks matched strictly and loosely, and the matching tracks, albums and artists, with several artists joined by ` • `. Press `/` to jump to it and Escape to clear and close it. The same answer is at `GET /setup/servers/<server id>/test-search?q=<query>`, or `/search?q=<query>`. BitChord's own search still answers tracks only.
+- Backup and restore on the setup page. A backup holds the public URL, secret, servers and app authentication settings, encrypted with a password you choose, and never the setup password. Restoring replaces every server and the secret, signs out Jellyfin sessions it replaces, and keeps your setup password. The panel asks for the password when the chosen file is encrypted (thanks @1ofx9, #10).
+- A redesigned setup page with light and dark themes and a System, Dark or Light switcher, and server cards with an Online or Unreachable badge and the last connection error (thanks @1ofx9, #10).
+- App authentication for BitChord Addon Auth v1, off by default and set on the setup page. In log or enforce mode the addon checks the token and device proof BitChord sends with each search and stream against signing keys fetched from the issuer, and signs each play link for six hours with a key that never leaves the server. Log only reports what it would refuse; enforce refuses with `401` or `403`, so it needs a BitChord version that sends Addon Auth headers. The default issuer is a third-party domain not confirmed as official; see the README before turning it on (thanks @1ofx9, #10).
+- `/` redirects to `/setup`, and the addon serves a favicon.
+
+### Changed
+
+- WavPack, APE and DSD tracks count as lossless on every server.
+- Search ranks a track whose title matches the whole query above one whose title only starts with it, and both above artist and album matches. The in-memory index for 100,000 tracks grows from about 26 MB to about 40 MB.
+- The setup stylesheet is served gzip-compressed with an `ETag`, and its versioned URL is cached for a year.
+- Setup pages and their stylesheet send `X-Content-Type-Options`, `X-Frame-Options` and `Referrer-Policy` headers.
+- A server URL entered on the setup page can no longer be a link-local or cloud metadata address such as `169.254.169.254`. Servers already saved with one still load.
+
+### Fixed
+
+- The setup page shows a notice or error only when the addon wrote it, never text taken from a crafted link.
+
 ## [1.1.0] - 2026-09-27
 
 ### Changed
