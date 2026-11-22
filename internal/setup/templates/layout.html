@@ -8,9 +8,13 @@
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23212121' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cstyle%3E@media (prefers-color-scheme: dark)%7Bpath,circle%7Bstroke:%23fff%7D%7D%3C/style%3E%3Cpath d='M21 16V3a1 1 0 0 0-1.28-.96l-10 2.917a1 1 0 0 0-.72.96V19'/%3E%3Ccircle cx='18' cy='16' r='3'/%3E%3Ccircle cx='6' cy='19' r='3'/%3E%3C/svg%3E">
 <script>
 (function() {
-  var t = localStorage.getItem('theme');
+  var t = null;
+  try {
+    t = localStorage.getItem('theme');
+  } catch (e) {}
   if (t === 'dark' || t === 'light') {
     document.documentElement.setAttribute('data-theme', t);
+    document.querySelector('meta[name="color-scheme"]').setAttribute('content', t);
   }
 })();
 </script>
@@ -106,7 +110,11 @@
   var themeBtn = document.getElementById('theme-toggle');
   if (themeBtn) {
     var themes = ['system', 'dark', 'light'];
-    var currentTheme = localStorage.getItem('theme') || 'system';
+    var currentTheme = 'system';
+    try {
+      var stored = localStorage.getItem('theme');
+      if (stored === 'dark' || stored === 'light') currentTheme = stored;
+    } catch (e) {}
 
     function updateThemeUI(t) {
       if (t === 'dark' || t === 'light') {
@@ -114,6 +122,7 @@
       } else {
         document.documentElement.removeAttribute('data-theme');
       }
+      document.querySelector('meta[name="color-scheme"]').setAttribute('content', t === 'system' ? 'light dark' : t);
       var sysIcon = themeBtn.querySelector('.theme-icon-system');
       var lightIcon = themeBtn.querySelector('.theme-icon-light');
       var darkIcon = themeBtn.querySelector('.theme-icon-dark');
@@ -130,11 +139,13 @@
     themeBtn.addEventListener('click', function () {
       var idx = themes.indexOf(currentTheme);
       currentTheme = themes[(idx + 1) % themes.length];
-      if (currentTheme === 'system') {
-        localStorage.removeItem('theme');
-      } else {
-        localStorage.setItem('theme', currentTheme);
-      }
+      try {
+        if (currentTheme === 'system') {
+          localStorage.removeItem('theme');
+        } else {
+          localStorage.setItem('theme', currentTheme);
+        }
+      } catch (e) {}
       updateThemeUI(currentTheme);
     });
   }
