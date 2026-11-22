@@ -361,3 +361,107 @@ func TestADeviceKeyOffTheCurveIsRefused(t *testing.T) {
 		})
 	}
 }
+
+func TestTokensThatMustBeRefused(t *testing.T) {
+	f := newFixture(t)
+	auth := f.auth("enforce")
+	_, otherKey, _ := ed25519.GenerateKey(rand.Reader)
+	with := func(key string, value any) string {
+		body := f.claims()
+		body[key] = value
+		return f.token(body)
+	}
+	valid := f.token(f.claims())
+	parts := strings.Split(valid, ".")
+	tampered := parts[0] + "." + parts[1] + "." + base64.RawURLEncoding.EncodeToString(make([]byte, ed25519.SignatureSize))
+	swapped := parts[0] + "." + base64.RawURLEncoding.EncodeToString([]byte(`{"iss":"`+DefaultIssuer+`","aud":"`+DefaultAudience+`","sub":"someone-else"}`)) + "." + parts[2]
+	now := f.clock().Unix()
+	cases := map[string]struct {
+		token string
+		want  string
+	}{
+		"wrong issuer":          {with("iss", "https://evil.example.com"), "invalid_token"},
+		"wrong audience":        {with("aud", "another-audience"), "invalid_token"},
+		"wrong audience list":   {with("aud", []string{"a", "b"}), "invalid_token"},
+		"expired":               {with("exp", now-3600), "expired"},
+		"no expiry":             {with("exp", 0), "expired"},
+		"issued in the future":  {with("iat", now+3600), "invalid_token"},
+		"tampered signature":    {tampered, "invalid_token"},
+		"swapped claims":        {swapped, "invalid_token"},
+		"signed by another key": {f.sign(map[string]any{"alg": "EdDSA", "kid": f.kid}, f.claims(), otherKey), "invalid_token"},
+		"alg none":              {f.sign(map[string]any{"alg": "none", "kid": f.kid}, f.claims(), f.edPriv), "invalid_token"},
+		"alg HS256":             {f.sign(map[string]any{"alg": "HS256", "kid": f.kid}, f.claims(), f.edPriv), "invalid_token"},
+		"no device key":         {with("cnf", map[string]any{}), "invalid_token"},
+		"malformed":             {"not-a-token", "invalid_token"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			res := auth.Verify(tc.token, f.proof(tc.token))
+			if res.OK || res.Status != http.StatusUnauthorized || res.Error != tc.want {
+				t.Fatalf("got %+v, want %s", res, tc.want)
+			}
+		})
+	}
+	if res := auth.Verify(valid, f.proof(valid)); !res.OK {
+		t.Fatalf("the untouched token was refused: %+v", res)
+	}
+}
+
+func TestAnAudienceListContainingTheAddonsIsAccepted(t *testing.T) {
+	f := newFixture(t)
+	body := f.claims()
+	body["aud"] = []string{"other", DefaultAudience}
+	token := f.token(body)
+	if res := f.auth("enforce").Verify(token, f.proof(token)); !res.OK {
+		t.Fatalf("got %+v", res)
+	}
+}
+
+func TestAnotherIssuerNeedsItsOwnSetting(t *testing.T) {
+	f := newFixture(t)
+	auth := f.auth("enforce")
+	body := f.claims()
+	body["iss"] = "https://auth.example.com"
+	token := f.token(body)
+	if res := auth.Verify(token, f.proof(token)); res.OK {
+		t.Fatal("a token from an issuer that is not configured passed")
+	}
+	auth.Configure(Config{Mode: "enforce", Hosts: []string{fixtureHost}, Issuer: "https://auth.example.com/"})
+	if res := auth.Verify(token, f.proof(token)); !res.OK {
+		t.Fatalf("after configuring the issuer: %+v", res)
+	}
+}
+
+func TestAProofForAnotherHostIsRefused(t *testing.T) {
+	f := newFixture(t)
+	auth := f.auth("enforce", "addon.example.com", "::1")
+	token := f.token(f.claims())
+	if res := auth.Verify(token, f.proofAt(token, "evil.example.com", f.clock())); res.OK || res.Error != "invalid_proof" {
+		t.Fatalf("another host: %+v", res)
+	}
+	if res := auth.Verify(token, f.proofAt(token, "::1", f.clock())); !res.OK {
+		t.Fatalf("an allowed ipv6 host: %+v", res)
+	}
+	body := f.claims()
+	body["sub"] = "another-device"
+	other := f.token(body)
+	if res := auth.Verify(other, f.proof(token)); res.OK || res.Error != "invalid_proof" {
+		t.Fatalf("a proof bound to another token: %+v", res)
+	}
+}
+
+func TestDisabledModeChecksNothing(t *testing.T) {
+	f := newFixture(t)
+	auth := f.auth("disabled")
+	for name, pair := range map[string][2]string{"no headers": {"", ""}, "garbage": {"x.y.z", "v1.1.x"}} {
+		if res := auth.Verify(pair[0], pair[1]); !res.OK {
+			t.Errorf("%s: %+v", name, res)
+		}
+	}
+	if hits := f.hits.Load(); hits != 0 {
+		t.Fatalf("disabled mode fetched the JWKS %d times", hits)
+	}
+	if New(Options{}).Mode() != "disabled" {
+		t.Fatal("the default mode is not disabled")
+	}
+}
