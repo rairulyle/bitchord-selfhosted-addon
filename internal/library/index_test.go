@@ -3,6 +3,7 @@ package library
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -503,10 +504,10 @@ func TestFuzzyTypoSearch(t *testing.T) {
 		t.Fatalf("search 'bohemain' want track ID 3, got %v", ids(res3.Tracks))
 	}
 
-	// 4. Typo in artist name: "kendrick lamr" -> finds "HUMBLE."
-	res4 := ix.Find("kendrick lamr", 10)
+	// 4. Typo in artist name: "kendrik lamar" -> finds "HUMBLE."
+	res4 := ix.Find("kendrik lamar", 10)
 	if len(res4.Tracks) == 0 || res4.Tracks[0].ID != "4" {
-		t.Fatalf("search 'kendrick lamr' want track ID 4, got %v", ids(res4.Tracks))
+		t.Fatalf("search 'kendrik lamar' want track ID 4, got %v", ids(res4.Tracks))
 	}
 
 	// 5. Typo in album search: "parachuts" -> finds "Parachutes" album
@@ -541,5 +542,28 @@ func TestTyposAreCountedInCharacters(t *testing.T) {
 	}
 	if got := damerauLevenshtein("cafe", "café", 2); got != 1 {
 		t.Errorf("damerauLevenshtein(cafe, café) = %d, want 1", got)
+	}
+}
+
+func TestShortWordsNeedAnExactMatch(t *testing.T) {
+	ix := NewIndex([]media.Track{
+		{ID: "1", Title: "Punk Rock Princess", Artist: "Something Corporate", Album: "Leaving Through the Window"},
+		{ID: "2", Title: "Think Pink", Artist: "Kay Thompson", Album: "Funny Face"},
+		{ID: "3", Title: "Dove", Artist: "Moonchild", Album: "Little Ghost"},
+	})
+	cases := map[string]string{
+		"letters of a name inside other words": "p!nk",
+		"one edit away from a short word":      "love",
+	}
+	for name, query := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := ids(ix.Search(query, 10)); len(got) != 0 {
+				t.Fatalf("Search(%q) = %v, want nothing", query, got)
+			}
+		})
+	}
+	withPink := NewIndex(append(slices.Clone(ix.tracks), media.Track{ID: "4", Title: "So What", Artist: "P!nk", Album: "Funhouse"}))
+	if got := ids(withPink.Search("p!nk", 10)); !reflect.DeepEqual(got, []string{"4"}) {
+		t.Fatalf("Search(p!nk) = %v, want [4]", got)
 	}
 }

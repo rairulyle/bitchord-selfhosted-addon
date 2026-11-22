@@ -450,8 +450,7 @@ func (ix *Index) Find(query string, limit int) Result {
 		}
 	}
 
-	// Substring fallback when no token matches exist
-	if len(strict) == 0 && len(loose) == 0 && utf8.RuneCountInString(cleanQ) >= 2 {
+	if len(strict) == 0 && len(loose) == 0 && substringable(q) {
 		for i := range ix.tracks {
 			allMatch := true
 			for _, token := range q {
@@ -594,11 +593,19 @@ func damerauLevenshtein(as, bs string, maxDist int) int {
 	return r1[lb]
 }
 
+const minSubstring = 3
+
+func substringable(q []string) bool {
+	return !slices.ContainsFunc(q, func(token string) bool { return utf8.RuneCountInString(token) < minSubstring })
+}
+
+// maxTypos stays at zero below five characters: one edit turns most short
+// words into other real words (love, live, lose, dove).
 func maxTypos(s string) int {
 	switch n := utf8.RuneCountInString(s); {
-	case n >= 8:
+	case n > 8:
 		return 2
-	case n >= 4:
+	case n >= 5:
 		return 1
 	default:
 		return 0
