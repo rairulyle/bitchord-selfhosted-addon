@@ -24,7 +24,6 @@ type Index struct {
 	normTitles      []string
 	normArtists     []string
 	normAlbums      []string
-	normEverything  []string
 
 	albums  []albumRecord
 	artists []artistRecord
@@ -77,16 +76,15 @@ type Result struct {
 
 func NewIndex(tracks []media.Track) *Index {
 	ix := &Index{
-		tracks:         tracks,
-		byID:           make(map[string]int, len(tracks)),
-		postings:       map[string][]int{},
-		titlePosts:     map[string][]int{},
-		titleTokens:    make([][]string, len(tracks)),
-		titleForms:     make([][]string, len(tracks)),
-		normTitles:     make([]string, len(tracks)),
-		normArtists:    make([]string, len(tracks)),
-		normAlbums:     make([]string, len(tracks)),
-		normEverything: make([]string, len(tracks)),
+		tracks:      tracks,
+		byID:        make(map[string]int, len(tracks)),
+		postings:    map[string][]int{},
+		titlePosts:  map[string][]int{},
+		titleTokens: make([][]string, len(tracks)),
+		titleForms:  make([][]string, len(tracks)),
+		normTitles:  make([]string, len(tracks)),
+		normArtists: make([]string, len(tracks)),
+		normAlbums:  make([]string, len(tracks)),
 	}
 
 	albumMap := make(map[string]*albumRecord)
@@ -105,7 +103,6 @@ func NewIndex(tracks []media.Track) *Index {
 			ix.normArtists[i] = cleanArtist + " " + cleanAlbumArtist
 		}
 		ix.normAlbums[i] = cleanAlbum
-		ix.normEverything[i] = strings.TrimSpace(cleanTitle + " " + ix.normArtists[i] + " " + cleanAlbum)
 
 		title := unique(Tokens(t.Title))
 		ix.titleTokens[i] = title
@@ -406,32 +403,27 @@ func (ix *Index) tier(q []string, prefix bool) (strict, loose []int) {
 }
 
 func (ix *Index) substring(q []string) []int {
-	var out []int
-	for i, haystack := range ix.normEverything {
-		if !slices.ContainsFunc(q, func(token string) bool { return !strings.Contains(haystack, token) }) {
-			out = append(out, i)
+	lists := make([][]int, len(q))
+	for n, token := range q {
+		var keyLists [][]int
+		for _, keys := range ix.keysByLength[min(len(ix.keysByLength), utf8.RuneCountInString(token)):] {
+			for _, key := range keys {
+				if strings.Contains(key, token) {
+					keyLists = append(keyLists, ix.postings[key])
+				}
+			}
 		}
+		lists[n] = union(keyLists)
 	}
-	return out
+	return intersectAll(lists)
 }
 
 func (ix *Index) strict(q []string, prefix bool) []int {
 	lists := make([][]int, len(q))
 	for n, token := range q {
 		lists[n] = ix.lookupPostings(token, prefix && n == len(q)-1)
-		if len(lists[n]) == 0 {
-			return nil
-		}
 	}
-	sort.Slice(lists, func(a, b int) bool { return len(lists[a]) < len(lists[b]) })
-	result := slices.Clone(lists[0])
-	for _, next := range lists[1:] {
-		result = intersect(result, next)
-		if len(result) == 0 {
-			return nil
-		}
-	}
-	return result
+	return intersectAll(lists)
 }
 
 func (ix *Index) titleKeys(token string, prefix bool) []string {
@@ -546,15 +538,7 @@ func (ix *Index) fuzzy(q []string) []int {
 		lists[n] = union(keyLists)
 	}
 
-	sort.Slice(lists, func(a, b int) bool { return len(lists[a]) < len(lists[b]) })
-	result := slices.Clone(lists[0])
-	for _, next := range lists[1:] {
-		result = intersect(result, next)
-		if len(result) == 0 {
-			return nil
-		}
-	}
-	return result
+	return intersectAll(lists)
 }
 
 func (ix *Index) rank(candidates []int, cleanQ string, q []string) {
@@ -829,6 +813,22 @@ func union(lists [][]int) []int {
 		}
 	}
 	return out
+}
+
+// intersectAll returns the tracks on every list, as a new slice.
+func intersectAll(lists [][]int) []int {
+	if len(lists) == 0 || slices.ContainsFunc(lists, func(list []int) bool { return len(list) == 0 }) {
+		return nil
+	}
+	lists = slices.Clone(lists)
+	slices.SortFunc(lists, func(a, b []int) int { return len(a) - len(b) })
+	result := slices.Clone(lists[0])
+	for _, next := range lists[1:] {
+		if result = intersect(result, next); len(result) == 0 {
+			return nil
+		}
+	}
+	return result
 }
 
 func intersect(a, b []int) []int {
