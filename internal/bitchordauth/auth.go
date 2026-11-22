@@ -14,9 +14,11 @@ import (
 	"net"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -56,20 +58,51 @@ type Options struct {
 	Mode        string // "enforce", "log", or "disabled"
 }
 
-type Auth struct {
-	hosts       []string
-	issuer      string
-	jwksURL     string
-	maxProofAge time.Duration
-	clockSkew   time.Duration
-	client      *http.Client
-	now         func() time.Time
-	mode        string
+// Config is what the setup page controls. Configure swaps it in whole, so a
+// request never sees the mode of one save and the hosts of another.
+type Config struct {
+	Mode   string
+	Hosts  []string
+	Issuer string
+}
 
-	mu         sync.RWMutex
+const (
+	keysMaxAge       = time.Hour
+	unknownKidRetry  = 5 * time.Minute
+	fetchBackoff     = 30 * time.Second
+	maxJWKSBytes     = 64 << 10
+	maxCachedDevices = 10000
+)
+
+type settings struct {
+	mode    string
+	hosts   []string
+	issuer  string
+	jwksURL string
+}
+
+type Auth struct {
+	jwksOverride string
+	maxProofAge  time.Duration
+	clockSkew    time.Duration
+	client       *http.Client
+	now          func() time.Time
+
+	settings atomic.Pointer[settings]
+
+	// mu guards the key set and the fetch state below. It is never held
+	// across a network call: one fetch runs at a time, and callers that need
+	// its result wait on fetching instead.
+	mu         sync.Mutex
+	keysURL    string
 	keys       map[string]ed25519.PublicKey
 	keysAt     time.Time
 	lastForced time.Time
+	retryAt    time.Time
+	fetchErr   error
+	fetching   chan struct{}
+
+	devMu      sync.Mutex
 	deviceKeys map[string]*ecdsa.PublicKey
 }
 
@@ -82,14 +115,6 @@ func New(opts Options) *Auth {
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
-	issuer := opts.Issuer
-	if issuer == "" {
-		issuer = DefaultIssuer
-	}
-	jwksURL := opts.JWKSURL
-	if jwksURL == "" {
-		jwksURL = issuer + "/.well-known/jwks.json"
-	}
 	maxProofAge := opts.MaxProofAge
 	if maxProofAge == 0 {
 		maxProofAge = 120 * time.Second
@@ -98,24 +123,34 @@ func New(opts Options) *Auth {
 	if clockSkew == 0 {
 		clockSkew = 60 * time.Second
 	}
-	mode := strings.ToLower(strings.TrimSpace(opts.Mode))
+	a := &Auth{
+		jwksOverride: opts.JWKSURL,
+		maxProofAge:  maxProofAge,
+		clockSkew:    clockSkew,
+		client:       client,
+		now:          nowFn,
+		deviceKeys:   make(map[string]*ecdsa.PublicKey),
+	}
+	a.Configure(Config{Mode: opts.Mode, Hosts: opts.Hosts, Issuer: opts.Issuer})
+	return a
+}
+
+// Configure applies new settings. An empty mode is enforce and an empty
+// issuer is DefaultIssuer.
+func (a *Auth) Configure(c Config) {
+	issuer := strings.TrimRight(strings.TrimSpace(c.Issuer), "/")
+	if issuer == "" {
+		issuer = DefaultIssuer
+	}
+	jwksURL := a.jwksOverride
+	if jwksURL == "" {
+		jwksURL = issuer + "/.well-known/jwks.json"
+	}
+	mode := strings.ToLower(strings.TrimSpace(c.Mode))
 	if mode == "" {
 		mode = "enforce"
 	}
-
-	a := &Auth{
-		hosts:       cleanHosts(opts.Hosts),
-		issuer:      issuer,
-		jwksURL:     jwksURL,
-		maxProofAge: maxProofAge,
-		clockSkew:   clockSkew,
-		client:      client,
-		now:         nowFn,
-		mode:        mode,
-		keys:        make(map[string]ed25519.PublicKey),
-		deviceKeys:  make(map[string]*ecdsa.PublicKey),
-	}
-	return a
+	a.settings.Store(&settings{mode: mode, hosts: cleanHosts(c.Hosts), issuer: issuer, jwksURL: jwksURL})
 }
 
 func cleanHosts(hosts []string) []string {
@@ -149,34 +184,29 @@ func NormalizeHost(h string) string {
 	return strings.TrimSuffix(h, ".")
 }
 
-func (a *Auth) SetHosts(hosts []string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.hosts = cleanHosts(hosts)
+func (a *Auth) Hosts() []string {
+	return slices.Clone(a.settings.Load().hosts)
 }
 
-func (a *Auth) Hosts() []string {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	out := make([]string, len(a.hosts))
-	copy(out, a.hosts)
-	return out
+func (a *Auth) SetHosts(hosts []string) {
+	next := *a.settings.Load()
+	next.hosts = cleanHosts(hosts)
+	a.settings.Store(&next)
 }
 
 func (a *Auth) Mode() string {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return a.mode
+	return a.settings.Load().mode
 }
 
 func (a *Auth) SetMode(mode string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.mode = strings.ToLower(strings.TrimSpace(mode))
+	next := *a.settings.Load()
+	next.mode = strings.ToLower(strings.TrimSpace(mode))
+	a.settings.Store(&next)
 }
 
 func (a *Auth) Verify(token, proof string) Result {
-	if a.mode == "disabled" {
+	cfg := a.settings.Load()
+	if cfg.mode == "disabled" {
 		return Result{OK: true}
 	}
 	if token == "" || proof == "" {
@@ -203,7 +233,7 @@ func (a *Auth) Verify(token, proof string) Result {
 		return fail(http.StatusUnauthorized, "invalid_token", "Unsupported token")
 	}
 
-	signingKey, err := a.keyFor(header.Kid)
+	signingKey, err := a.keyFor(cfg.jwksURL, header.Kid)
 	if err != nil {
 		return fail(http.StatusServiceUnavailable, "unavailable", "Could not load BitChord signing keys; try again shortly")
 	}
@@ -247,7 +277,7 @@ func (a *Auth) Verify(token, proof string) Result {
 
 	now := a.now()
 	nowSec := now.Unix()
-	if claims.Iss != a.issuer || !audienceContains(claims.Aud, DefaultAudience) {
+	if claims.Iss != cfg.issuer || !audienceContains(claims.Aud, DefaultAudience) {
 		return fail(http.StatusUnauthorized, "invalid_token", "Token is not for BitChord addons")
 	}
 	skewSec := int64(a.clockSkew.Seconds())
@@ -290,12 +320,7 @@ func (a *Auth) Verify(token, proof string) Result {
 	sha := sha256.Sum256([]byte(token))
 	ath := base64.RawURLEncoding.EncodeToString(sha[:])
 
-	a.mu.RLock()
-	hosts := make([]string, len(a.hosts))
-	copy(hosts, a.hosts)
-	a.mu.RUnlock()
-
-	for _, host := range hosts {
+	for _, host := range cfg.hosts {
 		proofMsg := fmt.Sprintf("%s\n%s\n%s\n%s", ProofContext, host, matches[1], ath)
 		digest := sha256.Sum256([]byte(proofMsg))
 		if ecdsa.Verify(devicePubKey, digest[:], rInt, sInt) {
@@ -321,55 +346,103 @@ func (a *Auth) VerifyRequest(r *http.Request) Result {
 	return a.Verify(token, proof)
 }
 
-func (a *Auth) keyFor(kid string) (ed25519.PublicKey, error) {
-	now := a.now()
-	a.mu.RLock()
-	key, exists := a.keys[kid]
-	stale := now.Sub(a.keysAt) > time.Hour
-	unknown := !exists && now.Sub(a.lastForced) > 5*time.Minute
-	a.mu.RUnlock()
+var errNoKeys = errors.New("no BitChord signing keys loaded")
 
-	if stale || unknown {
-		if err := a.loadKeys(unknown); err != nil {
-			a.mu.RLock()
-			defer a.mu.RUnlock()
-			if len(a.keys) == 0 {
-				return nil, err
-			}
-		}
-		a.mu.RLock()
-		key = a.keys[kid]
-		a.mu.RUnlock()
+// keyFor answers from the cached key set. A known key is served even when the
+// set is stale, while a refresh runs in the background. An unknown kid waits
+// for a fetch, at most one every unknownKidRetry, so a stream of made-up kids
+// cannot hammer the issuer. A failed fetch backs off for fetchBackoff.
+func (a *Auth) keyFor(jwksURL, kid string) (ed25519.PublicKey, error) {
+	a.mu.Lock()
+	if a.keysURL != jwksURL {
+		a.keysURL, a.keys, a.keysAt, a.lastForced, a.retryAt, a.fetchErr = jwksURL, nil, time.Time{}, time.Time{}, time.Time{}, nil
 	}
-	return key, nil
-}
-
-func (a *Auth) loadKeys(isForced bool) error {
+	now := a.now()
+	key, known := a.keys[kid]
+	stale := now.Sub(a.keysAt) > keysMaxAge
+	if known {
+		if stale {
+			a.startFetchLocked(jwksURL)
+		}
+		a.mu.Unlock()
+		return key, nil
+	}
+	done := a.fetching
+	if done == nil && (len(a.keys) == 0 || stale || now.Sub(a.lastForced) > unknownKidRetry) {
+		if done = a.startFetchLocked(jwksURL); done != nil && len(a.keys) > 0 && !stale {
+			a.lastForced = now
+		}
+	}
+	a.mu.Unlock()
+	if done != nil {
+		<-done
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if isForced {
-		a.lastForced = a.now()
+	if key, known := a.keys[kid]; known && a.keysURL == jwksURL {
+		return key, nil
 	}
+	if len(a.keys) == 0 {
+		if a.fetchErr != nil {
+			return nil, a.fetchErr
+		}
+		return nil, errNoKeys
+	}
+	return nil, nil
+}
 
-	req, err := http.NewRequest(http.MethodGet, a.jwksURL, nil)
+// startFetchLocked starts a fetch unless one is running or the last one
+// failed within fetchBackoff, and returns the channel closed when the
+// running fetch ends, or nil when none runs. a.mu must be held.
+func (a *Auth) startFetchLocked(jwksURL string) chan struct{} {
+	if a.fetching != nil {
+		return a.fetching
+	}
+	if a.now().Before(a.retryAt) {
+		return nil
+	}
+	done := make(chan struct{})
+	a.fetching = done
+	go func() {
+		keys, err := a.fetchKeys(jwksURL)
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if a.keysURL == jwksURL {
+			if err != nil {
+				a.retryAt, a.fetchErr = a.now().Add(fetchBackoff), err
+			} else {
+				a.keys, a.keysAt, a.retryAt, a.fetchErr = keys, a.now(), time.Time{}, nil
+			}
+		}
+		a.fetching = nil
+		close(done)
+	}()
+	return done
+}
+
+func (a *Auth) fetchKeys(jwksURL string) (map[string]ed25519.PublicKey, error) {
+	req, err := http.NewRequest(http.MethodGet, jwksURL, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "bitchord-addon-auth-go/1")
 
 	res, err := a.client.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("JWKS HTTP %d", res.StatusCode)
+		return nil, fmt.Errorf("JWKS HTTP %d", res.StatusCode)
 	}
 
-	body, err := io.ReadAll(res.Body)
+	body, err := io.ReadAll(io.LimitReader(res.Body, maxJWKSBytes+1))
 	if err != nil {
-		return err
+		return nil, err
+	}
+	if len(body) > maxJWKSBytes {
+		return nil, fmt.Errorf("JWKS larger than %d bytes", maxJWKSBytes)
 	}
 	var doc struct {
 		Keys []struct {
@@ -380,7 +453,7 @@ func (a *Auth) loadKeys(isForced bool) error {
 		} `json:"keys"`
 	}
 	if err := json.Unmarshal(body, &doc); err != nil {
-		return err
+		return nil, err
 	}
 
 	next := make(map[string]ed25519.PublicKey)
@@ -394,18 +467,17 @@ func (a *Auth) loadKeys(isForced bool) error {
 		}
 		next[jwk.Kid] = ed25519.PublicKey(raw)
 	}
-	if len(next) > 0 {
-		a.keys = next
-		a.keysAt = a.now()
+	if len(next) == 0 {
+		return nil, errors.New("JWKS holds no Ed25519 keys")
 	}
-	return nil
+	return next, nil
 }
 
 func (a *Auth) deviceKey(xStr, yStr string) (*ecdsa.PublicKey, error) {
 	id := xStr + "." + yStr
-	a.mu.RLock()
+	a.devMu.Lock()
 	key, exists := a.deviceKeys[id]
-	a.mu.RUnlock()
+	a.devMu.Unlock()
 	if exists {
 		return key, nil
 	}
@@ -428,12 +500,12 @@ func (a *Auth) deviceKey(xStr, yStr string) (*ecdsa.PublicKey, error) {
 		return nil, errors.New("device public key is not on curve")
 	}
 
-	a.mu.Lock()
-	if len(a.deviceKeys) > 10000 {
+	a.devMu.Lock()
+	if len(a.deviceKeys) > maxCachedDevices {
 		a.deviceKeys = make(map[string]*ecdsa.PublicKey)
 	}
 	a.deviceKeys[id] = key
-	a.mu.Unlock()
+	a.devMu.Unlock()
 
 	return key, nil
 }

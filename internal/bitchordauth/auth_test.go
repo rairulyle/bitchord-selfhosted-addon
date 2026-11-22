@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -175,4 +177,107 @@ func indexOf(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+func TestKeysAreFetchedOnceForConcurrentRequests(t *testing.T) {
+	f := newFixture(t)
+	f.gate = make(chan struct{})
+	auth := f.auth("enforce")
+	token := f.token(f.claims())
+	var wg sync.WaitGroup
+	results := make([]Result, 8)
+	for i := range results {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i] = auth.Verify(token, f.proof(token))
+		}()
+	}
+	for f.hits.Load() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	time.Sleep(20 * time.Millisecond)
+	close(f.gate)
+	wg.Wait()
+	if hits := f.hits.Load(); hits != 1 {
+		t.Fatalf("JWKS fetched %d times, want 1", hits)
+	}
+	for i, res := range results {
+		if !res.OK {
+			t.Errorf("request %d: %+v", i, res)
+		}
+	}
+}
+
+func TestStaleKeysAreServedWhileARefreshRuns(t *testing.T) {
+	f := newFixture(t)
+	auth := f.auth("enforce")
+	token := f.token(f.claims())
+	if res := auth.Verify(token, f.proof(token)); !res.OK {
+		t.Fatalf("first verify: %+v", res)
+	}
+	f.gate = make(chan struct{})
+	defer close(f.gate)
+	f.advance(keysMaxAge + time.Minute)
+	token = f.token(f.claims())
+	if res := auth.Verify(token, f.proof(token)); !res.OK {
+		t.Fatalf("verify with stale keys: %+v", res)
+	}
+	for f.hits.Load() < 2 {
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestAFailedFetchBacksOff(t *testing.T) {
+	f := newFixture(t)
+	f.status.Store(http.StatusInternalServerError)
+	auth := f.auth("enforce")
+	token := f.token(f.claims())
+	for range 3 {
+		if res := auth.Verify(token, f.proof(token)); res.OK || res.Status != http.StatusServiceUnavailable {
+			t.Fatalf("verify while the issuer fails: %+v", res)
+		}
+	}
+	if hits := f.hits.Load(); hits != 1 {
+		t.Fatalf("JWKS fetched %d times during the backoff, want 1", hits)
+	}
+	f.status.Store(http.StatusOK)
+	f.advance(fetchBackoff + time.Second)
+	token = f.token(f.claims())
+	if res := auth.Verify(token, f.proof(token)); !res.OK {
+		t.Fatalf("verify after the backoff: %+v", res)
+	}
+}
+
+func TestAnOversizedKeySetIsRefused(t *testing.T) {
+	f := newFixture(t)
+	f.jwksDoc = func() any { return map[string]any{"pad": strings.Repeat("x", maxJWKSBytes)} }
+	auth := f.auth("enforce")
+	token := f.token(f.claims())
+	if res := auth.Verify(token, f.proof(token)); res.OK || res.Status != http.StatusServiceUnavailable {
+		t.Fatalf("verify against an oversized key set: %+v", res)
+	}
+}
+
+func TestAnUnknownKidRefetchesAtMostEveryFewMinutes(t *testing.T) {
+	f := newFixture(t)
+	auth := f.auth("enforce")
+	token := f.token(f.claims())
+	if res := auth.Verify(token, f.proof(token)); !res.OK {
+		t.Fatalf("first verify: %+v", res)
+	}
+	unknown := f.sign(map[string]any{"alg": "EdDSA", "kid": "unknown"}, f.claims(), f.edPriv)
+	for range 3 {
+		if res := auth.Verify(unknown, f.proof(unknown)); res.OK || res.Error != "invalid_token" {
+			t.Fatalf("verify with an unknown kid: %+v", res)
+		}
+	}
+	if hits := f.hits.Load(); hits != 2 {
+		t.Fatalf("JWKS fetched %d times, want 2", hits)
+	}
+	f.advance(unknownKidRetry + time.Second)
+	auth.Verify(unknown, f.proof(unknown))
+	if hits := f.hits.Load(); hits != 3 {
+		t.Fatalf("JWKS fetched %d times after the wait, want 3", hits)
+	}
 }
