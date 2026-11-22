@@ -567,3 +567,18 @@ func TestShortWordsNeedAnExactMatch(t *testing.T) {
 		t.Fatalf("Search(p!nk) = %v, want [4]", got)
 	}
 }
+
+func TestFallbackNeedsEveryTitleWord(t *testing.T) {
+	ix := NewIndex([]media.Track{
+		{ID: "1", Title: "Part of Me", Artist: "Katy Perry", Album: "Teenage Dream"},
+	})
+	if got := ids(ix.Search("part pt of brendon urie", 10)); len(got) != 0 {
+		t.Errorf("Search(part pt of brendon urie) = %v, want nothing: me is not covered", got)
+	}
+	if got := ids(ix.Search("part of me brendon urie", 10)); !reflect.DeepEqual(got, []string{"1"}) {
+		t.Errorf("Search(part of me brendon urie) = %v, want [1]", got)
+	}
+	if got := ids(ix.Search("pt of me brendon urie", 10)); !reflect.DeepEqual(got, []string{"1"}) {
+		t.Errorf("Search(pt of me brendon urie) = %v, want [1]", got)
+	}
+}

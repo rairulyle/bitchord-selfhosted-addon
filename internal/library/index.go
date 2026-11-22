@@ -107,16 +107,7 @@ func NewIndex(tracks []media.Track) *Index {
 
 		title := unique(Tokens(t.Title))
 		ix.titleTokens[i] = title
-		titleHits := map[string]struct{}{}
 		for _, token := range title {
-			titleHits[token] = struct{}{}
-			if syns, ok := tokenSynonyms[token]; ok {
-				for _, syn := range syns {
-					titleHits[syn] = struct{}{}
-				}
-			}
-		}
-		for token := range titleHits {
 			ix.titlePosts[token] = append(ix.titlePosts[token], i)
 		}
 		everything := strings.Join([]string{t.Artist, t.AlbumArtist, t.Album}, " ")
@@ -351,39 +342,6 @@ func (ix *Index) lookupPostings(token string, prefix bool) []int {
 	return matched
 }
 
-func (ix *Index) lookupTitle(token string, prefix bool) []int {
-	exact := ix.titlePosts[token]
-	if !prefix || utf8.RuneCountInString(token) < 2 {
-		return exact
-	}
-	keys := prefixMatches(ix.sortedTitleKeys, token, maxPrefixExpansion)
-	if len(keys) == 0 {
-		return exact
-	}
-	if len(keys) == 1 && keys[0] == token {
-		return exact
-	}
-	var matched []int
-	seen := make(map[int]struct{})
-	for _, id := range exact {
-		seen[id] = struct{}{}
-		matched = append(matched, id)
-	}
-	for _, key := range keys {
-		if key == token {
-			continue
-		}
-		for _, id := range ix.titlePosts[key] {
-			if _, ok := seen[id]; !ok {
-				seen[id] = struct{}{}
-				matched = append(matched, id)
-			}
-		}
-	}
-	sort.Ints(matched)
-	return matched
-}
-
 func (ix *Index) Search(query string, limit int) []media.Track { return ix.Find(query, limit).Tracks }
 
 func (ix *Index) Find(query string, limit int) Result {
@@ -519,16 +477,35 @@ func (ix *Index) strict(q []string, prefix bool) []int {
 	return result
 }
 
+func (ix *Index) titleKeys(token string, prefix bool) []string {
+	keys := append([]string{token}, tokenSynonyms[token]...)
+	if prefix && utf8.RuneCountInString(token) >= 2 {
+		keys = append(keys, prefixMatches(ix.sortedTitleKeys, token, maxPrefixExpansion)...)
+	}
+	return keys
+}
+
 func (ix *Index) fallback(q []string, prefix bool) []int {
-	hits := map[int]int{}
+	covered := map[string]struct{}{}
+	candidates := map[int]struct{}{}
 	for _, token := range q {
-		for _, i := range ix.lookupTitle(token, prefix) {
-			hits[i]++
+		for _, key := range ix.titleKeys(token, prefix) {
+			covered[key] = struct{}{}
+			for _, i := range ix.titlePosts[key] {
+				candidates[i] = struct{}{}
+			}
 		}
 	}
 	var out []int
-	for i, n := range hits {
-		if count := len(ix.titleTokens[i]); count >= 2 && n >= count {
+	for i := range candidates {
+		title := ix.titleTokens[i]
+		n := 0
+		for _, token := range title {
+			if _, ok := covered[token]; ok {
+				n++
+			}
+		}
+		if len(title) >= 2 && n == len(title) {
 			out = append(out, i)
 		}
 	}
