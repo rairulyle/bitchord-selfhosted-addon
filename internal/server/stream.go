@@ -25,7 +25,7 @@ func (s *server) stream(w http.ResponseWriter, r *http.Request, src source) {
 		w.WriteHeader(status)
 		return
 	}
-	descriptor := toStreamJSON(src.base, s.Site().Secret, track)
+	descriptor := toStreamJSON(src.base, src.site.Secret, track)
 	src.Log.Info("stream", "id", track.ID, "track", label(track), "quality", descriptor.Quality, "format", descriptor.Format)
 	writeJSON(w, descriptor)
 }

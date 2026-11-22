@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/store"
 )
 
 var (
@@ -23,12 +24,12 @@ func (s *server) file(w http.ResponseWriter, r *http.Request, src source) {
 		w.WriteHeader(status)
 		return
 	}
-	if s.auth != nil && s.auth.Mode() != "disabled" && s.Site().Secret != "" {
+	if mode := s.authMode(src.site); mode != store.AppAuthDisabled && src.site.Secret != "" {
 		expStr := r.URL.Query().Get("exp")
 		sigStr := r.URL.Query().Get("sig")
 		exp, err := strconv.ParseInt(expStr, 10, 64)
-		if err != nil || !verifyMediaSig(s.Site().Secret, track.ID, sigStr, exp) {
-			if s.auth.Mode() == "log" {
+		if err != nil || !verifyMediaSig(src.site.Secret, track.ID, sigStr, exp) {
+			if mode == store.AppAuthLog {
 				src.Log.Warn("bitchord-auth: media signature invalid or missing in log mode", "id", track.ID)
 			} else {
 				http.Error(w, "Forbidden", http.StatusForbidden)
@@ -38,7 +39,7 @@ func (s *server) file(w http.ResponseWriter, r *http.Request, src source) {
 	} else if expStr := r.URL.Query().Get("exp"); expStr != "" {
 		sigStr := r.URL.Query().Get("sig")
 		exp, err := strconv.ParseInt(expStr, 10, 64)
-		if err != nil || !verifyMediaSig(s.Site().Secret, track.ID, sigStr, exp) {
+		if err != nil || !verifyMediaSig(src.site.Secret, track.ID, sigStr, exp) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}

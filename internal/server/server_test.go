@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rairulyle/bitchord-selfhosted-addon/internal/bitchordauth"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/fakes"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/jellyfin"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/library"
@@ -76,7 +75,6 @@ func newServerWith(log *slog.Logger, entries ...*registry.Entry) *server {
 	return newServer(Options{
 		Site:     func() Site { return Site{PublicURL: testPublic, Secret: testSecret} },
 		Registry: stub, Version: "1.2.3", Log: log,
-		Auth: bitchordauth.New(bitchordauth.Options{Mode: "disabled"}),
 	})
 }
 
@@ -162,7 +160,6 @@ func TestManifest(t *testing.T) {
 		"id": "app.bitchord-selfhosted-addon.plex-1", "name": "Plex - Home", "version": "1.2.3",
 		"description": "Your Plex music library", "contentType": "music",
 		"resources": []any{"search", "stream"}, "types": []any{"track"},
-		"bitchordAuth": true,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("manifest = %v", got)
@@ -500,9 +497,10 @@ func TestBitChordAddonAuthEnforce(t *testing.T) {
 	entry := newEntry(t, "plex-1", store.Plex, "", plex.New(plex.Options{BaseURL: fake.URL, Token: fakes.PlexToken}), log, true)
 	stub := &stubRegistry{entries: map[string]*registry.Entry{"plex-1": entry}}
 	srv := newServer(Options{
-		Site:     func() Site { return Site{PublicURL: "https://addon.example.com", Secret: testSecret} },
+		Site: func() Site {
+			return Site{PublicURL: "https://addon.example.com", Secret: testSecret, AppAuth: store.AppAuth{Mode: store.AppAuthEnforce}}
+		},
 		Registry: stub, Version: "1.2.3", Log: log,
-		Auth: bitchordauth.New(bitchordauth.Options{Mode: "enforce", Hosts: []string{"addon.example.com"}}),
 	})
 	handler := srv.handler()
 

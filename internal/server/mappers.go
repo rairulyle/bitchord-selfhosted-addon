@@ -20,7 +20,7 @@ type manifestJSON struct {
 	Resources    []string `json:"resources"`
 	Types        []string `json:"types"`
 	ContentType  string   `json:"contentType"`
-	BitchordAuth bool     `json:"bitchordAuth"`
+	BitchordAuth bool     `json:"bitchordAuth,omitempty"`
 }
 
 type searchJSON struct {

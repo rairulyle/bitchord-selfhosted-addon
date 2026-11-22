@@ -96,7 +96,8 @@ func healthcheck(url string) int {
 func serve(ctx context.Context, cfg config.Config, st *store.Store, log *slog.Logger, removed []string, listening func(net.Addr)) error {
 	snapshot := st.Snapshot()
 	log.Info("starting", "version", version, "data", st.Path(), "servers", len(snapshot.Servers),
-		"public_url", snapshot.PublicURL, "refresh", cfg.RefreshInterval.String(), "log_level", cfg.LogLevel.String())
+		"public_url", snapshot.PublicURL, "refresh", cfg.RefreshInterval.String(), "log_level", cfg.LogLevel.String(),
+		"app_auth", snapshot.AppAuth.EffectiveMode())
 	warnRemoved(log, removed)
 	if snapshot.Admin == nil {
 		log.Warn("the setup page has no password yet; open /setup on your public URL and set one before anyone else does")
@@ -128,7 +129,7 @@ func serve(ctx context.Context, cfg config.Config, st *store.Store, log *slog.Lo
 	mux.Handle("/", server.New(server.Options{
 		Site: func() server.Site {
 			current := st.Snapshot()
-			return server.Site{PublicURL: current.PublicURL, Secret: current.Secret}
+			return server.Site{PublicURL: current.PublicURL, Secret: current.Secret, AppAuth: current.AppAuth}
 		},
 		Registry: reg, Version: version, Log: log,
 	}))

@@ -48,7 +48,6 @@ func TestJellyfinManifestUsesTheBackendName(t *testing.T) {
 		"id": "app.bitchord-selfhosted-addon.jellyfin-1", "name": "Jellyfin", "version": "1.2.3",
 		"description": "Your Jellyfin music library", "contentType": "music",
 		"resources": []any{"search", "stream"}, "types": []any{"track"},
-		"bitchordAuth": true,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("manifest = %v", got)

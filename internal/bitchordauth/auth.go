@@ -140,7 +140,7 @@ func New(opts Options) *Auth {
 	return a
 }
 
-// Configure applies new settings. An empty mode is enforce and an empty
+// Configure applies new settings. An empty mode is disabled and an empty
 // issuer is DefaultIssuer.
 func (a *Auth) Configure(c Config) {
 	issuer := strings.TrimRight(strings.TrimSpace(c.Issuer), "/")
@@ -153,7 +153,7 @@ func (a *Auth) Configure(c Config) {
 	}
 	mode := strings.ToLower(strings.TrimSpace(c.Mode))
 	if mode == "" {
-		mode = "enforce"
+		mode = "disabled"
 	}
 	a.settings.Store(&settings{mode: mode, hosts: cleanHosts(c.Hosts), issuer: issuer, jwksURL: jwksURL})
 }
@@ -193,20 +193,8 @@ func (a *Auth) Hosts() []string {
 	return slices.Clone(a.settings.Load().hosts)
 }
 
-func (a *Auth) SetHosts(hosts []string) {
-	next := *a.settings.Load()
-	next.hosts = cleanHosts(hosts)
-	a.settings.Store(&next)
-}
-
 func (a *Auth) Mode() string {
 	return a.settings.Load().mode
-}
-
-func (a *Auth) SetMode(mode string) {
-	next := *a.settings.Load()
-	next.mode = strings.ToLower(strings.TrimSpace(mode))
-	a.settings.Store(&next)
 }
 
 func (a *Auth) Verify(token, proof string) Result {

@@ -7,16 +7,18 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"os"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/bitchordauth"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/library"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/registry"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/store"
 )
 
 const searchLimit = 50
@@ -26,11 +28,12 @@ type Registry interface {
 	Healthy() bool
 }
 
-// Site is read per request so a public URL or secret changed on the setup
-// page takes effect at once.
+// Site is read per request so a public URL, secret or app auth setting
+// changed on the setup page takes effect at once.
 type Site struct {
 	PublicURL string
 	Secret    string
+	AppAuth   store.AppAuth
 }
 
 type Options struct {
@@ -38,6 +41,8 @@ type Options struct {
 	Registry Registry
 	Version  string
 	Log      *slog.Logger
+	// Auth verifies BitChord app tokens. Its settings always come from Site;
+	// a test passes one only to point it at a fake issuer.
 	Auth     *bitchordauth.Auth
 	ArtCache *ArtCache
 }
@@ -46,14 +51,16 @@ type server struct {
 	Options
 	lookupTimeout time.Duration
 	auth          *bitchordauth.Auth
+	authFrom      atomic.Pointer[Site]
 	artCache      *ArtCache
 }
 
 // source is one server resolved from the request path, with the base of its
-// own URLs.
+// own URLs and the site settings read for this request.
 type source struct {
 	*registry.Entry
 	base string
+	site Site
 }
 
 func New(o Options) http.Handler { return newServer(o).handler() }
@@ -61,22 +68,7 @@ func New(o Options) http.Handler { return newServer(o).handler() }
 func newServer(o Options) *server {
 	auth := o.Auth
 	if auth == nil {
-		mode := os.Getenv("BITCHORD_AUTH_MODE")
-		if mode == "" {
-			mode = "enforce"
-		}
-		var hosts []string
-		if envHosts := os.Getenv("BITCHORD_HOSTS"); envHosts != "" {
-			for _, h := range strings.Split(envHosts, ",") {
-				if norm := bitchordauth.NormalizeHost(h); norm != "" {
-					hosts = append(hosts, norm)
-				}
-			}
-		}
-		auth = bitchordauth.New(bitchordauth.Options{
-			Hosts: hosts,
-			Mode:  mode,
-		})
+		auth = bitchordauth.New(bitchordauth.Options{})
 	}
 	cache := o.ArtCache
 	if cache == nil {
@@ -130,35 +122,39 @@ func (s *server) guard(next func(http.ResponseWriter, *http.Request, source)) ht
 			quiet404(w, r)
 			return
 		}
-		next(w, r, source{Entry: entry, base: site.PublicURL + "/" + entry.Slug + "/" + site.Secret})
+		next(w, r, source{Entry: entry, base: site.PublicURL + "/" + entry.Slug + "/" + site.Secret, site: site})
 	}
 }
 
-func (s *server) checkAuth(w http.ResponseWriter, r *http.Request, src source) bool {
-	if s.auth == nil || s.auth.Mode() == "disabled" {
-		return true
-	}
-	site := s.Site()
-	if site.PublicURL != "" {
-		if norm := bitchordauth.NormalizeHost(site.PublicURL); norm != "" {
-			hosts := s.auth.Hosts()
-			has := false
-			for _, h := range hosts {
-				if h == norm {
-					has = true
-					break
-				}
-			}
-			if !has {
-				s.auth.SetHosts(append(hosts, norm))
-			}
+// authMode applies the site's app auth settings when they differ from the
+// last ones applied, so the allowed hosts are always the setup page's list
+// plus the public URL's host, and returns the mode in force.
+func (s *server) authMode(site Site) string {
+	if last := s.authFrom.Load(); last == nil || !sameAuthSettings(*last, site) {
+		hosts := slices.Clone(site.AppAuth.Hosts)
+		if site.PublicURL != "" {
+			hosts = append(hosts, bitchordauth.NormalizeHost(site.PublicURL))
 		}
+		s.auth.Configure(bitchordauth.Config{Mode: site.AppAuth.EffectiveMode(), Hosts: hosts, Issuer: site.AppAuth.Issuer})
+		s.authFrom.Store(&site)
+	}
+	return s.auth.Mode()
+}
+
+func sameAuthSettings(a, b Site) bool {
+	return a.PublicURL == b.PublicURL && a.AppAuth.Mode == b.AppAuth.Mode && a.AppAuth.Issuer == b.AppAuth.Issuer && slices.Equal(a.AppAuth.Hosts, b.AppAuth.Hosts)
+}
+
+func (s *server) checkAuth(w http.ResponseWriter, r *http.Request, src source) bool {
+	mode := s.authMode(src.site)
+	if mode == store.AppAuthDisabled {
+		return true
 	}
 	res := s.auth.VerifyRequest(r)
 	if res.OK {
 		return true
 	}
-	if s.auth.Mode() == "log" {
+	if mode == store.AppAuthLog {
 		src.Log.Warn("bitchord-auth would refuse request", "error", res.Error, "message", res.Message)
 		return true
 	}
@@ -192,6 +188,7 @@ func (s *server) health(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *server) manifest(w http.ResponseWriter, _ *http.Request, src source) {
+	mode := s.authMode(src.site)
 	writeJSON(w, manifestJSON{
 		ID:           "app.bitchord-selfhosted-addon." + src.Slug,
 		Name:         src.DisplayName(),
@@ -200,7 +197,7 @@ func (s *server) manifest(w http.ResponseWriter, _ *http.Request, src source) {
 		Resources:    []string{"search", "stream"},
 		Types:        []string{"track"},
 		ContentType:  "music",
-		BitchordAuth: true,
+		BitchordAuth: mode != store.AppAuthDisabled,
 	})
 }
 

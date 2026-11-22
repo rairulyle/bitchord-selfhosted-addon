@@ -18,7 +18,7 @@ import (
 )
 
 func TestAuthMissingHeaders(t *testing.T) {
-	auth := New(Options{Hosts: []string{"addon.example.com"}})
+	auth := New(Options{Mode: "enforce", Hosts: []string{"addon.example.com"}})
 	res := auth.Verify("", "")
 	if res.OK || res.Status != http.StatusUnauthorized || res.Error != "missing" {
 		t.Fatalf("expected missing rejection, got %+v", res)
@@ -60,6 +60,7 @@ func TestAuthEndToEnd(t *testing.T) {
 
 	now := time.Now()
 	auth := New(Options{
+		Mode:        "enforce",
 		Hosts:       []string{"addon.example.com"},
 		JWKSURL:     jwksServer.URL,
 		Now:         func() time.Time { return now },
@@ -119,6 +120,7 @@ func TestAuthEndToEnd(t *testing.T) {
 
 	// Test stale proof
 	authStale := New(Options{
+		Mode:        "enforce",
 		Hosts:       []string{"addon.example.com"},
 		JWKSURL:     jwksServer.URL,
 		Now:         func() time.Time { return now.Add(5 * time.Minute) },
@@ -132,6 +134,7 @@ func TestAuthEndToEnd(t *testing.T) {
 
 	// Test wrong host
 	authWrongHost := New(Options{
+		Mode:        "enforce",
 		Hosts:       []string{"other.domain.com"},
 		JWKSURL:     jwksServer.URL,
 		Now:         func() time.Time { return now },
