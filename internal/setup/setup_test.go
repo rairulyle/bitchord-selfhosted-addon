@@ -1453,6 +1453,31 @@ func TestStaticAssetsSendTheSecurityHeaders(t *testing.T) {
 	}
 }
 
+func TestOverviewControlsAreNotNested(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	a.form("/setup/public-url", url.Values{"public_url": {"https://music.example.com"}})
+	slug := a.addPlex(fakes.NewPlex(t), "Home")
+	a.waitReady(slug)
+	body := a.get("/setup").Body.String()
+
+	pill := body[strings.Index(body, `class="copy-pill secret-pill"`):]
+	if strings.Index(pill, "<button") < strings.Index(pill, "</div>") {
+		t.Error("the secret pill, itself a button, holds another button")
+	}
+	for _, want := range []string{
+		`aria-controls="search-panel-` + slug + `"`,
+		`role="tabpanel" id="search-panel-` + slug + `" aria-labelledby="search-tab-` + slug + `-all"`,
+		`id="search-tab-` + slug + `-all"`,
+		`aria-controls="activity-panel"`,
+		`role="tabpanel" id="activity-panel" aria-labelledby="activity-tab-all"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("overview lacks %s", want)
+		}
+	}
+}
+
 func TestRefreshAllServers(t *testing.T) {
 	a := newTestApp(t)
 	a.signIn()

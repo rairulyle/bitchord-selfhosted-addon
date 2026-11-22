@@ -84,6 +84,25 @@
     setTimeout(dismiss, timeout);
   }
 
+  document.querySelectorAll('[role="tablist"]').forEach(function (list) {
+    function syncTabIndex() {
+      list.querySelectorAll('[role="tab"]').forEach(function (tab) {
+        tab.tabIndex = tab.getAttribute('aria-selected') === 'true' ? 0 : -1;
+      });
+    }
+    list.addEventListener('click', syncTabIndex);
+    list.addEventListener('keydown', function (e) {
+      var tabs = Array.prototype.filter.call(list.querySelectorAll('[role="tab"]'), function (tab) { return !tab.hidden; });
+      var at = tabs.indexOf(document.activeElement);
+      var next = { ArrowRight: at + 1, ArrowLeft: at - 1, Home: 0, End: tabs.length - 1 }[e.key];
+      if (at === -1 || next === undefined) return;
+      e.preventDefault();
+      var tab = tabs[(next + tabs.length) % tabs.length];
+      tab.focus();
+      tab.click();
+    });
+  });
+
   var themeBtn = document.getElementById('theme-toggle');
   if (themeBtn) {
     var themes = ['system', 'dark', 'light'];

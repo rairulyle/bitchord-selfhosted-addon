@@ -37,11 +37,11 @@
         <fieldset id="credentials">
           <legend>Credentials</legend>
           <div class="tabs" role="tablist">
-            <button type="button" class="tab active" data-tab="signin" role="tab" aria-selected="true" aria-controls="panel-signin">Sign in</button>
-            <button type="button" class="tab" data-tab="token" id="token-tab-btn" role="tab" aria-selected="false" aria-controls="panel-token" {{if eq .Kind "navidrome"}}hidden{{end}}>Paste a token</button>
+            <button type="button" class="tab active" data-tab="signin" role="tab" id="tab-signin" aria-selected="true" aria-controls="panel-signin" tabindex="0">Sign in</button>
+            <button type="button" class="tab" data-tab="token" id="token-tab-btn" role="tab" aria-selected="false" aria-controls="panel-token" tabindex="-1" {{if eq .Kind "navidrome"}}hidden{{end}}>Paste a token</button>
           </div>
 
-          <div class="panel" data-panel="signin" id="panel-signin" role="tabpanel">
+          <div class="panel" data-panel="signin" id="panel-signin" role="tabpanel" aria-labelledby="tab-signin">
             {{if .Account}}<p class="ok" id="signed-in" role="status">Signed in as {{.Account}}. Save keeps this sign-in{{if or (eq .Kind "jellyfin") (eq .Kind "navidrome")}} unless the URL changes{{end}}.</p>{{else}}<p class="ok" id="signed-in" role="status" hidden></p>{{end}}
             <div data-kind-panel="plex" {{if ne .Kind "plex"}}hidden{{end}}>
               <button type="button" id="plex-signin" class="secondary">Sign in with Plex</button>
@@ -61,7 +61,7 @@
             </div>
           </div>
 
-          <div class="panel" data-panel="token" id="panel-token" role="tabpanel" hidden>
+          <div class="panel" data-panel="token" id="panel-token" role="tabpanel" aria-labelledby="token-tab-btn" hidden>
             <label><span id="token-label">Plex token</span> <input type="password" name="token" id="token" autocomplete="off" placeholder="{{if .Editing}}leave empty to keep the stored token{{end}}"></label>
             <p class="hint" data-kind-panel="plex" {{if ne .Kind "plex"}}hidden{{end}}>In Plex Web, open any item, choose Get Info, then View XML. The address ends with <code>X-Plex-Token=</code> and the token.</p>
             <p class="hint" data-kind-panel="jellyfin" {{if ne .Kind "jellyfin"}}hidden{{end}}>In Jellyfin, open Dashboard, then API Keys under Advanced, and add a key. An API key sees every library.</p>

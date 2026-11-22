@@ -541,6 +541,11 @@ input[type=range] {
   margin: 8px 0;
   cursor: pointer;
 }
+input[type=range]:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
 input[type=range]::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
@@ -775,12 +780,6 @@ code { font-family: ui-monospace, "SF Mono", monospace; font-size: 12.5px; word-
 .copy-pill:hover .copy-action {
   color: var(--strong);
 }
-.copy-pill .copy-sep {
-  width: 1px;
-  height: 14px;
-  background: var(--line);
-  display: inline-block;
-}
 .copy-pill .copy-feedback {
   font-size: 11px;
   font-weight: 500;
@@ -803,22 +802,6 @@ code { font-family: ui-monospace, "SF Mono", monospace; font-size: 12.5px; word-
 }
 .copy-pill.copied .copy-icon {
   display: none;
-}
-.copy-pill button.secret-toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: none;
-  border: 0;
-  padding: 0;
-  color: var(--muted);
-  cursor: pointer;
-  text-decoration: none;
-  line-height: 1;
-  transition: color 0.15s ease;
-}
-.copy-pill button.secret-toggle:hover {
-  color: var(--strong);
 }
 .copy-pill.secret-pill {
   display: flex;
