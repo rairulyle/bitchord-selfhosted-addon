@@ -134,7 +134,7 @@ func (c *Client) call(ctx context.Context, method string, params url.Values, int
 	path := "/rest/" + method + ".view?" + q.Encode()
 	var env subsonicResponse
 	if err := c.http.GetJSON(ctx, path, nil, &env); err != nil {
-		return err
+		return redact(err)
 	}
 	var header statusHeader
 	if err := json.Unmarshal(env.Response, &header); err != nil {
@@ -403,7 +403,7 @@ func isUnauthorized(err error) bool { return errors.Is(err, media.ErrUnauthorize
 func (c *Client) OpenFile(ctx context.Context, track media.Track, method string, header http.Header) (*http.Response, error) {
 	res, err := c.http.Open(ctx, method, c.authedPath(track.FileRef), header)
 	if err != nil {
-		return nil, err
+		return nil, redact(err)
 	}
 	if method == http.MethodGet && res.StatusCode >= 200 && res.StatusCode < 300 {
 		rng := ""
@@ -567,7 +567,23 @@ func (c *Client) Scrobble(ctx context.Context, id string, submission bool) error
 }
 
 func (c *Client) OpenArt(ctx context.Context, track media.Track) (*http.Response, error) {
-	return c.http.Open(ctx, http.MethodGet, c.authedPath(track.ArtRef), nil)
+	res, err := c.http.Open(ctx, http.MethodGet, c.authedPath(track.ArtRef), nil)
+	if err != nil {
+		return nil, redact(err)
+	}
+	return res, nil
+}
+
+// redact drops the query from a transport error's URL: it carries the
+// username and the salted password token, and the error reaches logs, the
+// setup page and webhook answers.
+func redact(err error) error {
+	var urlErr *url.Error
+	if !errors.As(err, &urlErr) {
+		return err
+	}
+	bare, _, _ := strings.Cut(urlErr.URL, "?")
+	return fmt.Errorf("navidrome: %w", &url.Error{Op: urlErr.Op, URL: bare, Err: urlErr.Err})
 }
 
 // authedPath appends the Subsonic auth query to a stored ref path.

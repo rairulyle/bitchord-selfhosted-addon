@@ -356,3 +356,21 @@ func TestSubsonicActivityCallback(t *testing.T) {
 		t.Errorf("unexpected activity: %s", activities[0])
 	}
 }
+
+func TestTransportErrorsCarryNoCredentials(t *testing.T) {
+	c := New(Options{BaseURL: fakes.DeadURL(t), Username: fakes.NavidromeUser, Password: fakes.NavidromePassword})
+	track := media.Track{ID: "s-1", FileRef: StreamPath("s-1"), ArtRef: ArtPath("al-1")}
+	_, versionErr := c.Version(context.Background())
+	_, fileErr := c.OpenFile(context.Background(), track, http.MethodGet, nil)
+	_, artErr := c.OpenArt(context.Background(), track)
+	for name, err := range map[string]error{"call": versionErr, "file": fileErr, "art": artErr} {
+		if err == nil {
+			t.Fatalf("%s: no error from a dead server", name)
+		}
+		for _, leak := range []string{"t=", "s=", "u=", "p=", fakes.NavidromeUser} {
+			if strings.Contains(err.Error(), leak) {
+				t.Errorf("%s error %q contains %q", name, err, leak)
+			}
+		}
+	}
+}
