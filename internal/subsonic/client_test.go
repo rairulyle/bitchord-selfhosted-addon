@@ -566,3 +566,13 @@ func TestErrorCodes(t *testing.T) {
 		t.Fatalf("a missing parameter maps to %v", missing)
 	}
 }
+
+func TestLosslessFormatLabels(t *testing.T) {
+	cases := map[string]string{"aif": "aiff", "aiff": "aiff", "wav": "wav", "wv": "wavpack", "ape": "ape", "dsf": "dsd", "dff": "dsd", "flac": "flac"}
+	for suffix, want := range cases {
+		track := Child{ID: "s", Suffix: suffix}.convert()
+		if track.Codec != want || !media.Lossless(track.Codec) {
+			t.Errorf("%s: codec %q, lossless %v; want %q, lossless", suffix, track.Codec, media.Lossless(track.Codec), want)
+		}
+	}
+}

@@ -60,7 +60,7 @@ func AudioFormat(codec, container string) string {
 
 func Lossless(format string) bool {
 	switch format {
-	case "flac", "alac", "wav", "aiff":
+	case "flac", "alac", "wav", "aiff", "wavpack", "ape", "dsd":
 		return true
 	}
 	return false

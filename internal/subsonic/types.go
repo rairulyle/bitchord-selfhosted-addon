@@ -193,6 +193,10 @@ func (c Child) convert() media.Track {
 	if albumArtist == "" {
 		albumArtist = artist
 	}
+	container := strings.ToLower(c.Suffix)
+	if container == "aif" {
+		container = "aiff"
+	}
 	out := media.Track{
 		ID:          c.ID,
 		Title:       c.Title,
@@ -203,8 +207,8 @@ func (c Child) convert() media.Track {
 		BitrateKbps: c.BitRate,
 		SampleRate:  c.SamplingRate,
 		BitDepth:    c.BitDepth,
-		Container:   strings.ToLower(c.Suffix),
-		Codec:       media.AudioFormat(codecOf(c.Suffix, c.ContentType), strings.ToLower(c.Suffix)),
+		Container:   container,
+		Codec:       media.AudioFormat(codecOf(c.Suffix, c.ContentType), container),
 	}
 	if c.CoverArt != "" {
 		out.ArtRef = ArtPath(c.CoverArt)
