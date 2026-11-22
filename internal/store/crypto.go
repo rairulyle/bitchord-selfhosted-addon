@@ -3,7 +3,7 @@ package store
 import (
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/hmac"
+	"crypto/pbkdf2"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -13,9 +13,14 @@ import (
 	"io"
 )
 
+// backupKDFIterations follows OWASP's advice for PBKDF2-HMAC-SHA256. A file
+// records its own count; counts outside minKDFIterations..maxKDFIterations are
+// refused so a crafted file cannot make a restore spin for minutes.
 const (
-	defaultKDFIterations = 100_000
-	backupKDFAlgorithm   = "pbkdf2-sha256"
+	backupKDFIterations = 600_000
+	minKDFIterations    = 1_000
+	maxKDFIterations    = 2_000_000
+	backupKDFAlgorithm  = "pbkdf2-sha256"
 )
 
 // EncryptedBackup defines the envelope for password-encrypted snapshot backups.
@@ -44,6 +49,10 @@ func IsEncryptedBackup(data []byte) bool {
 // encrypts it using AES-256-GCM with a key derived via PBKDF2-HMAC-SHA256.
 // If passphrase is empty, it returns indented plaintext JSON.
 func EncryptSnapshot(snap Snapshot, passphrase string) ([]byte, error) {
+	return encryptSnapshot(snap, passphrase, backupKDFIterations)
+}
+
+func encryptSnapshot(snap Snapshot, passphrase string, iterations int) ([]byte, error) {
 	if passphrase == "" {
 		return json.MarshalIndent(snap, "", "  ")
 	}
@@ -58,7 +67,10 @@ func EncryptSnapshot(snap Snapshot, passphrase string) ([]byte, error) {
 		return nil, fmt.Errorf("generate salt: %w", err)
 	}
 
-	key := pbkdf2SHA256([]byte(passphrase), salt, defaultKDFIterations, 32)
+	key, err := pbkdf2.Key(sha256.New, passphrase, salt, iterations, 32)
+	if err != nil {
+		return nil, fmt.Errorf("derive key: %w", err)
+	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("new cipher: %w", err)
@@ -80,7 +92,7 @@ func EncryptSnapshot(snap Snapshot, passphrase string) ([]byte, error) {
 		Version:    1,
 		Encrypted:  true,
 		KDF:        backupKDFAlgorithm,
-		Iterations: defaultKDFIterations,
+		Iterations: iterations,
 		Salt:       base64.StdEncoding.EncodeToString(salt),
 		Nonce:      base64.StdEncoding.EncodeToString(nonce),
 		Ciphertext: base64.StdEncoding.EncodeToString(ciphertext),
@@ -117,12 +129,17 @@ func DecryptSnapshot(data []byte, passphrase string) (Snapshot, error) {
 			return Snapshot{}, errors.New("invalid or corrupted ciphertext")
 		}
 
-		iters := eb.Iterations
-		if iters < 1000 || iters > 1_000_000 {
-			iters = defaultKDFIterations
+		if eb.KDF != backupKDFAlgorithm {
+			return Snapshot{}, fmt.Errorf("unsupported key derivation %q", eb.KDF)
+		}
+		if eb.Iterations < minKDFIterations || eb.Iterations > maxKDFIterations {
+			return Snapshot{}, fmt.Errorf("unsupported key derivation iteration count %d", eb.Iterations)
 		}
 
-		key := pbkdf2SHA256([]byte(passphrase), salt, iters, 32)
+		key, err := pbkdf2.Key(sha256.New, passphrase, salt, eb.Iterations, 32)
+		if err != nil {
+			return Snapshot{}, fmt.Errorf("derive key: %w", err)
+		}
 		block, err := aes.NewCipher(key)
 		if err != nil {
 			return Snapshot{}, fmt.Errorf("new cipher: %w", err)
@@ -154,41 +171,4 @@ func DecryptSnapshot(data []byte, passphrase string) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("file is not valid JSON configuration: %w", err)
 	}
 	return snap, nil
-}
-
-// pbkdf2SHA256 derives a key from password and salt using HMAC-SHA-256 (RFC 2898 / RFC 8018).
-func pbkdf2SHA256(password, salt []byte, iter, keyLen int) []byte {
-	prf := hmac.New(sha256.New, password)
-	hashLen := prf.Size()
-	numBlocks := (keyLen + hashLen - 1) / hashLen
-	out := make([]byte, 0, numBlocks*hashLen)
-	buf := make([]byte, 4)
-
-	for block := 1; block <= numBlocks; block++ {
-		// U_1 = PRF(password, salt || INT_32_BE(block))
-		prf.Reset()
-		prf.Write(salt)
-		buf[0] = byte(block >> 24)
-		buf[1] = byte(block >> 16)
-		buf[2] = byte(block >> 8)
-		buf[3] = byte(block)
-		prf.Write(buf)
-		u := prf.Sum(nil)
-
-		// T_block = U_1
-		t := make([]byte, hashLen)
-		copy(t, u)
-
-		// U_2 ... U_iter
-		for i := 2; i <= iter; i++ {
-			prf.Reset()
-			prf.Write(u)
-			u = prf.Sum(u[:0])
-			for j := 0; j < hashLen; j++ {
-				t[j] ^= u[j]
-			}
-		}
-		out = append(out, t...)
-	}
-	return out[:keyLen]
 }

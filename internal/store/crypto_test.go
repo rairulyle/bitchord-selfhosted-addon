@@ -1,22 +1,43 @@
 package store
 
 import (
-	"encoding/hex"
+	"encoding/json"
 	"strings"
 	"testing"
 )
 
-func TestPBKDF2SHA256(t *testing.T) {
-	// Standard test: password="password", salt="salt", iterations=4096, keyLen=32
-	// Expected output for PBKDF2-HMAC-SHA256:
-	// c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a
-	pass := []byte("password")
-	salt := []byte("salt")
-	key := pbkdf2SHA256(pass, salt, 4096, 32)
-	got := hex.EncodeToString(key)
-	want := "c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a"
-	if got != want {
-		t.Fatalf("PBKDF2 got %s, want %s", got, want)
+func TestDecryptSnapshotReadsTheIterationCountTheFileRecorded(t *testing.T) {
+	orig := Snapshot{PublicURL: "https://music.example.com", Servers: []Server{}}
+	older, err := encryptSnapshot(orig, "pass", 100_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := DecryptSnapshot(older, "pass")
+	if err != nil || got.PublicURL != orig.PublicURL {
+		t.Fatalf("100k-iteration backup: %+v, %v", got, err)
+	}
+	for _, iterations := range []int{minKDFIterations - 1, maxKDFIterations + 1} {
+		raw, err := encryptSnapshot(orig, "pass", iterations)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := DecryptSnapshot(raw, "pass"); err == nil || !strings.Contains(err.Error(), "iteration count") {
+			t.Errorf("%d iterations: err = %v, want an iteration count error", iterations, err)
+		}
+	}
+}
+
+func TestEncryptSnapshotUsesTheCurrentIterationCount(t *testing.T) {
+	raw, err := EncryptSnapshot(Snapshot{Servers: []Server{}}, "pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope EncryptedBackup
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Iterations != 600_000 || envelope.KDF != "pbkdf2-sha256" {
+		t.Fatalf("envelope = %+v", envelope)
 	}
 }
 
