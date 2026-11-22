@@ -603,7 +603,7 @@ func (a *app) testSearch(w http.ResponseWriter, r *http.Request) {
 		matches[i] = matchTrack{
 			ID:          t.ID,
 			Title:       t.Title,
-			Artist:      t.Artist,
+			Artist:      library.FormatArtists(t.Artist),
 			Album:       t.Album,
 			DurationSec: t.DurationSec,
 			Codec:       t.Codec,
@@ -622,7 +622,7 @@ func (a *app) testSearch(w http.ResponseWriter, r *http.Request) {
 		}
 		albums[i] = matchAlbum{
 			Name:       alb.Name,
-			Artist:     alb.Artist,
+			Artist:     library.FormatArtists(alb.Artist),
 			ArtworkURL: art,
 			TrackCount: alb.TrackCount,
 		}

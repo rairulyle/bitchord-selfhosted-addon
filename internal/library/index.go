@@ -880,3 +880,12 @@ func SplitArtists(s string) []string {
 	}
 	return artists
 }
+
+// FormatArtists formats a multi-artist string consistently using " • ".
+func FormatArtists(s string) string {
+	parts := SplitArtists(s)
+	if len(parts) <= 1 {
+		return s
+	}
+	return strings.Join(parts, " • ")
+}

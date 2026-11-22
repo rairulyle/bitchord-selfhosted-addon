@@ -351,6 +351,27 @@ func TestSplitArtists(t *testing.T) {
 	}
 }
 
+func TestFormatArtists(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"Metro Boomin; The Weeknd; 21 Savage", "Metro Boomin • The Weeknd • 21 Savage"},
+		{"The Weeknd • Gesaffelstein", "The Weeknd • Gesaffelstein"},
+		{"The Weeknd; Anitta", "The Weeknd • Anitta"},
+		{"The Weeknd", "The Weeknd"},
+		{"Tyler, The Creator", "Tyler, The Creator"},
+		{"", ""},
+	}
+
+	for _, tc := range cases {
+		got := FormatArtists(tc.input)
+		if got != tc.want {
+			t.Errorf("FormatArtists(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
 func TestMultiArtistGroupingInIndex(t *testing.T) {
 	tracks := []media.Track{
 		{ID: "1", Title: "Starboy", Artist: "The Weeknd", Album: "Starboy"},
