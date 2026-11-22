@@ -117,6 +117,14 @@ func serve(ctx context.Context, cfg config.Config, st *store.Store, log *slog.Lo
 	}()
 	mux.Handle("/setup", admin)
 	mux.Handle("/setup/", admin)
+	mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/svg+xml")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Write([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#212121" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><style>@media (prefers-color-scheme: dark){path,circle{stroke:#fff}}</style><path d="M21 16V3a1 1 0 0 0-1.28-.96l-10 2.917a1 1 0 0 0-.72.96V19"/><circle cx="18" cy="16" r="3"/><circle cx="6" cy="19" r="3"/></svg>`))
+	})
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/setup", http.StatusFound)
+	})
 	mux.Handle("/", server.New(server.Options{
 		Site: func() server.Site {
 			current := st.Snapshot()

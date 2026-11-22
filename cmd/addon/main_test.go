@@ -184,8 +184,15 @@ func TestAnEmptyStoreServesTheSetupPageAndIsHealthy(t *testing.T) {
 	if status, body := get(t, base+"/setup"); status != http.StatusOK || !strings.Contains(body, "Create a password") {
 		t.Fatalf("setup page: %d %s", status, body)
 	}
+	noFollow := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	if res, err := noFollow.Get(base + "/"); err != nil || res.StatusCode != http.StatusFound || res.Header.Get("Location") != "/setup" {
+		t.Fatalf("root redirect: err=%v, status=%d, location=%s", err, res.StatusCode, res.Header.Get("Location"))
+	}
 	if status, _ := get(t, base+"/setup/static/style.css"); status != http.StatusOK {
 		t.Fatalf("stylesheet: %d", status)
+	}
+	if status, body := get(t, base+"/favicon.ico"); status != http.StatusOK || !strings.Contains(body, "<svg") {
+		t.Fatalf("favicon: %d %s", status, body)
 	}
 	if status, body := get(t, base+"/plex-1/"+st.Snapshot().Secret+"/manifest.json"); status != http.StatusNotFound || body != "" {
 		t.Fatalf("unknown server: %d %q", status, body)
