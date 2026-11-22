@@ -139,3 +139,18 @@ func TestArtCacheHitsAvoidUpstreamAndSupportETag304(t *testing.T) {
 		t.Fatalf("304 revalidation called upstream: before %d, after %d", reqCountAfterFirst, len(h.fake.Requests()))
 	}
 }
+
+func TestArtCacheSkipsAnswersThatAreNotImages(t *testing.T) {
+	h := newHarness(t)
+	h.fake.AnswerRaw(`{"error":"not an image"}`)
+	artURL := "/plex-1/" + testSecret + "/art/101"
+	before := len(h.fake.Requests())
+	h.get(artURL)
+	h.get(artURL)
+	if got := len(h.fake.Requests()) - before; got != 2 {
+		t.Fatalf("upstream requests = %d, want 2: a non-image answer was cached", got)
+	}
+	if items, _ := h.server.artCache.Stats(); items != 0 {
+		t.Fatalf("cache holds %d items", items)
+	}
+}

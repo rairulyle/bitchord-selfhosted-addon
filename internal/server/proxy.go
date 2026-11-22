@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
@@ -85,13 +86,14 @@ func (s *server) art(w http.ResponseWriter, r *http.Request, src source) {
 	}
 
 	contentType := upstream.Header.Get("Content-Type")
+	cacheable := strings.HasPrefix(contentType, "image/")
 	if contentType == "" {
 		contentType = "image/jpeg"
 	}
 	etag := upstream.Header.Get("ETag")
 	lastModified := upstream.Header.Get("Last-Modified")
 
-	if s.artCache != nil && int64(len(body)) <= maxCachedItemSize {
+	if s.artCache != nil && cacheable && int64(len(body)) <= maxCachedItemSize {
 		item := s.artCache.Put(cacheKey, body, contentType, etag, lastModified)
 		if item != nil {
 			serveCachedArt(w, r, item)
