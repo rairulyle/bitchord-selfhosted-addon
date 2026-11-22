@@ -613,3 +613,40 @@ func TestCompletionsAreOnlyForTheLastWordAndOnlyOnAMiss(t *testing.T) {
 		})
 	}
 }
+
+func TestCompletionsKeepTheMostUsedWords(t *testing.T) {
+	var tracks []media.Track
+	for i := range 35 {
+		tracks = append(tracks, media.Track{ID: fmt.Sprintf("t%02d", i), Title: fmt.Sprintf("Theme%02d", i)})
+	}
+	for i := range 3 {
+		tracks = append(tracks, media.Track{ID: fmt.Sprintf("s%d", i), Title: "Themes", Album: fmt.Sprint(i)})
+	}
+	got := ids(NewIndex(tracks).Search("them", 50))
+	for _, id := range []string{"s0", "s1", "s2"} {
+		if !slices.Contains(got, id) {
+			t.Fatalf("Search(them) = %v, want the three Themes tracks kept", got)
+		}
+	}
+}
+
+func TestUnion(t *testing.T) {
+	cases := map[string]struct {
+		lists [][]int
+		want  []int
+	}{
+		"none":         {nil, nil},
+		"empty lists":  {[][]int{nil, {}}, nil},
+		"one list":     {[][]int{{1, 4}}, []int{1, 4}},
+		"overlapping":  {[][]int{{1, 3, 5}, {2, 3, 6}, {3, 5, 7}}, []int{1, 2, 3, 5, 6, 7}},
+		"disjoint":     {[][]int{{4, 5}, {1, 2}}, []int{1, 2, 4, 5}},
+		"with a blank": {[][]int{{2}, nil, {1, 2}}, []int{1, 2}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := union(tc.lists); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("union = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

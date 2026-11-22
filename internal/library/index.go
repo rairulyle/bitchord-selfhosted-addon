@@ -1,6 +1,7 @@
 package library
 
 import (
+	"container/heap"
 	"slices"
 	"sort"
 	"strings"
@@ -290,56 +291,33 @@ func stripNoise(q []string) []string {
 
 const maxPrefixExpansion = 30
 
-func prefixMatches(sortedKeys []string, token string, maxKeys int) []string {
+// completions lists the keys that start with token, most-used first, so a
+// short prefix keeps the words a library actually has many tracks for.
+func completions(sortedKeys []string, posts map[string][]int, token string) []string {
 	if utf8.RuneCountInString(token) < 2 {
 		return nil
 	}
-	idx := sort.SearchStrings(sortedKeys, token)
-	var matched []string
-	for i := idx; i < len(sortedKeys); i++ {
-		key := sortedKeys[i]
-		if !strings.HasPrefix(key, token) {
-			break
-		}
-		matched = append(matched, key)
-		if len(matched) >= maxKeys {
-			break
-		}
+	start := sort.SearchStrings(sortedKeys, token)
+	end := start
+	for end < len(sortedKeys) && strings.HasPrefix(sortedKeys[end], token) {
+		end++
 	}
-	return matched
+	keys := slices.Clone(sortedKeys[start:end])
+	slices.SortStableFunc(keys, func(a, b string) int { return len(posts[b]) - len(posts[a]) })
+	return keys[:min(len(keys), maxPrefixExpansion)]
 }
 
 func (ix *Index) lookupPostings(token string, prefix bool) []int {
-	exact := ix.postings[token]
-	if !prefix || utf8.RuneCountInString(token) < 2 {
-		return exact
+	if !prefix {
+		return ix.postings[token]
 	}
-	keys := prefixMatches(ix.sortedKeys, token, maxPrefixExpansion)
-	if len(keys) == 0 {
-		return exact
-	}
-	if len(keys) == 1 && keys[0] == token {
-		return exact
-	}
-	var matched []int
-	seen := make(map[int]struct{})
-	for _, id := range exact {
-		seen[id] = struct{}{}
-		matched = append(matched, id)
-	}
-	for _, key := range keys {
-		if key == token {
-			continue
-		}
-		for _, id := range ix.postings[key] {
-			if _, ok := seen[id]; !ok {
-				seen[id] = struct{}{}
-				matched = append(matched, id)
-			}
+	lists := [][]int{ix.postings[token]}
+	for _, key := range completions(ix.sortedKeys, ix.postings, token) {
+		if key != token {
+			lists = append(lists, ix.postings[key])
 		}
 	}
-	sort.Ints(matched)
-	return matched
+	return union(lists)
 }
 
 func (ix *Index) Search(query string, limit int) []media.Track { return ix.Find(query, limit).Tracks }
@@ -437,24 +415,22 @@ func (ix *Index) strict(q []string, prefix bool) []int {
 func (ix *Index) titleKeys(token string, prefix bool) []string {
 	keys := append([]string{token}, tokenSynonyms[token]...)
 	if prefix && utf8.RuneCountInString(token) >= 2 {
-		keys = append(keys, prefixMatches(ix.sortedTitleKeys, token, maxPrefixExpansion)...)
+		keys = append(keys, completions(ix.sortedTitleKeys, ix.titlePosts, token)...)
 	}
 	return keys
 }
 
 func (ix *Index) fallback(q []string, prefix bool) []int {
 	covered := map[string]struct{}{}
-	candidates := map[int]struct{}{}
+	var lists [][]int
 	for n, token := range q {
 		for _, key := range ix.titleKeys(token, prefix && n == len(q)-1) {
 			covered[key] = struct{}{}
-			for _, i := range ix.titlePosts[key] {
-				candidates[i] = struct{}{}
-			}
+			lists = append(lists, ix.titlePosts[key])
 		}
 	}
 	var out []int
-	for i := range candidates {
+	for _, i := range union(lists) {
 		title := ix.titleTokens[i]
 		n := 0
 		for _, token := range title {
@@ -602,18 +578,11 @@ func (ix *Index) fuzzy(q []string) []int {
 		if len(matchedKeys) == 0 {
 			return nil
 		}
-		var list []int
-		seen := make(map[int]struct{})
-		for _, key := range matchedKeys {
-			for _, id := range ix.postings[key] {
-				if _, ok := seen[id]; !ok {
-					seen[id] = struct{}{}
-					list = append(list, id)
-				}
-			}
+		keyLists := make([][]int, len(matchedKeys))
+		for k, key := range matchedKeys {
+			keyLists[k] = ix.postings[key]
 		}
-		sort.Ints(list)
-		lists[n] = list
+		lists[n] = union(keyLists)
 	}
 
 	sort.Slice(lists, func(a, b int) bool { return len(lists[a]) < len(lists[b]) })
@@ -889,6 +858,52 @@ func (ix *Index) findArtists(cleanQ string, q []string, matchedTracks []int) []A
 			ArtRef:     art.artRef,
 			SampleID:   art.sampleID,
 			TrackCount: art.trackCount,
+		}
+	}
+	return out
+}
+
+type postingHeap [][]int
+
+func (h postingHeap) Len() int           { return len(h) }
+func (h postingHeap) Less(a, b int) bool { return h[a][0] < h[b][0] }
+func (h postingHeap) Swap(a, b int)      { h[a], h[b] = h[b], h[a] }
+func (h *postingHeap) Push(x any)        { *h = append(*h, x.([]int)) }
+func (h *postingHeap) Pop() any {
+	old := *h
+	last := old[len(old)-1]
+	*h = old[:len(old)-1]
+	return last
+}
+
+// union merges sorted posting lists into one sorted list without repeats.
+// With a single list it returns that list itself, which callers must not
+// modify.
+func union(lists [][]int) []int {
+	h := make(postingHeap, 0, len(lists))
+	total := 0
+	for _, list := range lists {
+		if len(list) > 0 {
+			h = append(h, list)
+			total += len(list)
+		}
+	}
+	switch len(h) {
+	case 0:
+		return nil
+	case 1:
+		return h[0]
+	}
+	heap.Init(&h)
+	out := make([]int, 0, total)
+	for len(h) > 0 {
+		if next := h[0][0]; len(out) == 0 || out[len(out)-1] != next {
+			out = append(out, next)
+		}
+		if h[0] = h[0][1:]; len(h[0]) == 0 {
+			heap.Pop(&h)
+		} else {
+			heap.Fix(&h, 0)
 		}
 	}
 	return out
