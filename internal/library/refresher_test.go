@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -107,6 +108,7 @@ func TestStatsFollowEveryRefresh(t *testing.T) {
 	if failed.Tracks != 1 || failed.Refreshed != got.Refreshed || failed.LastError != "server down" {
 		t.Fatalf("stats after a failure = %+v", failed)
 	}
+	time.Sleep(10 * time.Millisecond)
 	lib.Refresh(context.Background())
 	if recovered := lib.Stats(); recovered.Tracks != 2 || recovered.LastError != "" || !recovered.Refreshed.After(got.Refreshed) {
 		t.Fatalf("stats after recovery = %+v", recovered)
@@ -184,6 +186,33 @@ func TestRunStopsWhenTheContextIsCancelled(t *testing.T) {
 	}
 }
 
+func TestRunManualIntervalWaitsForCancelWithoutPolling(t *testing.T) {
+	slept := false
+	lib := NewLibrary(&scriptedSource{answers: []func() ([]media.Track, error){ok(track("1", "Song"))}}, "", 0, quiet)
+	lib.sleep = func(_ context.Context, _ time.Duration) error {
+		slept = true
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		lib.Run(ctx)
+		close(done)
+	}()
+	for !lib.Ready() {
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after cancel")
+	}
+	if slept {
+		t.Error("manual interval library called sleep")
+	}
+}
+
 func TestSearchIsSafeDuringASwap(t *testing.T) {
 	source := &scriptedSource{answers: []func() ([]media.Track, error){ok(track("1", "First Song"))}}
 	lib := NewLibrary(source, "", time.Minute, quiet)
@@ -241,4 +270,44 @@ func TestTriedClosesAfterTheFirstRefreshEvenWhenItFails(t *testing.T) {
 		t.Fatal("not tried after a failed refresh")
 	}
 	lib.Refresh(context.Background())
+}
+
+func TestConcurrentRefreshesAreSerialized(t *testing.T) {
+	var inFlight atomic.Int32
+	var maxConcurrent atomic.Int32
+	source := &concurrencySource{
+		fetch: func() ([]media.Track, error) {
+			current := inFlight.Add(1)
+			defer inFlight.Add(-1)
+			for {
+				old := maxConcurrent.Load()
+				if current <= old || maxConcurrent.CompareAndSwap(old, current) {
+					break
+				}
+			}
+			time.Sleep(10 * time.Millisecond)
+			return []media.Track{track("1", "One")}, nil
+		},
+	}
+	lib := NewLibrary(source, "", time.Minute, quiet)
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = lib.Refresh(context.Background())
+		}()
+	}
+	wg.Wait()
+	if got := maxConcurrent.Load(); got != 1 {
+		t.Fatalf("max concurrent refreshes = %d, want 1 (strictly serialized)", got)
+	}
+}
+
+type concurrencySource struct {
+	fetch func() ([]media.Track, error)
+}
+
+func (c *concurrencySource) AllTracks(ctx context.Context, filter string) ([]media.Track, error) {
+	return c.fetch()
 }
