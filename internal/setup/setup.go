@@ -204,6 +204,7 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /setup/servers/{slug}/refresh", a.refreshServer)
 	mux.HandleFunc("POST /setup/sync-all", a.refreshAllServers)
 	mux.HandleFunc("GET /setup/servers/{slug}/test-search", a.testSearch)
+	mux.HandleFunc("GET /setup/servers/{slug}/search", a.testSearch)
 	mux.HandleFunc("GET /setup/activity", a.recentActivity)
 	mux.HandleFunc("POST /setup/activity/clear", a.clearActivity)
 	mux.HandleFunc("POST /setup/plex/pin", a.plexPIN)
