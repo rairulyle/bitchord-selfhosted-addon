@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
@@ -70,6 +71,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /health", s.health)
 	mux.HandleFunc("GET /{slug}/{secret}/manifest.json", s.guard(s.manifest))
 	mux.HandleFunc("GET /{slug}/{secret}/search", s.guard(s.search))
+	mux.HandleFunc("POST /{slug}/{secret}/sync", s.guard(s.syncWebhook))
+	mux.HandleFunc("GET /{slug}/{secret}/sync", s.guard(s.syncWebhook))
 	mux.HandleFunc("GET /{slug}/{secret}/stream/{id}", s.guard(s.stream))
 	mux.HandleFunc("GET /{slug}/{secret}/file/{id}", s.guard(s.file))
 	mux.HandleFunc("GET /{slug}/{secret}/art/{id}", s.guard(s.art))
@@ -155,6 +158,26 @@ func (s *server) search(w http.ResponseWriter, r *http.Request, src source) {
 	}
 	logSearch(src.Log, query, found, time.Since(started))
 	writeJSON(w, searchJSON{Tracks: tracks, Albums: []any{}, Artists: []any{}, Playlists: []any{}})
+}
+
+func (s *server) syncWebhook(w http.ResponseWriter, r *http.Request, src source) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	if err := src.Library.Refresh(ctx); err != nil {
+		src.Log.Error("webhook sync failed", "error", err.Error())
+		w.WriteHeader(http.StatusBadGateway)
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	stats := src.Library.Stats()
+	src.Log.Info("webhook sync complete", "tracks", stats.Tracks)
+	writeJSON(w, map[string]any{
+		"ok":        true,
+		"server":    src.Slug,
+		"name":      src.DisplayName(),
+		"tracks":    stats.Tracks,
+		"refreshed": stats.Refreshed.Format(time.RFC3339),
+	})
 }
 
 const loggedQueryRunes = 200

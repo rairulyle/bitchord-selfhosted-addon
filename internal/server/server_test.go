@@ -426,3 +426,31 @@ func TestRequestLinesAreDebugOnly(t *testing.T) {
 		t.Fatalf("request line logged at info:\n%s", logs.String())
 	}
 }
+
+func TestSyncWebhook(t *testing.T) {
+	h := newHarness(t)
+	rec := h.do(http.MethodPost, "/plex-1/"+testSecret+"/sync", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sync webhook POST status = %d, body: %s", rec.Code, rec.Body.String())
+	}
+	var res map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil || res["ok"] != true {
+		t.Fatalf("sync response = %v, err: %v", res, err)
+	}
+	if res["server"] != "plex-1" || res["tracks"] != float64(5) {
+		t.Fatalf("unexpected sync data: %v", res)
+	}
+
+	rec = h.do(http.MethodGet, "/plex-1/"+testSecret+"/sync", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sync webhook GET status = %d", rec.Code)
+	}
+
+	if rec := h.do(http.MethodPost, "/plex-1/wrong-secret/sync", nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("wrong secret = %d", rec.Code)
+	}
+
+	if rec := h.do(http.MethodPost, "/unknown/"+testSecret+"/sync", nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown server = %d", rec.Code)
+	}
+}
