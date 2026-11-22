@@ -163,7 +163,7 @@ func (c *Client) call(ctx context.Context, method string, params url.Values, int
 
 func navidromeError(e *apiError) error {
 	switch e.Code {
-	case 40, 41, 10, 50: // wrong credentials, token auth not supported, missing param, unauthorized
+	case 40, 41, 50: // wrong credentials, token auth not supported, user not authorized
 		return fmt.Errorf("%w: %s", media.ErrUnauthorized, e.Message)
 	case 70: // requested data not found
 		return fmt.Errorf("%s: %w", e.Message, media.ErrNotFound)
@@ -361,7 +361,7 @@ func (c *Client) Track(ctx context.Context, id string) (media.Track, error) {
 		Song Child `json:"song"`
 	}
 	if err := c.call(ctx, "getSong", url.Values{"id": {id}}, &answer); err != nil {
-		if isNotFound(err) || isUnauthorized(err) {
+		if isNotFound(err) {
 			return media.Track{}, media.ErrNotFound
 		}
 		return media.Track{}, err

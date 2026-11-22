@@ -545,3 +545,24 @@ func TestTheAlbumWalkStopsAtTheFirstFailure(t *testing.T) {
 		t.Fatalf("fetched %d albums after the first failure", fetched)
 	}
 }
+
+func TestTrackKeepsAnAuthFailureApartFromAMissingTrack(t *testing.T) {
+	fake := fakes.NewNavidrome(t)
+	_, err := New(Options{BaseURL: fake.URL, Username: fakes.NavidromeUser, Password: "wrong-password"}).Track(context.Background(), "s-1")
+	if !errors.Is(err, media.ErrUnauthorized) {
+		t.Fatalf("err = %v, want unauthorized", err)
+	}
+}
+
+func TestErrorCodes(t *testing.T) {
+	cases := map[int]error{40: media.ErrUnauthorized, 41: media.ErrUnauthorized, 50: media.ErrUnauthorized, 70: media.ErrNotFound}
+	for code, want := range cases {
+		if err := navidromeError(&apiError{Code: code, Message: "m"}); !errors.Is(err, want) {
+			t.Errorf("code %d: %v, want %v", code, err, want)
+		}
+	}
+	missing := navidromeError(&apiError{Code: 10, Message: "Required parameter is missing"})
+	if errors.Is(missing, media.ErrUnauthorized) || errors.Is(missing, media.ErrNotFound) {
+		t.Fatalf("a missing parameter maps to %v", missing)
+	}
+}
