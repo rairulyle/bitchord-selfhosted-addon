@@ -57,8 +57,8 @@ func TestLoadRejectsBadValuesAllAtOnce(t *testing.T) {
 }
 
 func TestRemovedNamesTheVariablesStillSet(t *testing.T) {
-	got := Removed(env(map[string]string{"PLEX_URL": "http://plex:32400", "ADDON_SECRET": " ", "JELLYFIN_API_KEY": "k", "PORT": "1"}))
-	if !reflect.DeepEqual(got, []string{"PLEX_URL", "JELLYFIN_API_KEY"}) {
+	got := Removed(env(map[string]string{"PLEX_URL": "http://plex:32400", "ADDON_SECRET": " ", "JELLYFIN_API_KEY": "k", "NAVIDROME_URL": "http://navidrome:4533", "PORT": "1"}))
+	if !reflect.DeepEqual(got, []string{"PLEX_URL", "JELLYFIN_API_KEY", "NAVIDROME_URL"}) {
 		t.Fatalf("Removed = %v", got)
 	}
 	if got := Removed(env(nil)); got != nil {
