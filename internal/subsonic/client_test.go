@@ -518,3 +518,30 @@ func TestPagingStopsWhenTheServerIgnoresOffsets(t *testing.T) {
 		})
 	}
 }
+
+func TestTheAlbumWalkStopsAtTheFirstFailure(t *testing.T) {
+	fake := fakes.NewNavidrome(t)
+	fake.DisableSearch3 = true
+	albums := make([]map[string]any, 100)
+	for i := range albums {
+		albums[i] = map[string]any{"id": fmt.Sprintf("al-%d", i), "name": fmt.Sprintf("Album %d", i)}
+	}
+	fake.Extra["/rest/getAlbumList2.view"] = func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"subsonic-response": map[string]any{"status": "ok", "albumList2": map[string]any{"album": albums}}})
+	}
+	fake.Extra["/rest/getAlbum.view"] = func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"subsonic-response": map[string]any{"status": "failed", "error": map[string]any{"code": 0, "message": "boom"}}})
+	}
+	if _, err := newClient(fake).AllTracks(context.Background(), ""); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("err = %v, want the album failure", err)
+	}
+	fetched := 0
+	for _, req := range fake.Requests() {
+		if req.Path == "/rest/getAlbum.view" {
+			fetched++
+		}
+	}
+	if fetched > 2*albumWorkers {
+		t.Fatalf("fetched %d albums after the first failure", fetched)
+	}
+}

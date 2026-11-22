@@ -14,6 +14,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -248,69 +249,47 @@ func (c *Client) allTracksSearch3(ctx context.Context, folderFilter string) ([]m
 	return convertUnique(songs), nil
 }
 
+const albumWorkers = 6
+
 // allTracksViaAlbums walks getAlbumList2 alphabetically, then fetches each
-// album's songs via getAlbum with bounded concurrency.
+// album's songs via getAlbum with bounded concurrency. The first failure
+// cancels the walk.
 func (c *Client) allTracksViaAlbums(ctx context.Context, folderFilter string) ([]media.Track, error) {
 	albums, err := c.allAlbums(ctx, folderFilter)
-	if err != nil {
+	if err != nil || len(albums) == 0 {
 		return nil, err
 	}
-	if len(albums) == 0 {
-		return nil, nil
-	}
-
-	type albumResult struct {
-		index int
-		songs []Child
-		err   error
-	}
-
-	concurrency := 6
-	if len(albums) < concurrency {
-		concurrency = len(albums)
-	}
-
-	jobs := make(chan int, len(albums))
-	results := make(chan albumResult, len(albums))
-
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	jobs := make(chan int)
+	songs := make([][]Child, len(albums))
 	var wg sync.WaitGroup
-	for w := 0; w < concurrency; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for idx := range jobs {
-				songs, err := c.albumSongs(ctx, albums[idx].ID)
-				results <- albumResult{index: idx, songs: songs, err: err}
+	for range min(albumWorkers, len(albums)) {
+		wg.Go(func() {
+			for i := range jobs {
+				found, err := c.albumSongs(ctx, albums[i].ID)
+				if err != nil {
+					cancel(err)
+					return
+				}
+				songs[i] = found
 			}
-		}()
+		})
 	}
-
+feed:
 	for i := range albums {
-		jobs <- i
+		select {
+		case jobs <- i:
+		case <-ctx.Done():
+			break feed
+		}
 	}
 	close(jobs)
 	wg.Wait()
-	close(results)
-
-	ordered := make([][]Child, len(albums))
-	for res := range results {
-		if res.err != nil {
-			return nil, res.err
-		}
-		ordered[res.index] = res.songs
+	if err := context.Cause(ctx); err != nil {
+		return nil, err
 	}
-
-	var out []media.Track
-	seen := make(map[string]bool)
-	for _, songList := range ordered {
-		for _, song := range songList {
-			if !seen[song.ID] {
-				seen[song.ID] = true
-				out = append(out, song.convert())
-			}
-		}
-	}
-	return out, nil
+	return convertUnique(slices.Concat(songs...)), nil
 }
 
 func convertUnique(songs []Child) []media.Track {
