@@ -116,10 +116,20 @@ func ValidateIssuerURL(raw string) error {
 func ValidateServerURL(raw string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return errors.New("server URL must be an http or https URL.")
+		return errors.New("server URL must be an http or https URL such as http://plex:32400")
 	}
-	host := parsed.Hostname()
-	if isCloudMetadata(host) {
+	return nil
+}
+
+// ValidateSubmittedServerURL also refuses link-local and cloud metadata
+// addresses. It runs only on what the setup page submits, never on load, so
+// a file saved before the check existed still opens.
+func ValidateSubmittedServerURL(raw string) error {
+	if err := ValidateServerURL(raw); err != nil {
+		return err
+	}
+	parsed, _ := url.Parse(raw)
+	if isCloudMetadata(parsed.Hostname()) {
 		return errors.New("server URL cannot target cloud instance metadata addresses")
 	}
 	return nil

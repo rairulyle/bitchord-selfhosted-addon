@@ -478,7 +478,7 @@ func (a *app) resolveServer(ctx context.Context, form submitted, existing store.
 	if form.kind == store.Navidrome {
 		server.ScrobblePercent = form.scrobblePercent
 	}
-	if err = store.ValidateServerURL(server.URL); err != nil {
+	if err = store.ValidateSubmittedServerURL(server.URL); err != nil {
 		return server, giveBack, err
 	}
 	if utf8.RuneCountInString(server.Label) > store.LabelMaxLength {
@@ -757,7 +757,7 @@ func (a *app) testServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.URL = strings.TrimRight(strings.TrimSpace(req.URL), "/")
-	if err := store.ValidateServerURL(req.URL); err != nil {
+	if err := store.ValidateSubmittedServerURL(req.URL); err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -864,7 +864,7 @@ func (a *app) jellyfinSignIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.URL = strings.TrimRight(strings.TrimSpace(req.URL), "/")
-	if err := store.ValidateServerURL(req.URL); err != nil {
+	if err := store.ValidateSubmittedServerURL(req.URL); err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -908,7 +908,7 @@ func (a *app) navidromeSignIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.URL = strings.TrimRight(strings.TrimSpace(req.URL), "/")
-	if err := store.ValidateServerURL(req.URL); err != nil {
+	if err := store.ValidateSubmittedServerURL(req.URL); err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}

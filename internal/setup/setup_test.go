@@ -2137,3 +2137,22 @@ func TestRestoreLogsAnAppAuthModeChange(t *testing.T) {
 		t.Errorf("restored mode change not logged:\n%s", a.logs.String())
 	}
 }
+
+func TestTheSetupPageRefusesCloudMetadataServerURLs(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	metadata := "http://169.254.169.254"
+	rec := a.form("/setup/servers", url.Values{"kind": {"plex"}, "url": {metadata}, "token": {"t"}, "enabled": {"1"}})
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "cloud instance metadata") {
+		t.Fatalf("add = %d", rec.Code)
+	}
+	if rec, _ := a.json(http.MethodPost, "/setup/servers/test", testRequest{Kind: store.Plex, URL: metadata, Token: "t"}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("test = %d", rec.Code)
+	}
+	if rec, _ := a.json(http.MethodPost, "/setup/jellyfin/signin", jellyfinSignInRequest{URL: metadata, Username: "u", Password: "p"}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("jellyfin sign-in = %d", rec.Code)
+	}
+	if rec, _ := a.json(http.MethodPost, "/setup/navidrome/signin", navidromeSignInRequest{URL: metadata, Username: "u", Password: "p"}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("navidrome sign-in = %d", rec.Code)
+	}
+}

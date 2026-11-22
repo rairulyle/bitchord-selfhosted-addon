@@ -425,7 +425,7 @@ func TestRestoreRejectsAnInvalidBackupWithAClearError(t *testing.T) {
 	}
 }
 
-func TestValidateServerURLRejectsCloudMetadata(t *testing.T) {
+func TestValidateSubmittedServerURLRejectsCloudMetadata(t *testing.T) {
 	blocked := []string{
 		"http://169.254.169.254",
 		"http://169.254.169.254/latest/meta-data",
@@ -435,8 +435,8 @@ func TestValidateServerURLRejectsCloudMetadata(t *testing.T) {
 		"http://metadata.google.internal",
 	}
 	for _, raw := range blocked {
-		if err := ValidateServerURL(raw); err == nil || !strings.Contains(err.Error(), "cloud instance metadata") {
-			t.Errorf("ValidateServerURL(%q) = %v, want cloud instance metadata error", raw, err)
+		if err := ValidateSubmittedServerURL(raw); err == nil || !strings.Contains(err.Error(), "cloud instance metadata") {
+			t.Errorf("ValidateSubmittedServerURL(%q) = %v, want cloud instance metadata error", raw, err)
 		}
 	}
 	allowed := []string{
@@ -447,8 +447,8 @@ func TestValidateServerURLRejectsCloudMetadata(t *testing.T) {
 		"https://plex.example.com",
 	}
 	for _, raw := range allowed {
-		if err := ValidateServerURL(raw); err != nil {
-			t.Errorf("ValidateServerURL(%q) unexpected error: %v", raw, err)
+		if err := ValidateSubmittedServerURL(raw); err != nil {
+			t.Errorf("ValidateSubmittedServerURL(%q) unexpected error: %v", raw, err)
 		}
 	}
 }
@@ -539,5 +539,18 @@ func TestRestoreKeepsTheBackupsAppAuthAndMakesANewLinkKey(t *testing.T) {
 	}
 	if snap.LinkKey == before || snap.LinkKey == backup.LinkKey || !linkKeyPattern.MatchString(snap.LinkKey) {
 		t.Errorf("link key = %q, want a new one", snap.LinkKey)
+	}
+}
+
+func TestAFileWithALinkLocalServerStillOpens(t *testing.T) {
+	dir := t.TempDir()
+	content := `{"secret":"abcdefghijklmnop","client_id":"c","servers":[{"slug":"plex-1","kind":"plex","url":"http://169.254.10.20:32400","token":"t","auth":"token","enabled":true}]}`
+	os.WriteFile(filepath.Join(dir, FileName), []byte(content), 0o600)
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatalf("Open = %v", err)
+	}
+	if err := s.UpdateServer("plex-1", func(server *Server) error { server.Label = "Home"; return nil }); err != nil {
+		t.Fatalf("a later save refused the stored URL: %v", err)
 	}
 }
