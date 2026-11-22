@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"time"
 	"unicode/utf8"
 )
 
@@ -86,11 +87,21 @@ func ValidateServer(server Server) error {
 		if server.Kind != Jellyfin {
 			problems = append(problems, errors.New("only a Jellyfin server can be signed in with a Jellyfin account"))
 		}
+	case AuthNavidromeSignIn:
+		if server.Kind != Navidrome {
+			problems = append(problems, errors.New("only a Navidrome server can be signed in with a Navidrome account"))
+		}
 	default:
 		problems = append(problems, fmt.Errorf("unknown auth %q", server.Auth))
 	}
 	if utf8.RuneCountInString(server.Label) > LabelMaxLength {
 		problems = append(problems, fmt.Errorf("label must be at most %d characters", LabelMaxLength))
+	}
+	if server.SyncInterval != "" && server.SyncInterval != "manual" && server.SyncInterval != "0" {
+		d, err := time.ParseDuration(server.SyncInterval)
+		if err != nil || d <= 0 {
+			problems = append(problems, errors.New("sync interval must be a positive duration such as 15m, 1h, or manual"))
+		}
 	}
 	return errors.Join(problems...)
 }

@@ -213,20 +213,42 @@ func TestRegenerateSecretAndSetAdmin(t *testing.T) {
 	}
 }
 
+func TestNavidromeServerIsAccepted(t *testing.T) {
+	s := open(t)
+	server := Server{Kind: Navidrome, Label: "Home", URL: "http://navidrome:4533", Token: "lyle:secret", Auth: AuthNavidromeSignIn, Enabled: true}
+	added, err := s.AddServer(server)
+	if err != nil {
+		t.Fatalf("Navidrome server rejected: %v", err)
+	}
+	if added.Slug != "navidrome-1" {
+		t.Fatalf("slug = %q, want navidrome-1", added.Slug)
+	}
+	// A pasted token is fine too, since Navidrome sign-in also stores a token.
+	pasted := server
+	pasted.Auth = AuthToken
+	if _, err := s.AddServer(pasted); err != nil {
+		t.Fatalf("Navidrome server with pasted token rejected: %v", err)
+	}
+}
+
 func TestValidation(t *testing.T) {
 	s := open(t)
 	cases := map[string]struct {
 		change func(*Server)
 		want   string
 	}{
-		"bad url":          {func(v *Server) { v.URL = "plex:32400" }, "http or https"},
-		"no token":         {func(v *Server) { v.Token = "" }, "token or API key is required"},
-		"unknown kind":     {func(v *Server) { v.Kind = "emby" }, `unknown server kind "emby"`},
-		"unknown auth":     {func(v *Server) { v.Auth = "magic" }, `unknown auth "magic"`},
-		"auth kind clash":  {func(v *Server) { v.Auth = AuthJellyfinSignIn }, "only a Jellyfin server"},
-		"label too long":   {func(v *Server) { v.Label = strings.Repeat("é", 17) }, "at most 16 characters"},
-		"label at the cap": {func(v *Server) { v.Label = strings.Repeat("é", 16) }, ""},
-		"empty label":      {func(v *Server) { v.Label = "" }, ""},
+		"bad url":              {func(v *Server) { v.URL = "plex:32400" }, "http or https"},
+		"no token":             {func(v *Server) { v.Token = "" }, "token or API key is required"},
+		"unknown kind":         {func(v *Server) { v.Kind = "emby" }, `unknown server kind "emby"`},
+		"unknown auth":         {func(v *Server) { v.Auth = "magic" }, `unknown auth "magic"`},
+		"auth kind clash":      {func(v *Server) { v.Auth = AuthJellyfinSignIn }, "only a Jellyfin server"},
+		"navidrome auth clash": {func(v *Server) { v.Auth = AuthNavidromeSignIn }, "only a Navidrome server"},
+		"label too long":       {func(v *Server) { v.Label = strings.Repeat("é", 17) }, "at most 16 characters"},
+		"label at the cap":     {func(v *Server) { v.Label = strings.Repeat("é", 16) }, ""},
+		"empty label":          {func(v *Server) { v.Label = "" }, ""},
+		"valid interval":       {func(v *Server) { v.SyncInterval = "1h" }, ""},
+		"manual interval":      {func(v *Server) { v.SyncInterval = "manual" }, ""},
+		"bad interval":         {func(v *Server) { v.SyncInterval = "soon" }, "sync interval must be a positive duration"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

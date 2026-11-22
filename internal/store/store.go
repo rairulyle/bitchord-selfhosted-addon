@@ -25,33 +25,37 @@ const FileName = "addon.json"
 type Kind string
 
 const (
-	Plex     Kind = "plex"
-	Jellyfin Kind = "jellyfin"
+	Plex      Kind = "plex"
+	Jellyfin  Kind = "jellyfin"
+	Navidrome Kind = "navidrome"
 )
 
-var Kinds = []Kind{Plex, Jellyfin}
+var Kinds = []Kind{Plex, Jellyfin, Navidrome}
 
 type Auth string
 
 const (
-	AuthToken          Auth = "token"
-	AuthPlexSignIn     Auth = "plex-signin"
-	AuthJellyfinSignIn Auth = "jellyfin-signin"
+	AuthToken           Auth = "token"
+	AuthPlexSignIn      Auth = "plex-signin"
+	AuthJellyfinSignIn  Auth = "jellyfin-signin"
+	AuthNavidromeSignIn Auth = "navidrome-signin"
 )
 
 type Server struct {
-	Slug        string    `json:"slug"`
-	Label       string    `json:"label"`
-	Kind        Kind      `json:"kind"`
-	URL         string    `json:"url"`
-	Token       string    `json:"token"`
-	Auth        Auth      `json:"auth"`
-	Account     string    `json:"account"`
-	DeviceID    string    `json:"device_id,omitempty"`
-	Library     string    `json:"library"`
-	LibraryName string    `json:"library_name,omitempty"`
-	Enabled     bool      `json:"enabled"`
-	Created     time.Time `json:"created"`
+	Slug            string    `json:"slug"`
+	Label           string    `json:"label"`
+	Kind            Kind      `json:"kind"`
+	URL             string    `json:"url"`
+	Token           string    `json:"token"`
+	Auth            Auth      `json:"auth"`
+	Account         string    `json:"account"`
+	DeviceID        string    `json:"device_id,omitempty"`
+	Library         string    `json:"library"`
+	LibraryName     string    `json:"library_name,omitempty"`
+	SyncInterval    string    `json:"sync_interval,omitempty"`
+	ScrobblePercent int       `json:"scrobble_percent,omitempty"`
+	Enabled         bool      `json:"enabled"`
+	Created         time.Time `json:"created"`
 }
 
 type Admin struct {
@@ -244,7 +248,7 @@ func (s *Store) SetAdmin(admin *Admin) error {
 
 var ErrNoServer = errors.New("no such server")
 
-var slugPattern = regexp.MustCompile(`^(plex|jellyfin)-[1-9][0-9]*$`)
+var slugPattern = regexp.MustCompile(`^(plex|jellyfin|navidrome)-[1-9][0-9]*$`)
 
 func nextSlug(kind Kind, servers []Server) string {
 	taken := map[string]bool{}
