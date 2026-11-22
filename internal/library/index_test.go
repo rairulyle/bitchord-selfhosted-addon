@@ -528,3 +528,18 @@ func TestFuzzyTypoSearch(t *testing.T) {
 		t.Fatalf("search 'zzz' should return 0 tracks, got %v", ids(res6.Tracks))
 	}
 }
+
+func TestTyposAreCountedInCharacters(t *testing.T) {
+	ix := NewIndex([]media.Track{
+		{ID: "1", Title: "感情", Artist: "Someone", Album: "Feelings"},
+	})
+	if got := ids(ix.Search("愛情", 10)); len(got) != 0 {
+		t.Errorf("Search(愛情) = %v, want nothing: one differing character is a different word", got)
+	}
+	if got := damerauLevenshtein("感情", "愛情", 2); got != 1 {
+		t.Errorf("damerauLevenshtein(感情, 愛情) = %d, want 1", got)
+	}
+	if got := damerauLevenshtein("cafe", "café", 2); got != 1 {
+		t.Errorf("damerauLevenshtein(cafe, café) = %d, want 1", got)
+	}
+}

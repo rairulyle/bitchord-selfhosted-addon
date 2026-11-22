@@ -300,7 +300,7 @@ func stripNoise(q []string) []string {
 const maxPrefixExpansion = 30
 
 func prefixMatches(sortedKeys []string, token string, maxKeys int) []string {
-	if len(token) < 2 {
+	if utf8.RuneCountInString(token) < 2 {
 		return nil
 	}
 	idx := sort.SearchStrings(sortedKeys, token)
@@ -320,7 +320,7 @@ func prefixMatches(sortedKeys []string, token string, maxKeys int) []string {
 
 func (ix *Index) lookupPostings(token string, prefix bool) []int {
 	exact := ix.postings[token]
-	if !prefix || len(token) < 2 {
+	if !prefix || utf8.RuneCountInString(token) < 2 {
 		return exact
 	}
 	keys := prefixMatches(ix.sortedKeys, token, maxPrefixExpansion)
@@ -353,7 +353,7 @@ func (ix *Index) lookupPostings(token string, prefix bool) []int {
 
 func (ix *Index) lookupTitle(token string, prefix bool) []int {
 	exact := ix.titlePosts[token]
-	if !prefix || len(token) < 2 {
+	if !prefix || utf8.RuneCountInString(token) < 2 {
 		return exact
 	}
 	keys := prefixMatches(ix.sortedTitleKeys, token, maxPrefixExpansion)
@@ -401,7 +401,7 @@ func (ix *Index) Find(query string, limit int) Result {
 
 	hasPrefixTokens := false
 	for _, tk := range q {
-		if len(tk) >= 2 {
+		if utf8.RuneCountInString(tk) >= 2 {
 			hasPrefixTokens = true
 			break
 		}
@@ -451,7 +451,7 @@ func (ix *Index) Find(query string, limit int) Result {
 	}
 
 	// Substring fallback when no token matches exist
-	if len(strict) == 0 && len(loose) == 0 && len(cleanQ) >= 2 {
+	if len(strict) == 0 && len(loose) == 0 && utf8.RuneCountInString(cleanQ) >= 2 {
 		for i := range ix.tracks {
 			allMatch := true
 			for _, token := range q {
@@ -536,7 +536,8 @@ func (ix *Index) fallback(q []string, prefix bool) []int {
 	return out
 }
 
-func damerauLevenshtein(a, b string, maxDist int) int {
+func damerauLevenshtein(as, bs string, maxDist int) int {
+	a, b := []rune(as), []rune(bs)
 	la, lb := len(a), len(b)
 	if la == 0 {
 		return lb
@@ -593,13 +594,21 @@ func damerauLevenshtein(a, b string, maxDist int) int {
 	return r1[lb]
 }
 
-func (ix *Index) fuzzyKeys(token string) []string {
-	if len(token) < 4 {
-		return nil
+func maxTypos(s string) int {
+	switch n := utf8.RuneCountInString(s); {
+	case n >= 8:
+		return 2
+	case n >= 4:
+		return 1
+	default:
+		return 0
 	}
-	maxDist := 1
-	if len(token) >= 8 {
-		maxDist = 2
+}
+
+func (ix *Index) fuzzyKeys(token string) []string {
+	maxDist := maxTypos(token)
+	if maxDist == 0 {
+		return nil
 	}
 	type match struct {
 		key  string
@@ -639,13 +648,13 @@ func (ix *Index) fuzzy(q []string) []int {
 			lists[n] = exact
 			continue
 		}
-		if len(token) >= 2 {
+		if utf8.RuneCountInString(token) >= 2 {
 			if pfx := ix.lookupPostings(token, true); len(pfx) > 0 {
 				lists[n] = pfx
 				continue
 			}
 		}
-		if len(token) < 4 {
+		if maxTypos(token) == 0 {
 			return nil
 		}
 		matchedKeys := ix.fuzzyKeys(token)
@@ -708,11 +717,7 @@ func (ix *Index) rank(candidates []int, cleanQ string, q []string) {
 			titleScores[i] += 30
 		}
 
-		if titleScores[i] == 0 && len(cleanQ) >= 4 {
-			maxD := 1
-			if len(cleanQ) >= 8 {
-				maxD = 2
-			}
+		if maxD := maxTypos(cleanQ); titleScores[i] == 0 && maxD > 0 {
 			if d := damerauLevenshtein(cleanQ, normTitle, maxD); d <= maxD {
 				titleScores[i] += 150 - (d * 30)
 			} else if d := damerauLevenshtein(cleanQ, normArtist, maxD); d <= maxD {
@@ -729,7 +734,7 @@ func (ix *Index) rank(candidates []int, cleanQ string, q []string) {
 					continue
 				}
 				for _, qToken := range q {
-					if len(qToken) >= 2 && strings.HasPrefix(token, qToken) {
+					if utf8.RuneCountInString(qToken) >= 2 && strings.HasPrefix(token, qToken) {
 						titleScores[i] += 10
 						break
 					}
@@ -806,11 +811,7 @@ func (ix *Index) findAlbums(cleanQ string, q []string, matchedTracks []int) []Al
 			score += 250
 		}
 
-		if score == 0 && len(cleanQ) >= 4 {
-			maxD := 1
-			if len(cleanQ) >= 8 {
-				maxD = 2
-			}
+		if maxD := maxTypos(cleanQ); score == 0 && maxD > 0 {
 			if d := damerauLevenshtein(cleanQ, alb.normName, maxD); d <= maxD {
 				score += 300 - (d * 50)
 			}
@@ -904,11 +905,7 @@ func (ix *Index) findArtists(cleanQ string, q []string, matchedTracks []int) []A
 			score += 250
 		}
 
-		if score == 0 && len(cleanQ) >= 4 {
-			maxD := 1
-			if len(cleanQ) >= 8 {
-				maxD = 2
-			}
+		if maxD := maxTypos(cleanQ); score == 0 && maxD > 0 {
 			if d := damerauLevenshtein(cleanQ, art.normName, maxD); d <= maxD {
 				score += 300 - (d * 50)
 			}
