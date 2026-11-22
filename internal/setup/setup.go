@@ -4,6 +4,7 @@ package setup
 
 import (
 	"context"
+	"crypto/sha256"
 	"embed"
 	"errors"
 	"fmt"
@@ -21,11 +22,23 @@ import (
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/store"
 )
 
-//go:embed templates/*.html
-var templateFiles embed.FS
+var (
+	//go:embed templates/*.html
+	templateFiles embed.FS
 
-//go:embed static/style.css
-var staticFiles embed.FS
+	//go:embed static/style.css
+	staticFiles embed.FS
+
+	styleHash string
+)
+
+func init() {
+	raw, err := staticFiles.ReadFile("static/style.css")
+	if err == nil {
+		h := sha256.Sum256(raw)
+		styleHash = fmt.Sprintf("%x", h[:8])
+	}
+}
 
 const (
 	cookieName      = "addon_setup"
@@ -147,6 +160,18 @@ func parsePages() map[string]*template.Template {
 		page := strings.TrimSuffix(strings.TrimPrefix(name, "templates/"), ".html")
 		pages[page] = template.Must(template.New("layout.html").Funcs(template.FuncMap{
 			"since": since,
+			"formatVersion": func(v string) string {
+				if v == "" || v == "dev" {
+					return "dev"
+				}
+				if strings.HasPrefix(v, "v") {
+					return v
+				}
+				return "v" + v
+			},
+			"styleHash": func() string {
+				return styleHash
+			},
 		}).ParseFS(templateFiles, "templates/layout.html", name))
 	}
 	return pages

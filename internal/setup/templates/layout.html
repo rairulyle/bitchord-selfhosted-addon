@@ -3,44 +3,122 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>{{.Title}} · BitChord addon</title>
-<link rel="stylesheet" href="/setup/static/style.css">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23212121' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cstyle%3E@media (prefers-color-scheme: dark)%7Bpath,circle%7Bstroke:%23fff%7D%7D%3C/style%3E%3Cpath d='M21 16V3a1 1 0 0 0-1.28-.96l-10 2.917a1 1 0 0 0-.72.96V19'/%3E%3Ccircle cx='18' cy='16' r='3'/%3E%3Ccircle cx='6' cy='19' r='3'/%3E%3C/svg%3E">
+<script>
+(function() {
+  var t = localStorage.getItem('theme');
+  if (t === 'dark' || t === 'light') {
+    document.documentElement.setAttribute('data-theme', t);
+  }
+})();
+</script>
+<link rel="stylesheet" href="/setup/static/style.css?v={{styleHash}}">
 </head>
 <body>
 <header>
   <div class="brand-group">
     <a class="brand" href="/setup">BitChord Selfhosted Addon</a>
+    <span class="version-tag">{{formatVersion .Version}}</span>
     <a class="repo" href="https://github.com/rairulyle/bitchord-selfhosted-addon" target="_blank" rel="noopener" aria-label="GitHub repository">
       <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
     </a>
   </div>
-  {{if .SignedIn}}
-  <nav>
-    <a href="/setup">Servers</a>
-    <a href="/setup/password">Password</a>
-    <form method="post" action="/setup/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="link">Sign out</button></form>
-  </nav>
-  {{end}}
+  <div class="header-actions">
+    {{if .SignedIn}}
+    <nav>
+      <a href="/setup">Servers</a>
+      <a href="/setup/password">Password</a>
+      <form method="post" action="/setup/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="link">Sign out</button></form>
+    </nav>
+    {{end}}
+    <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Switch theme" title="Theme: System">
+      <svg class="theme-icon-system" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
+      <svg class="theme-icon-light" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display: none;"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+      <svg class="theme-icon-dark" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display: none;"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+    </button>
+  </div>
 </header>
 <main>
-  {{if .Notice}}<p class="notice" role="status">{{.Notice}}</p>{{end}}
-  {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+  {{if .Notice}}
+  <div class="notice" role="status">
+    <div class="notice-main">
+      <svg class="notice-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+      <span>{{.Notice}}</span>
+    </div>
+    <button type="button" class="notice-close" aria-label="Dismiss notice">✕</button>
+  </div>
+  {{end}}
+  {{if .Error}}
+  <div class="notice error" role="alert">
+    <div class="notice-main">
+      <svg class="notice-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+      <span>{{.Error}}</span>
+    </div>
+    <button type="button" class="notice-close" aria-label="Dismiss alert">✕</button>
+  </div>
+  {{end}}
   {{template "content" .}}
 </main>
-<footer>version {{.Version}}</footer>
 <script>
 (function () {
-  var notice = document.querySelector('p.notice');
-  if (!notice) return;
-  if (location.search.indexOf('notice=') !== -1) {
-    var url = new URL(location.href);
-    url.searchParams.delete('notice');
-    history.replaceState(null, '', url);
+  var notice = document.querySelector('.notice');
+  if (notice) {
+    if (location.search.indexOf('notice=') !== -1 || location.search.indexOf('error=') !== -1) {
+      var url = new URL(location.href);
+      url.searchParams.delete('notice');
+      url.searchParams.delete('error');
+      history.replaceState(null, '', url);
+    }
+    function dismiss() {
+      notice.style.opacity = '0';
+      notice.style.transform = 'translateY(-4px)';
+      setTimeout(function () { notice.remove(); }, 300);
+    }
+    var closeBtn = notice.querySelector('.notice-close');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', dismiss);
+    }
+    var timeout = notice.classList.contains('error') ? 8000 : 5000;
+    setTimeout(dismiss, timeout);
   }
-  setTimeout(function () {
-    notice.style.opacity = '0';
-    setTimeout(function () { notice.remove(); }, 400);
-  }, 5000);
+
+  var themeBtn = document.getElementById('theme-toggle');
+  if (themeBtn) {
+    var themes = ['system', 'dark', 'light'];
+    var currentTheme = localStorage.getItem('theme') || 'system';
+
+    function updateThemeUI(t) {
+      if (t === 'dark' || t === 'light') {
+        document.documentElement.setAttribute('data-theme', t);
+      } else {
+        document.documentElement.removeAttribute('data-theme');
+      }
+      var sysIcon = themeBtn.querySelector('.theme-icon-system');
+      var lightIcon = themeBtn.querySelector('.theme-icon-light');
+      var darkIcon = themeBtn.querySelector('.theme-icon-dark');
+      if (sysIcon) sysIcon.style.display = t === 'system' ? 'inline' : 'none';
+      if (lightIcon) lightIcon.style.display = t === 'light' ? 'inline' : 'none';
+      if (darkIcon) darkIcon.style.display = t === 'dark' ? 'inline' : 'none';
+      var label = 'Theme: ' + (t.charAt(0).toUpperCase() + t.slice(1));
+      themeBtn.setAttribute('title', label + ' (click to switch)');
+      themeBtn.setAttribute('aria-label', label);
+    }
+
+    updateThemeUI(currentTheme);
+
+    themeBtn.addEventListener('click', function () {
+      var idx = themes.indexOf(currentTheme);
+      currentTheme = themes[(idx + 1) % themes.length];
+      if (currentTheme === 'system') {
+        localStorage.removeItem('theme');
+      } else {
+        localStorage.setItem('theme', currentTheme);
+      }
+      updateThemeUI(currentTheme);
+    });
+  }
 })();
 </script>
 </body>

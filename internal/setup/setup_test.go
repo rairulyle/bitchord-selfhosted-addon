@@ -403,7 +403,22 @@ func TestServerLifecycleThroughTheForms(t *testing.T) {
 	if !strings.Contains(body, "Default (1h)") {
 		t.Fatal("overview lacks default sync interval value")
 	}
-	if !strings.Contains(body, "Recent activity") || !strings.Contains(body, "Synced 5 tracks") {
+	if !strings.Contains(body, "Sync Webhook") {
+		t.Fatal("overview lacks Sync Webhook")
+	}
+	if !strings.Contains(body, "Search tester") {
+		t.Fatal("overview lacks Search tester")
+	}
+	if !strings.Contains(body, "Webhook helper &amp; curl command") || !strings.Contains(body, `curl -X POST &quot;https://music.example.com/plex-1/`) {
+		t.Fatal("overview lacks webhook helper or curl command")
+	}
+	if !strings.Contains(body, `curl -X POST "https://music.example.com/plex-1/••••••••••/sync"`) {
+		t.Fatal("curl command did not mask secret")
+	}
+	if !strings.Contains(body, "Online") {
+		t.Fatal("overview lacks online status indicator")
+	}
+	if !strings.Contains(body, "Recent Activity") || !strings.Contains(body, "Synced 5 tracks") {
 		t.Fatalf("overview lacks recent activity: %s", body)
 	}
 	if actRec := a.get("/setup/activity"); actRec.Code != http.StatusOK || !strings.Contains(actRec.Body.String(), `"ok":true`) || !strings.Contains(actRec.Body.String(), "Synced 5 tracks") {
