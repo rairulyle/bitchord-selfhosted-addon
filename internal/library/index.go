@@ -34,7 +34,6 @@ type albumRecord struct {
 	name       string
 	artist     string
 	trackCount int
-	year       int
 	artRef     string
 	sampleID   string
 	normName   string
@@ -57,7 +56,6 @@ type AlbumMatch struct {
 	ArtRef     string `json:"-"`
 	SampleID   string `json:"id,omitempty"`
 	TrackCount int    `json:"trackCount"`
-	Year       int    `json:"year,omitempty"`
 }
 
 type ArtistMatch struct {
@@ -736,7 +734,6 @@ func (ix *Index) findAlbums(cleanQ string, q []string, matchedTracks []int) []Al
 			ArtRef:     alb.artRef,
 			SampleID:   alb.sampleID,
 			TrackCount: alb.trackCount,
-			Year:       alb.year,
 		}
 	}
 	return out

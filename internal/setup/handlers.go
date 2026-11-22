@@ -484,7 +484,6 @@ func (a *app) testSearch(w http.ResponseWriter, r *http.Request) {
 		Artist     string `json:"artist"`
 		ArtworkURL string `json:"artworkURL,omitempty"`
 		TrackCount int    `json:"trackCount"`
-		Year       int    `json:"year,omitempty"`
 	}
 	type matchArtist struct {
 		Name       string `json:"name"`
@@ -529,7 +528,6 @@ func (a *app) testSearch(w http.ResponseWriter, r *http.Request) {
 			Artist:     alb.Artist,
 			ArtworkURL: art,
 			TrackCount: alb.TrackCount,
-			Year:       alb.Year,
 		}
 	}
 
