@@ -1307,6 +1307,66 @@ func TestTheFirstPasswordKeepsAPublicURLAlreadySet(t *testing.T) {
 	}
 }
 
+func TestStaticAssetsCachingAndCompression(t *testing.T) {
+	a := newTestApp(t)
+
+	// Normal GET request
+	rec := a.get("/setup/static/style.css")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /setup/static/style.css = %d, want 200", rec.Code)
+	}
+	etag := rec.Header().Get("ETag")
+	if etag == "" {
+		t.Error("expected ETag header on static asset")
+	}
+	if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "max-age") {
+		t.Errorf("Cache-Control = %q, want max-age", cc)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/css") {
+		t.Errorf("Content-Type = %q, want text/css", ct)
+	}
+
+	// Conditional request with matching If-None-Match returns 304
+	a.headers.Set("If-None-Match", etag)
+	rec304 := a.get("/setup/static/style.css")
+	a.headers.Del("If-None-Match")
+	if rec304.Code != http.StatusNotModified {
+		t.Errorf("GET with matching If-None-Match = %d, want 304", rec304.Code)
+	}
+	if rec304.Body.Len() > 0 {
+		t.Errorf("304 response should have empty body, got %d bytes", rec304.Body.Len())
+	}
+
+	// Gzip compressed request
+	a.headers.Set("Accept-Encoding", "gzip")
+	recGz := a.get("/setup/static/style.css")
+	a.headers.Del("Accept-Encoding")
+	if recGz.Code != http.StatusOK {
+		t.Fatalf("GET with gzip = %d, want 200", recGz.Code)
+	}
+	if enc := recGz.Header().Get("Content-Encoding"); enc != "gzip" {
+		t.Errorf("Content-Encoding = %q, want gzip", enc)
+	}
+
+	// HEAD request
+	recHead := a.do(http.MethodHead, "/setup/static/style.css", nil, "")
+	if recHead.Code != http.StatusOK {
+		t.Errorf("HEAD /setup/static/style.css = %d, want 200", recHead.Code)
+	}
+	if recHead.Body.Len() > 0 {
+		t.Errorf("HEAD body should be empty, got %d bytes", recHead.Body.Len())
+	}
+	if recHead.Header().Get("Content-Length") == "" {
+		t.Error("HEAD expected Content-Length header")
+	}
+
+	// Non-existent static asset returns 404
+	rec404 := a.get("/setup/static/nonexistent.css")
+	if rec404.Code != http.StatusNotFound {
+		t.Errorf("GET non-existent asset = %d, want 404", rec404.Code)
+	}
+}
+
 func TestRefreshAllServers(t *testing.T) {
 	a := newTestApp(t)
 	a.signIn()

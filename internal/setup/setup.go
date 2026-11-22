@@ -183,7 +183,7 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("/setup/", func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "not found", http.StatusNotFound) })
 
 	outer := http.NewServeMux()
-	outer.Handle("GET /setup/static/", http.StripPrefix("/setup/", http.FileServerFS(staticFiles)))
+	outer.Handle("/setup/static/", http.StripPrefix("/setup/static", newStaticServer(staticFiles)))
 	outer.Handle("/setup", a.gate(mux))
 	outer.Handle("/setup/", a.gate(mux))
 	return outer
