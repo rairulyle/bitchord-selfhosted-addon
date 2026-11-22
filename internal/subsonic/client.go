@@ -46,7 +46,7 @@ type Client struct {
 	username        string
 	password        string
 	scrobblePercent int
-	tracker         *playbackTracker
+	plays           *plays
 	log             *slog.Logger
 	onActivity      func(kind, message string)
 }
@@ -71,7 +71,7 @@ func New(o Options) *Client {
 	if percent == 0 {
 		percent = 50
 	}
-	return &Client{
+	c := &Client{
 		http: media.NewClient(media.ClientOptions{
 			BaseURL:       strings.TrimRight(o.BaseURL, "/"),
 			Name:          "navidrome",
@@ -82,10 +82,11 @@ func New(o Options) *Client {
 		username:        o.Username,
 		password:        o.Password,
 		scrobblePercent: percent,
-		tracker:         &playbackTracker{},
 		log:             o.Log,
 		onActivity:      o.OnActivity,
 	}
+	c.plays = newPlays(c)
+	return c
 }
 
 func (c *Client) SetOnActivity(fn func(kind, message string)) {
@@ -408,153 +409,9 @@ func (c *Client) OpenFile(ctx context.Context, track media.Track, method string,
 		return nil, err
 	}
 	if method == http.MethodGet && res.StatusCode >= 200 && res.StatusCode < 300 {
-		rng := ""
-		if header != nil {
-			rng = header.Get("Range")
-		}
-		// If playback is starting from the beginning (no Range or bytes=0-)
-		if rng == "" || strings.HasPrefix(rng, "bytes=0-") {
-			c.startPlayback(track)
-			res.Body = &scrobbleBody{
-				ReadCloser: res.Body,
-				client:     c,
-				trackID:    track.ID,
-				total:      res.ContentLength,
-			}
-		}
+		c.plays.played(track, header.Get("Range"))
 	}
 	return res, nil
-}
-
-type playbackTracker struct {
-	mu          sync.Mutex
-	trackID     string
-	startedAt   time.Time
-	durationSec int
-	timer       *time.Timer
-	scrobbled   bool
-}
-
-func (c *Client) startPlayback(track media.Track) {
-	trackLabel := track.Title
-	if track.Artist != "" {
-		trackLabel = track.Title + " — " + track.Artist
-	}
-
-	if c.scrobblePercent <= 0 {
-		// Scrobbling disabled, only report "Now Playing"
-		go func() {
-			sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := c.Scrobble(sctx, track.ID, false); err == nil && c.onActivity != nil {
-				c.onActivity("now_playing", "Now playing: "+trackLabel)
-			}
-		}()
-		return
-	}
-
-	c.tracker.mu.Lock()
-	defer c.tracker.mu.Unlock()
-
-	// If the client repeats requests for the same track within 5 seconds
-	// (e.g. metadata probe range request followed by the actual playback stream),
-	// leave the existing playback timer running so it does not reset.
-	if c.tracker.trackID == track.ID && time.Since(c.tracker.startedAt) < 5*time.Second {
-		return
-	}
-
-	// Cancel any pending scrobble timer for a previous track.
-	if c.tracker.timer != nil {
-		c.tracker.timer.Stop()
-	}
-
-	c.tracker.trackID = track.ID
-	c.tracker.startedAt = time.Now()
-	c.tracker.durationSec = track.DurationSec
-	c.tracker.scrobbled = false
-
-	// Report "Now Playing" immediately to Navidrome
-	go func() {
-		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := c.Scrobble(sctx, track.ID, false); err != nil {
-			c.log.Debug("navidrome now playing report failed", "id", track.ID, "error", err)
-		} else if c.onActivity != nil {
-			c.onActivity("now_playing", "Now playing: "+trackLabel)
-		}
-	}()
-
-	// Calculate needed listen duration in seconds: (duration * percent) / 100
-	dur := track.DurationSec
-	if dur <= 0 {
-		dur = 180 // default 3 min fallback if track metadata omitted duration
-	}
-	neededSec := float64(dur) * float64(c.scrobblePercent) / 100.0
-	if neededSec > 240 {
-		neededSec = 240 // Subsonic / Last.fm standard max 4 minutes
-	}
-	if neededSec < 15 {
-		neededSec = 15 // minimum 15s to prevent immediate scrobble on very short tracks
-	}
-
-	trackID := track.ID
-	c.tracker.timer = time.AfterFunc(time.Duration(neededSec)*time.Second, func() {
-		c.tracker.mu.Lock()
-		defer c.tracker.mu.Unlock()
-		if c.tracker.trackID == trackID && !c.tracker.scrobbled {
-			c.tracker.scrobbled = true
-			go func() {
-				sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				if err := c.Scrobble(sctx, trackID, true); err != nil {
-					c.log.Debug("navidrome scrobble report failed", "id", trackID, "error", err)
-				} else if c.onActivity != nil {
-					c.onActivity("scrobble", fmt.Sprintf("Scrobbled: %s (%d%% played)", trackLabel, c.scrobblePercent))
-				}
-			}()
-		}
-	})
-}
-
-type scrobbleBody struct {
-	io.ReadCloser
-	client  *Client
-	trackID string
-	total   int64
-	read    int64
-	hitEOF  bool
-	mu      sync.Mutex
-}
-
-func (s *scrobbleBody) Read(p []byte) (int, error) {
-	n, err := s.ReadCloser.Read(p)
-	s.mu.Lock()
-	s.read += int64(n)
-	if err == io.EOF {
-		s.hitEOF = true
-	}
-	s.mu.Unlock()
-	return n, err
-}
-
-func (s *scrobbleBody) Close() error {
-	s.mu.Lock()
-	read := s.read
-	total := s.total
-	hitEOF := s.hitEOF
-	s.mu.Unlock()
-
-	// Cancel the scrobble timer if playback was aborted early.
-	if total > 0 && read*2 < total && !hitEOF {
-		s.client.tracker.mu.Lock()
-		if s.client.tracker.trackID == s.trackID && !s.client.tracker.scrobbled {
-			if s.client.tracker.timer != nil {
-				s.client.tracker.timer.Stop()
-			}
-		}
-		s.client.tracker.mu.Unlock()
-	}
-	return s.ReadCloser.Close()
 }
 
 // Scrobble reports playback progress to Navidrome. When submission is false,

@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -127,6 +127,7 @@ func TestTrack(t *testing.T) {
 func TestOpenFileAndArt(t *testing.T) {
 	fake := fakes.NewNavidrome(t)
 	c := newClient(fake)
+	t.Cleanup(c.Close)
 	tracks, err := c.AllTracks(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)
@@ -268,93 +269,170 @@ func TestScrobble(t *testing.T) {
 	}
 }
 
-func TestOpenFileNowPlayingAndSkipping(t *testing.T) {
-	fake := fakes.NewNavidrome(t)
-	c := newClient(fake)
-	track := media.Track{ID: "s-1", FileRef: StreamPath("s-1"), DurationSec: 180}
-	res, err := c.OpenFile(context.Background(), track, http.MethodGet, nil)
+type fakeTimer struct {
+	after   time.Duration
+	fire    func()
+	stopped bool
+}
+
+func (f *fakeTimer) Stop() bool {
+	f.stopped = true
+	return true
+}
+
+type playbackHarness struct {
+	t          *testing.T
+	fake       *fakes.Navidrome
+	client     *Client
+	now        time.Time
+	timers     []*fakeTimer
+	activities chan string
+}
+
+func newPlaybackHarness(t *testing.T, percent int) *playbackHarness {
+	h := &playbackHarness{t: t, fake: fakes.NewNavidrome(t), now: time.Unix(1_800_000_000, 0), activities: make(chan string, 16)}
+	h.client = New(Options{BaseURL: h.fake.URL, Username: fakes.NavidromeUser, Password: fakes.NavidromePassword, ScrobblePercent: percent})
+	h.client.plays.now = func() time.Time { return h.now }
+	h.client.plays.afterFunc = func(d time.Duration, f func()) stopper {
+		timer := &fakeTimer{after: d, fire: f}
+		h.timers = append(h.timers, timer)
+		return timer
+	}
+	h.client.SetOnActivity(func(kind, message string) { h.activities <- kind + ": " + message })
+	t.Cleanup(h.client.Close)
+	return h
+}
+
+func (h *playbackHarness) get(id, rangeHeader string, readAll bool) {
+	h.t.Helper()
+	header := http.Header{}
+	if rangeHeader != "" {
+		header.Set("Range", rangeHeader)
+	}
+	track := media.Track{ID: id, Title: "Song " + id, Artist: "Artist", DurationSec: 200, FileRef: StreamPath(id)}
+	res, err := h.client.OpenFile(context.Background(), track, http.MethodGet, header)
 	if err != nil {
-		t.Fatal(err)
+		h.t.Fatal(err)
 	}
-	_, _ = io.ReadAll(res.Body)
-	_ = res.Body.Close()
+	if readAll {
+		io.ReadAll(res.Body)
+	} else {
+		res.Body.Read(make([]byte, 2))
+	}
+	res.Body.Close()
+}
 
-	// Wait briefly for background Now Playing goroutine
-	time.Sleep(50 * time.Millisecond)
-
-	var scrobbles []fakes.Request
-	for _, req := range fake.Requests() {
-		if req.Path == "/rest/scrobble.view" {
-			scrobbles = append(scrobbles, req)
-		}
-	}
-	// Exactly 1 scrobble (now playing), NO completed scrobble because elapsed time was only 50ms
-	if len(scrobbles) != 1 {
-		t.Fatalf("expected exactly 1 scrobble (now playing), got %d: %+v", len(scrobbles), scrobbles)
-	}
-	if !strings.Contains(scrobbles[0].Query, "submission=false") {
-		t.Errorf("scrobble query = %q, want submission=false", scrobbles[0].Query)
-	}
-
-	// Now start a second track - should cancel any pending timer for s-1
-	track2 := media.Track{ID: "s-2", FileRef: StreamPath("s-2"), DurationSec: 180}
-	res2, err := c.OpenFile(context.Background(), track2, http.MethodGet, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	res2.Body.Close()
-	time.Sleep(50 * time.Millisecond)
-
-	var scrobblesAfter []fakes.Request
-	for _, req := range fake.Requests() {
-		if req.Path == "/rest/scrobble.view" {
-			scrobblesAfter = append(scrobblesAfter, req)
-		}
-	}
-	// Still only Now Playing requests (s-1 now playing, s-2 now playing), no completed scrobbles
-	for _, req := range scrobblesAfter {
-		if strings.Contains(req.Query, "submission=true") {
-			t.Fatalf("unexpected completed scrobble for skipped track: %s", req.Query)
-		}
+func (h *playbackHarness) activity() string {
+	h.t.Helper()
+	select {
+	case got := <-h.activities:
+		return got
+	case <-time.After(5 * time.Second):
+		h.t.Fatal("no activity reported")
+		return ""
 	}
 }
 
-func TestSubsonicActivityCallback(t *testing.T) {
-	fake := fakes.NewNavidrome(t)
-	c := newClient(fake)
-	var activities []string
-	var mu sync.Mutex
-	c.SetOnActivity(func(kind, message string) {
-		mu.Lock()
-		defer mu.Unlock()
-		activities = append(activities, kind+": "+message)
-	})
-
-	track := media.Track{ID: "s-1", Title: "So Good", Artist: "Artist", DurationSec: 100, FileRef: StreamPath("s-1")}
-	res, err := c.OpenFile(context.Background(), track, http.MethodGet, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	res.Body.Close()
-
-	deadline := time.Now().Add(500 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		mu.Lock()
-		count := len(activities)
-		mu.Unlock()
-		if count > 0 {
-			break
+func (h *playbackHarness) submissions() int {
+	count := 0
+	for _, req := range h.fake.Requests() {
+		if req.Path == "/rest/scrobble.view" && strings.Contains(req.Query, "submission=true") {
+			count++
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
+	return count
+}
 
-	mu.Lock()
-	defer mu.Unlock()
-	if len(activities) == 0 {
-		t.Fatal("expected activity callback for now playing")
+func TestAShortProbeAndASeekKeepTheScrobble(t *testing.T) {
+	h := newPlaybackHarness(t, 50)
+	h.get("s-1", "bytes=0-", false)
+	if got := h.activity(); got != "now_playing: Now playing: Song s-1 — Artist" {
+		t.Fatalf("activity = %q", got)
 	}
-	if !strings.Contains(activities[0], "now_playing") || !strings.Contains(activities[0], "So Good") {
-		t.Errorf("unexpected activity: %s", activities[0])
+	h.now = h.now.Add(2 * time.Second)
+	h.get("s-1", "bytes=9000-", false)
+	h.get("s-1", "", false)
+	h.now = h.now.Add(30 * time.Second)
+	h.get("s-1", "bytes=4000-", true)
+	if len(h.timers) != 1 || h.timers[0].stopped || h.timers[0].after != 100*time.Second {
+		t.Fatalf("timers = %+v, want one pending 100s timer", h.timers)
+	}
+	h.timers[0].fire()
+	if got := h.activity(); got != "scrobble: Scrobbled: Song s-1 — Artist (50% played)" {
+		t.Fatalf("activity = %q", got)
+	}
+	if got := h.submissions(); got != 1 {
+		t.Fatalf("submissions = %d, want 1", got)
+	}
+	h.timers[0].fire()
+	if got := h.submissions(); got != 1 {
+		t.Fatalf("a timer fired twice submitted %d times", got)
+	}
+}
+
+func TestASecondTrackDoesNotCancelTheFirst(t *testing.T) {
+	h := newPlaybackHarness(t, 50)
+	h.get("s-1", "", false)
+	h.get("s-2", "", false)
+	h.activity()
+	h.activity()
+	if len(h.timers) != 2 || h.timers[0].stopped {
+		t.Fatalf("timers = %+v, want two pending", h.timers)
+	}
+	h.timers[0].fire()
+	h.activity()
+	if got := h.submissions(); got != 1 {
+		t.Fatalf("submissions = %d, want 1", got)
+	}
+}
+
+func TestAFinishedTrackPlayedFromTheStartIsAReplay(t *testing.T) {
+	h := newPlaybackHarness(t, 50)
+	h.get("s-1", "", true)
+	h.activity()
+	h.now = h.now.Add(100 * time.Second)
+	h.timers[0].fire()
+	h.activity()
+	h.get("s-1", "bytes=5000-", false)
+	if len(h.timers) != 1 {
+		t.Fatalf("a seek after the scrobble started a new play: %d timers", len(h.timers))
+	}
+	h.get("s-1", "", false)
+	h.activity()
+	if len(h.timers) != 2 {
+		t.Fatalf("a replay armed %d timers, want 2", len(h.timers))
+	}
+}
+
+func TestDisabledScrobblingOnlyReportsNowPlaying(t *testing.T) {
+	h := newPlaybackHarness(t, -1)
+	h.get("s-1", "", true)
+	if got := h.activity(); !strings.HasPrefix(got, "now_playing:") {
+		t.Fatalf("activity = %q", got)
+	}
+	h.get("s-1", "bytes=0-", true)
+	if len(h.timers) != 0 {
+		t.Fatalf("disabled scrobbling armed %d timers", len(h.timers))
+	}
+	select {
+	case got := <-h.activities:
+		t.Fatalf("a repeated request reported %q", got)
+	default:
+	}
+}
+
+func TestTrackedPlaysAreBounded(t *testing.T) {
+	h := newPlaybackHarness(t, 50)
+	h.client.SetOnActivity(nil)
+	for i := range maxTrackedPlays + 1 {
+		h.now = h.now.Add(time.Second)
+		h.client.plays.played(media.Track{ID: fmt.Sprintf("t-%d", i)}, "")
+	}
+	if got := len(h.client.plays.byID); got != maxTrackedPlays {
+		t.Fatalf("tracked plays = %d, want %d", got, maxTrackedPlays)
+	}
+	if !h.timers[0].stopped || h.timers[1].stopped {
+		t.Fatal("the oldest play was not the one evicted")
 	}
 }
 

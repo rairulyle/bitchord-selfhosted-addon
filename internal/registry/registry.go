@@ -443,6 +443,9 @@ func (r *Registry) start(server store.Server) (*Entry, error) {
 func (e *Entry) stop() {
 	e.cancel()
 	<-e.done
+	if closer, ok := e.Backend.(interface{ Close() }); ok {
+		closer.Close()
+	}
 	e.Log.Info("server stopped")
 }
 
