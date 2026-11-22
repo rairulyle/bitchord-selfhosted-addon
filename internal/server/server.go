@@ -35,11 +35,13 @@ type Options struct {
 	Registry Registry
 	Version  string
 	Log      *slog.Logger
+	ArtCache *ArtCache
 }
 
 type server struct {
 	Options
 	lookupTimeout time.Duration
+	artCache      *ArtCache
 }
 
 // source is one server resolved from the request path, with the base of its
@@ -52,7 +54,15 @@ type source struct {
 func New(o Options) http.Handler { return newServer(o).handler() }
 
 func newServer(o Options) *server {
-	return &server{Options: o, lookupTimeout: 2500 * time.Millisecond}
+	cache := o.ArtCache
+	if cache == nil {
+		cache = NewArtCache(defaultArtMaxItems, defaultArtMaxBytes)
+	}
+	return &server{
+		Options:       o,
+		lookupTimeout: 2500 * time.Millisecond,
+		artCache:      cache,
+	}
 }
 
 func (s *server) handler() http.Handler {
