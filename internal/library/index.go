@@ -861,19 +861,14 @@ func unique(tokens []string) []string {
 	return out
 }
 
-// SplitArtists splits a composite artist string into individual artist names
-// by common multi-artist delimiters (; • | and " / ").
-// Delimiters without surrounding whitespace (like AC/DC) or band name
-// connectors (like & or , in "Tyler, The Creator") are preserved.
-func SplitArtists(s string) []string {
-	if s == "" {
-		return nil
-	}
-	clean := s
-	for _, delim := range []string{";", "•", " / ", "|"} {
-		clean = strings.ReplaceAll(clean, delim, "\x00")
-	}
+var artistSeparators = strings.NewReplacer("; ", "\x00", " • ", "\x00", " | ", "\x00", " / ", "\x00")
 
+// SplitArtists splits a multi-artist string for grouping and search. It
+// splits only on separators followed or surrounded by spaces, so names such
+// as AC/DC or Mötley|Crüe stay whole, as do "&" and "," in "Tyler, The
+// Creator".
+func SplitArtists(s string) []string {
+	clean := artistSeparators.Replace(s)
 	parts := strings.Split(clean, "\x00")
 	var artists []string
 	seen := make(map[string]struct{}, len(parts))
