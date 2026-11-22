@@ -2074,6 +2074,13 @@ func TestSetAppAuth(t *testing.T) {
 	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "enforced") {
 		t.Fatalf("save = %d %s", rec.Code, rec.Header().Get("Location"))
 	}
+	if page := a.get(rec.Header().Get("Location")).Body.String(); !strings.Contains(page, "App authentication is enforced.") {
+		t.Error("the signed notice did not show")
+	}
+	forged := strings.Replace(rec.Header().Get("Location"), "enforced", "off", 1)
+	if page := a.get(forged).Body.String(); strings.Contains(page, "App authentication is off") {
+		t.Error("an edited notice showed")
+	}
 	got := a.store.Snapshot().AppAuth
 	if got.Mode != store.AppAuthEnforce || !reflect.DeepEqual(got.Hosts, []string{"music.example.org", "alt.example.net", "::1"}) || got.Issuer != "" {
 		t.Fatalf("stored = %+v", got)
