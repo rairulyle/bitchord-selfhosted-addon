@@ -1679,3 +1679,54 @@ func TestRestoreNeedsAnUploadedFile(t *testing.T) {
 		t.Fatalf("public URL changed to %q", after.PublicURL)
 	}
 }
+
+func (a *testApp) addSignedInJellyfin(fake *fakes.Jellyfin) store.Server {
+	a.t.Helper()
+	if rec := a.form("/setup/servers", url.Values{"kind": {"jellyfin"}, "url": {fake.URL}, "token_ref": {a.jellyfinSignIn(fake)}, "enabled": {"1"}}); rec.Code != http.StatusSeeOther {
+		a.t.Fatalf("add: %d %s", rec.Code, rec.Body.String())
+	}
+	servers := a.store.Snapshot().Servers
+	return servers[len(servers)-1]
+}
+
+func (a *testApp) restore(snap store.Snapshot) *httptest.ResponseRecorder {
+	a.t.Helper()
+	raw, err := json.Marshal(snap)
+	if err != nil {
+		a.t.Fatal(err)
+	}
+	return a.multipartForm("/setup/restore", "backup_file", "backup.json", raw)
+}
+
+func TestRestoreSignsOutTheJellyfinSessionsItReplaces(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	fake := fakes.NewJellyfin(t)
+	original := a.addSignedInJellyfin(fake)
+	backup := a.store.Snapshot()
+	backup.Admin = nil
+	backup.Servers = []store.Server{}
+	if rec := a.restore(backup); rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "notice=") {
+		t.Fatalf("restore: %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	a.setup.app.background.Wait()
+	if !loggedOut(fake, original.Token) {
+		t.Fatalf("logouts = %+v", logouts(fake))
+	}
+}
+
+func TestRestoreKeepsASessionTheBackupStillUses(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	fake := fakes.NewJellyfin(t)
+	a.addSignedInJellyfin(fake)
+	backup := a.store.Snapshot()
+	backup.Admin = nil
+	if rec := a.restore(backup); rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "notice=") {
+		t.Fatalf("restore: %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	a.setup.app.background.Wait()
+	if len(logouts(fake)) != 0 {
+		t.Fatalf("logouts = %+v", logouts(fake))
+	}
+}

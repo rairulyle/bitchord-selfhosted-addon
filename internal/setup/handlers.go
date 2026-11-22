@@ -236,12 +236,14 @@ func (a *app) restoreBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	before := a.Store.Snapshot()
 	if err := a.Store.Restore(snap); err != nil {
 		redirectError(w, r, fmt.Sprintf("Restore failed: %s", err.Error()))
 		return
 	}
 
 	a.apply()
+	a.signOutRestoredOver(before, a.Store.Snapshot())
 	count := len(snap.Servers)
 	serverWord := "server"
 	if count != 1 {
@@ -261,6 +263,18 @@ func uploadedBackup(r *http.Request) ([]byte, error) {
 		return nil, errors.New("unable to read uploaded file")
 	}
 	return raw, nil
+}
+
+// signOutRestoredOver signs out the Jellyfin sessions a restore replaced or
+// removed, unless a restored server still sends the same token.
+func (a *app) signOutRestoredOver(before, after store.Snapshot) {
+	for _, old := range before.Servers {
+		if slices.ContainsFunc(after.Servers, func(server store.Server) bool { return server.Token == old.Token }) {
+			continue
+		}
+		saved, _ := after.Server(old.Slug)
+		a.signOutReplaced(old, saved)
+	}
 }
 
 // ---- server forms

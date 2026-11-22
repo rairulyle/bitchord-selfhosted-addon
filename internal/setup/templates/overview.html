@@ -89,8 +89,8 @@
     <input type="password" name="passphrase" placeholder="Password" required autocomplete="new-password" aria-label="Backup password">
     <button class="secondary">Download backup</button>
   </form>
-  <p class="hint">Upload a backup file. Existing servers will be replaced with the backup configuration.</p>
-  <form method="post" action="/setup/restore" enctype="multipart/form-data" class="row" onsubmit="return confirm('Restore this configuration? Existing servers will be replaced with the backup.')">
+  <p class="hint">Upload a backup file. It replaces the public URL, the secret and every server with the ones in the backup.</p>
+  <form method="post" action="/setup/restore" enctype="multipart/form-data" class="row" onsubmit="return confirm('Restore this backup? Its server list replaces every server, Jellyfin servers it drops or changes are signed out, and its secret comes back, so each BitChord URL reverts to the one in the backup.')">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <input type="file" name="backup_file" accept=".json,application/json" required aria-label="Backup file">
     <input type="password" name="passphrase" placeholder="Password" autocomplete="current-password" aria-label="Backup password">
