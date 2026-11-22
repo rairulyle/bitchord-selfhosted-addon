@@ -482,21 +482,16 @@ func (a *Auth) deviceKey(xStr, yStr string) (*ecdsa.PublicKey, error) {
 	}
 
 	xBytes, err := b64urlDecode(xStr)
-	if err != nil {
-		return nil, err
+	if err != nil || len(xBytes) != 32 {
+		return nil, errors.New("device key x is not a 32-byte coordinate")
 	}
 	yBytes, err := b64urlDecode(yStr)
+	if err != nil || len(yBytes) != 32 {
+		return nil, errors.New("device key y is not a 32-byte coordinate")
+	}
+	key, err = ecdsa.ParseUncompressedPublicKey(elliptic.P256(), append(append([]byte{4}, xBytes...), yBytes...))
 	if err != nil {
 		return nil, err
-	}
-
-	key = &ecdsa.PublicKey{
-		Curve: elliptic.P256(),
-		X:     new(big.Int).SetBytes(xBytes),
-		Y:     new(big.Int).SetBytes(yBytes),
-	}
-	if !key.Curve.IsOnCurve(key.X, key.Y) {
-		return nil, errors.New("device public key is not on curve")
 	}
 
 	a.devMu.Lock()

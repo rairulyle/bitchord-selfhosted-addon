@@ -344,3 +344,20 @@ func TestReplaysForgetsExpiredAndOldestEntries(t *testing.T) {
 		t.Fatal("the oldest entry must go first")
 	}
 }
+
+func TestADeviceKeyOffTheCurveIsRefused(t *testing.T) {
+	f := newFixture(t)
+	auth := f.auth("enforce")
+	one := base64.RawURLEncoding.EncodeToString(append(make([]byte, 31), 1))
+	short := base64.RawURLEncoding.EncodeToString([]byte{1, 2, 3})
+	for name, xy := range map[string][2]string{"off the curve": {one, one}, "short coordinates": {short, short}} {
+		t.Run(name, func(t *testing.T) {
+			body := f.claims()
+			body["cnf"] = map[string]any{"jwk": map[string]any{"kty": "EC", "crv": "P-256", "x": xy[0], "y": xy[1]}}
+			token := f.token(body)
+			if res := auth.Verify(token, f.proof(token)); res.OK || res.Error != "invalid_token" {
+				t.Fatalf("got %+v", res)
+			}
+		})
+	}
+}
