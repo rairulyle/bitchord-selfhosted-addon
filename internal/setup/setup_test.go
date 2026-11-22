@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/bitchordauth"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/fakes"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/registry"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/store"
@@ -2035,5 +2036,104 @@ func TestRestoreRejectsAnInvalidBackup(t *testing.T) {
 	}
 	if after := a.store.Snapshot(); !reflect.DeepEqual(after, before) {
 		t.Fatalf("store changed: %+v", after)
+	}
+}
+
+func TestAppAuthCardShowsTheDefaults(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	if err := a.store.SetPublicURL("https://music.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	body := a.get("/setup").Body.String()
+	for _, want := range []string{
+		`action="/setup/app-auth"`,
+		`<span class="count-badge">Off</span>`,
+		`name="mode" value="disabled" checked`,
+		`value="` + bitchordauth.DefaultIssuer + `"`,
+		`<code>music.example.com</code>, from the public URL, is always allowed`,
+		"older apps get 401",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("overview lacks %s", want)
+		}
+	}
+	if strings.Contains(strings.ToLower(body), "offline jwks") {
+		t.Error("the overview says the keys are offline; they are fetched from the issuer")
+	}
+}
+
+func TestSetAppAuth(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	rec := a.form("/setup/app-auth", url.Values{
+		"mode":   {"enforce"},
+		"hosts":  {"Music.Example.org, https://alt.example.net:443/\n music.example.org\n[::1]:8080"},
+		"issuer": {bitchordauth.DefaultIssuer + "/"},
+	})
+	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "enforced") {
+		t.Fatalf("save = %d %s", rec.Code, rec.Header().Get("Location"))
+	}
+	got := a.store.Snapshot().AppAuth
+	if got.Mode != store.AppAuthEnforce || !reflect.DeepEqual(got.Hosts, []string{"music.example.org", "alt.example.net", "::1"}) || got.Issuer != "" {
+		t.Fatalf("stored = %+v", got)
+	}
+	if !strings.Contains(a.logs.String(), `"msg":"app authentication mode changed","mode":"enforce"`) || !strings.Contains(a.logs.String(), `"was":"disabled"`) {
+		t.Errorf("mode change not logged:\n%s", a.logs.String())
+	}
+	body := a.get("/setup").Body.String()
+	if !strings.Contains(body, `<span class="count-badge">Enforced</span>`) || !strings.Contains(body, "music.example.org\nalt.example.net\n::1</textarea>") {
+		t.Errorf("overview does not show the saved settings")
+	}
+
+	if rec := a.form("/setup/app-auth", url.Values{"mode": {"log"}, "issuer": {"https://auth.example.com"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("second save = %d", rec.Code)
+	}
+	if got := a.store.Snapshot().AppAuth; got.Mode != store.AppAuthLog || got.Hosts != nil || got.Issuer != "https://auth.example.com" {
+		t.Fatalf("stored = %+v", got)
+	}
+}
+
+func TestSetAppAuthRefusesBadValues(t *testing.T) {
+	cases := map[string]struct {
+		values url.Values
+		want   string
+	}{
+		"unknown mode": {url.Values{"mode": {"strict"}}, "must be disabled, log or enforce"},
+		"bad host":     {url.Values{"mode": {"log"}, "hosts": {"bad_host.example.com"}}, "allowed host"},
+		"http issuer":  {url.Values{"mode": {"log"}, "issuer": {"http://auth.example.com"}}, "must start with https://"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			a := newTestApp(t)
+			a.signIn()
+			rec := a.form("/setup/app-auth", tc.values)
+			body := rec.Body.String()
+			if rec.Code != http.StatusBadRequest || !strings.Contains(body, tc.want) || !strings.Contains(body, `class="accordion app-auth-accordion" open`) {
+				t.Fatalf("status %d, body lacks %q or the open card", rec.Code, tc.want)
+			}
+			if got := a.store.Snapshot().AppAuth; got.Mode != "" || got.Hosts != nil || got.Issuer != "" {
+				t.Fatalf("a refused save changed the store: %+v", got)
+			}
+		})
+	}
+}
+
+func TestRestoreLogsAnAppAuthModeChange(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	backup := a.store.Snapshot()
+	backup.Admin = nil
+	backup.AppAuth = store.AppAuth{Mode: store.AppAuthLog}
+	raw, err := store.EncryptSnapshot(backup, "backup-test-pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := a.multipartFormWithFields("/setup/restore", "backup_file", "backup.json", raw, map[string]string{"passphrase": "backup-test-pass"})
+	if rec.Code != http.StatusSeeOther || a.store.Snapshot().AppAuth.Mode != store.AppAuthLog {
+		t.Fatalf("restore = %d, app auth %+v", rec.Code, a.store.Snapshot().AppAuth)
+	}
+	if !strings.Contains(a.logs.String(), `"msg":"app authentication mode changed","mode":"log"`) {
+		t.Errorf("restored mode change not logged:\n%s", a.logs.String())
 	}
 }

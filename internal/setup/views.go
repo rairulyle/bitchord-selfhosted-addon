@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/bitchordauth"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/registry"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/store"
@@ -108,10 +110,35 @@ type overviewView struct {
 	Secret     string
 	Servers    []serverCard
 	Activities []ActivityView
+	AppAuth    appAuthView
+}
+
+type appAuthView struct {
+	Mode          string
+	ModeName      string
+	Hosts         string
+	Issuer        string
+	DefaultIssuer string
+	PublicHost    string
+	Open          bool
+}
+
+var appAuthModeNames = map[string]string{store.AppAuthDisabled: "Off", store.AppAuthLog: "Log only", store.AppAuthEnforce: "Enforced"}
+
+func newAppAuthView(settings store.AppAuth, publicURL string) appAuthView {
+	mode := settings.EffectiveMode()
+	view := appAuthView{
+		Mode: mode, ModeName: appAuthModeNames[mode], Hosts: strings.Join(settings.Hosts, "\n"),
+		Issuer: cmp.Or(settings.Issuer, bitchordauth.DefaultIssuer), DefaultIssuer: bitchordauth.DefaultIssuer,
+	}
+	if publicURL != "" {
+		view.PublicHost = bitchordauth.NormalizeHost(publicURL)
+	}
+	return view
 }
 
 func (a *app) overviewView(r *http.Request, snapshot store.Snapshot) overviewView {
-	view := overviewView{page: a.page(r, "Servers"), PublicURL: snapshot.PublicURL, Secret: snapshot.Secret}
+	view := overviewView{page: a.page(r, "Servers"), PublicURL: snapshot.PublicURL, Secret: snapshot.Secret, AppAuth: newAppAuthView(snapshot.AppAuth, snapshot.PublicURL)}
 	now := a.Now()
 	for _, server := range snapshot.Ordered() {
 		card := serverCard{

@@ -247,6 +247,48 @@
   </details>
 </section>
 
+<section class="app-auth-section" id="app-auth">
+  <details class="accordion app-auth-accordion"{{if .AppAuth.Open}} open{{end}}>
+    <summary>
+      <span class="summary-title">App authentication <span class="count-badge">{{.AppAuth.ModeName}}</span></span>
+      <svg class="chevron" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06z"/></svg>
+    </summary>
+    <div class="accordion-content">
+      <form method="post" action="/setup/app-auth" class="app-auth-form">
+        <input type="hidden" name="csrf" value="{{.CSRF}}">
+        <p class="hint">Checks that searches and streams come from the BitChord app. The app sends a signed token from the issuer below with each request, and play links are signed by this addon. Anyone with a server URL can use it while this is off.</p>
+        <fieldset class="auth-modes">
+          <legend>Mode</legend>
+          <label class="auth-mode">
+            <input type="radio" name="mode" value="disabled"{{if eq .AppAuth.Mode "disabled"}} checked{{end}}>
+            <span class="auth-mode-name">Off</span>
+            <span class="hint">No checks. Every BitChord version works, and play links are not signed.</span>
+          </label>
+          <label class="auth-mode">
+            <input type="radio" name="mode" value="log"{{if eq .AppAuth.Mode "log"}} checked{{end}}>
+            <span class="auth-mode-name">Log only</span>
+            <span class="hint">Checks every request and logs the ones it would refuse, but answers them all. Use it to see whether your app sends Addon Auth before you enforce.</span>
+          </label>
+          <label class="auth-mode">
+            <input type="radio" name="mode" value="enforce"{{if eq .AppAuth.Mode "enforce"}} checked{{end}}>
+            <span class="auth-mode-name">Enforce</span>
+            <span class="hint">Refuses searches and streams without a valid token, and play links without a valid signature. Needs a BitChord version that sends Addon Auth headers; older apps get 401 and cannot use this addon.</span>
+          </label>
+        </fieldset>
+        <label for="app-auth-hosts">Extra allowed hosts
+          <span class="hint">{{if .AppAuth.PublicHost}}<code>{{.AppAuth.PublicHost}}</code>, from the public URL, is always allowed.{{else}}The public URL's host is always allowed once it is set.{{end}} Add any other host name BitChord reaches this addon by, separated by commas or one per line.</span>
+          <textarea id="app-auth-hosts" name="hosts" rows="2" placeholder="music.example.org" spellcheck="false" autocapitalize="off">{{.AppAuth.Hosts}}</textarea>
+        </label>
+        <label for="app-auth-issuer">Issuer URL
+          <span class="hint">Tokens must come from this issuer. Its signing keys are fetched from <code>/.well-known/jwks.json</code> on it and cached for an hour. The default, <code>{{.AppAuth.DefaultIssuer}}</code>, is run by a third party.</span>
+          <input type="url" id="app-auth-issuer" name="issuer" value="{{.AppAuth.Issuer}}" placeholder="{{.AppAuth.DefaultIssuer}}">
+        </label>
+        <button type="submit" class="secondary backup-btn">Save</button>
+      </form>
+    </div>
+  </details>
+</section>
+
 <section class="backup-section" id="backup">
   <details class="accordion backup-accordion">
     <summary>

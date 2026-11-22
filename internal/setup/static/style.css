@@ -604,7 +604,7 @@ input[type=range]::-moz-range-thumb {
 label { display: flex; flex-direction: column; gap: 6px; font-weight: 500; font-size: 13px; color: var(--strong); }
 label.inline { flex-direction: row; align-items: center; gap: 8px; font-weight: 400; font-size: 14px; color: var(--text); }
 
-input[type=text], input[type=url], input[type=password], select {
+input[type=text], input[type=url], input[type=password], select, textarea {
   font: inherit;
   font-size: 13.5px;
   line-height: 20px;
@@ -619,7 +619,7 @@ input[type=text], input[type=url], input[type=password], select {
   box-shadow: var(--shadow-sm);
 }
 input::placeholder { color: var(--muted); opacity: 0.8; }
-input[type=text]:focus, input[type=url]:focus, input[type=password]:focus, select:focus {
+input[type=text]:focus, input[type=url]:focus, input[type=password]:focus, select:focus, textarea:focus {
   outline: none;
   border-color: var(--ring);
   box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--ring);
@@ -1301,6 +1301,52 @@ details.accordion .accordion-content {
 .activity-tab:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--ring);
+}
+
+/* App authentication */
+.app-auth-section {
+  margin-top: 14px;
+}
+.app-auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin: 0;
+}
+.app-auth-form textarea {
+  resize: vertical;
+  min-height: 64px;
+}
+.auth-modes {
+  gap: 10px;
+}
+.auth-mode {
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  column-gap: 10px;
+  row-gap: 2px;
+  align-items: start;
+  font-weight: 400;
+  cursor: pointer;
+}
+.auth-mode input[type=radio] {
+  margin: 2px 0 0;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--strong);
+  cursor: pointer;
+}
+.auth-mode-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--strong);
+}
+.auth-mode .hint {
+  grid-column: 2;
+  font-size: 12.5px;
+}
+.app-auth-form .backup-btn {
+  align-self: flex-start;
 }
 
 /* Backup & Restore */

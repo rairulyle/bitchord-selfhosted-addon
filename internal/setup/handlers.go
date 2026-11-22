@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"cmp"
 	"context"
 	"crypto/hmac"
 	"encoding/json"
@@ -13,8 +14,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/bitchordauth"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/library"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/registry"
@@ -217,6 +220,59 @@ func (a *app) regenerateSecret(w http.ResponseWriter, r *http.Request) {
 	a.redirectNotice(w, r, "Secret regenerated. Every server URL has changed; update your clients.")
 }
 
+func (a *app) setAppAuth(w http.ResponseWriter, r *http.Request) {
+	snapshot := a.Store.Snapshot()
+	settings := store.AppAuth{
+		Mode:   r.PostFormValue("mode"),
+		Hosts:  splitHosts(r.PostFormValue("hosts")),
+		Issuer: strings.TrimRight(strings.TrimSpace(r.PostFormValue("issuer")), "/"),
+	}
+	if settings.Issuer == bitchordauth.DefaultIssuer {
+		settings.Issuer = ""
+	}
+	if err := store.ValidateAppAuth(settings); err != nil {
+		view := a.overviewView(r, snapshot)
+		view.Error = err.Error()
+		view.AppAuth = newAppAuthView(settings, snapshot.PublicURL)
+		view.AppAuth.Hosts, view.AppAuth.Open = r.PostFormValue("hosts"), true
+		a.render(w, r, http.StatusBadRequest, "overview", view)
+		return
+	}
+	if err := a.Store.SetAppAuth(settings); err != nil {
+		a.fail(w, r, err)
+		return
+	}
+	a.logAppAuth(snapshot.AppAuth, settings)
+	a.redirectNotice(w, r, map[string]string{
+		store.AppAuthDisabled: "App authentication is off.",
+		store.AppAuthLog:      "App authentication is logging only: requests it would refuse are logged and still answered.",
+		store.AppAuthEnforce:  "App authentication is enforced. BitChord versions without Addon Auth now get 401.",
+	}[settings.EffectiveMode()])
+}
+
+// splitHosts takes hosts separated by commas or whitespace, as host names or
+// pasted URLs, and keeps each bare host once.
+func splitHosts(raw string) []string {
+	var hosts []string
+	for _, field := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || unicode.IsSpace(r) }) {
+		if host := bitchordauth.NormalizeHost(field); host != "" && !slices.Contains(hosts, host) {
+			hosts = append(hosts, host)
+		}
+	}
+	return hosts
+}
+
+func (a *app) logAppAuth(before, after store.AppAuth) {
+	attrs := []any{"mode", after.EffectiveMode(), "hosts", len(after.Hosts), "issuer", cmp.Or(after.Issuer, bitchordauth.DefaultIssuer)}
+	if before.EffectiveMode() != after.EffectiveMode() {
+		a.Log.Info("app authentication mode changed", append(attrs, "was", before.EffectiveMode())...)
+		return
+	}
+	if before.Issuer != after.Issuer || !slices.Equal(before.Hosts, after.Hosts) {
+		a.Log.Info("app authentication settings changed", attrs...)
+	}
+}
+
 func (a *app) exportBackup(w http.ResponseWriter, r *http.Request) {
 	passphrase := r.PostFormValue("passphrase")
 	if passphrase == "" {
@@ -260,6 +316,7 @@ func (a *app) restoreBackup(w http.ResponseWriter, r *http.Request) {
 
 	a.apply()
 	a.signOutRestoredOver(before, a.Store.Snapshot())
+	a.logAppAuth(before.AppAuth, a.Store.Snapshot().AppAuth)
 	count := len(snap.Servers)
 	serverWord := "server"
 	if count != 1 {
