@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -53,6 +54,7 @@ type server struct {
 	lookupTimeout time.Duration
 	auth          *bitchordauth.Auth
 	authFrom      atomic.Pointer[Site]
+	authMu        sync.Mutex
 	artCache      *ArtCache
 }
 
@@ -131,6 +133,11 @@ func (s *server) guard(next func(http.ResponseWriter, *http.Request, source)) ht
 // last ones applied, so the allowed hosts are always the setup page's list
 // plus the public URL's host, and returns the mode in force.
 func (s *server) authMode(site Site) string {
+	if last := s.authFrom.Load(); last != nil && sameAuthSettings(*last, site) {
+		return s.auth.Mode()
+	}
+	s.authMu.Lock()
+	defer s.authMu.Unlock()
 	if last := s.authFrom.Load(); last == nil || !sameAuthSettings(*last, site) {
 		hosts := slices.Clone(site.AppAuth.Hosts)
 		if site.PublicURL != "" {
