@@ -311,3 +311,26 @@ type concurrencySource struct {
 func (c *concurrencySource) AllTracks(ctx context.Context, filter string) ([]media.Track, error) {
 	return c.fetch()
 }
+
+func TestTryRefreshSkipsWhileARefreshRuns(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	lib := NewLibrary(&concurrencySource{fetch: func() ([]media.Track, error) {
+		entered <- struct{}{}
+		<-release
+		return []media.Track{track("1", "One")}, nil
+	}}, "", time.Minute, quiet)
+	done := make(chan error)
+	go func() { done <- lib.Refresh(context.Background()) }()
+	<-entered
+	if ran, err := lib.TryRefresh(context.Background()); ran || err != nil {
+		t.Fatalf("TryRefresh during a refresh = %v, %v", ran, err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	go func() { <-entered }()
+	if ran, err := lib.TryRefresh(context.Background()); !ran || err != nil {
+		t.Fatalf("TryRefresh when idle = %v, %v", ran, err)
+	}
+}

@@ -95,6 +95,9 @@ func (l *Library) Get(id string) (media.Track, bool) {
 	return ix.Get(id)
 }
 
+// ManualTimeout bounds a refresh started by hand or by a webhook.
+const ManualTimeout = 10 * time.Minute
+
 func (l *Library) Refresh(ctx context.Context) error {
 	select {
 	case l.refreshSem <- struct{}{}:
@@ -102,6 +105,22 @@ func (l *Library) Refresh(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+	return l.refresh(ctx)
+}
+
+// TryRefresh refreshes unless a refresh is already running, and reports
+// whether it ran, so repeated triggers do not queue full scans.
+func (l *Library) TryRefresh(ctx context.Context) (bool, error) {
+	select {
+	case l.refreshSem <- struct{}{}:
+		defer func() { <-l.refreshSem }()
+	default:
+		return false, nil
+	}
+	return true, l.refresh(ctx)
+}
+
+func (l *Library) refresh(ctx context.Context) error {
 	defer l.tryOnce.Do(func() { close(l.tried) })
 	started := time.Now()
 	all, err := l.source.AllTracks(ctx, l.filter)

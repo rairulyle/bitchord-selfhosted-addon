@@ -72,7 +72,6 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /{slug}/{secret}/manifest.json", s.guard(s.manifest))
 	mux.HandleFunc("GET /{slug}/{secret}/search", s.guard(s.search))
 	mux.HandleFunc("POST /{slug}/{secret}/sync", s.guard(s.syncWebhook))
-	mux.HandleFunc("GET /{slug}/{secret}/sync", s.guard(s.syncWebhook))
 	mux.HandleFunc("GET /{slug}/{secret}/stream/{id}", s.guard(s.stream))
 	mux.HandleFunc("GET /{slug}/{secret}/file/{id}", s.guard(s.file))
 	mux.HandleFunc("GET /{slug}/{secret}/art/{id}", s.guard(s.art))
@@ -160,13 +159,20 @@ func (s *server) search(w http.ResponseWriter, r *http.Request, src source) {
 	writeJSON(w, searchJSON{Tracks: tracks, Albums: []any{}, Artists: []any{}, Playlists: []any{}})
 }
 
+// syncWebhook runs a refresh detached from the caller, so a webhook sender
+// that hangs up does not cancel the scan, and answers 202 while one is
+// already running instead of queueing another.
 func (s *server) syncWebhook(w http.ResponseWriter, r *http.Request, src source) {
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), library.ManualTimeout)
 	defer cancel()
-	if err := src.Library.Refresh(ctx); err != nil {
+	ran, err := src.Library.TryRefresh(ctx)
+	switch {
+	case !ran:
+		writeJSONStatus(w, http.StatusAccepted, map[string]any{"ok": true, "server": src.Slug, "status": "already syncing"})
+		return
+	case err != nil:
 		src.Log.Error("webhook sync failed", "error", err.Error())
-		w.WriteHeader(http.StatusBadGateway)
-		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		writeJSONStatus(w, http.StatusBadGateway, map[string]any{"ok": false, "error": "sync failed, see the addon log"})
 		return
 	}
 	stats := src.Library.Stats()
@@ -200,7 +206,12 @@ func logSearch(log *slog.Logger, query string, found library.Result, took time.D
 func label(track media.Track) string { return track.Title + " — " + track.Artist }
 
 func writeJSON(w http.ResponseWriter, value any) {
+	writeJSONStatus(w, http.StatusOK, value)
+}
+
+func writeJSONStatus(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(value)
 }
 

@@ -164,7 +164,13 @@ Each server provides an automated sync webhook URL shown on its card in `/setup`
 https://music.example.com/<server id>/<secret>/sync
 ```
 
-Sending a `POST` or `GET` request triggers an immediate library sync in the background. Use this URL in Plex Webhooks, Jellyfin Webhooks, or post-import scripts.
+A `POST` to it re-reads that server's library and answers once the sync is
+done. A `POST` that arrives while a sync is already running answers `202`
+and starts nothing, so bursts of calls cost one scan. Use it from a
+post-import script, Jellyfin's Webhook plugin (send only "Item Added"), or
+Plex Webhooks. Plex sends every event, including each play and pause, to a
+webhook, so point it at the addon only through something that passes on
+`library.new` alone.
 
 ## 🔀 Reverse proxy notes
 

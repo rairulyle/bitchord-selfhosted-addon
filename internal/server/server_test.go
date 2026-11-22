@@ -430,7 +430,7 @@ func TestRequestLinesAreDebugOnly(t *testing.T) {
 func TestSyncWebhook(t *testing.T) {
 	h := newHarness(t)
 	rec := h.do(http.MethodPost, "/plex-1/"+testSecret+"/sync", nil)
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/json" {
 		t.Fatalf("sync webhook POST status = %d, body: %s", rec.Code, rec.Body.String())
 	}
 	var res map[string]any
@@ -441,8 +441,7 @@ func TestSyncWebhook(t *testing.T) {
 		t.Fatalf("unexpected sync data: %v", res)
 	}
 
-	rec = h.do(http.MethodGet, "/plex-1/"+testSecret+"/sync", nil)
-	if rec.Code != http.StatusOK {
+	if rec := h.do(http.MethodGet, "/plex-1/"+testSecret+"/sync", nil); rec.Code != http.StatusNotFound {
 		t.Fatalf("sync webhook GET status = %d", rec.Code)
 	}
 
@@ -452,5 +451,40 @@ func TestSyncWebhook(t *testing.T) {
 
 	if rec := h.do(http.MethodPost, "/unknown/"+testSecret+"/sync", nil); rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown server = %d", rec.Code)
+	}
+}
+
+func TestSyncWebhookJoinsARunningSync(t *testing.T) {
+	h := newHarness(t)
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	h.fake.Extra["/library/sections"] = func(w http.ResponseWriter, r *http.Request) {
+		once.Do(func() { close(entered) })
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"MediaContainer": map[string]any{"Directory": fakes.PlexSections()}})
+	}
+	first := make(chan *httptest.ResponseRecorder)
+	go func() { first <- h.do(http.MethodPost, "/plex-1/"+testSecret+"/sync", nil) }()
+	<-entered
+	second := h.do(http.MethodPost, "/plex-1/"+testSecret+"/sync", nil)
+	close(release)
+	if second.Code != http.StatusAccepted || !strings.Contains(second.Body.String(), "already syncing") {
+		t.Fatalf("second sync = %d %s", second.Code, second.Body.String())
+	}
+	if rec := <-first; rec.Code != http.StatusOK {
+		t.Fatalf("first sync = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSyncWebhookHidesTheError(t *testing.T) {
+	h := newHarness(t)
+	h.fake.FailWith(http.StatusInternalServerError)
+	rec := h.do(http.MethodPost, "/plex-1/"+testSecret+"/sync", nil)
+	if rec.Code != http.StatusBadGateway || rec.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("failed sync = %d %q", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	if strings.Contains(rec.Body.String(), "500") || !strings.Contains(rec.Body.String(), `"ok":false`) {
+		t.Fatalf("failed sync body = %s", rec.Body.String())
 	}
 }
