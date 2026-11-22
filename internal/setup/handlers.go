@@ -460,25 +460,16 @@ func (a *app) syncInBackground(servers []store.Server) {
 }
 
 func (a *app) recentActivity(w http.ResponseWriter, r *http.Request) {
-	now := a.Now()
 	filter := r.URL.Query().Get("filter")
-	raw := a.Registry.RecentActivity()
-	items := make([]ActivityView, 0, len(raw))
-	for _, act := range raw {
-		if filter == "sync" && act.Kind != "sync" && act.Kind != "sync_error" {
-			continue
+	items := slices.DeleteFunc(a.activityViews(a.Store.Snapshot()), func(item ActivityView) bool {
+		switch filter {
+		case "sync":
+			return item.Kind != "sync" && item.Kind != "sync_error"
+		case "playback":
+			return item.Kind != "now_playing" && item.Kind != "scrobble" && item.Kind != "playback"
 		}
-		if filter == "playback" && act.Kind != "now_playing" && act.Kind != "scrobble" && act.Kind != "playback" {
-			continue
-		}
-		items = append(items, ActivityView{
-			TimeAgo: since(act.Time, now),
-			Slug:    act.Slug,
-			Server:  act.Server,
-			Kind:    act.Kind,
-			Message: act.Message,
-		})
-	}
+		return false
+	})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":         true,
 		"activities": items,

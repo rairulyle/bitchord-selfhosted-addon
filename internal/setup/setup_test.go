@@ -1387,3 +1387,17 @@ func (a *testApp) waitReady(slug string) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+func TestActivityShowsTheCurrentServerName(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	slug := a.addPlex(fakes.NewPlex(t), "Home")
+	a.waitReady(slug)
+	if err := a.store.UpdateServer(slug, func(server *store.Server) error { server.Label = "Parents"; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	body := a.get("/setup/activity").Body.String()
+	if !strings.Contains(body, `"Server":"Plex - Parents"`) || strings.Contains(body, "Plex - Home") {
+		t.Fatalf("activity = %s", body)
+	}
+}

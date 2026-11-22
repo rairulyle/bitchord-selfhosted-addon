@@ -137,16 +137,24 @@ func (a *app) overviewView(r *http.Request, snapshot store.Snapshot) overviewVie
 		}
 		view.Servers = append(view.Servers, card)
 	}
-	for _, act := range a.Registry.RecentActivity() {
-		view.Activities = append(view.Activities, ActivityView{
-			TimeAgo: since(act.Time, now),
-			Slug:    act.Slug,
-			Server:  act.Server,
-			Kind:    act.Kind,
-			Message: act.Message,
-		})
-	}
+	view.Activities = a.activityViews(snapshot)
 	return view
+}
+
+// activityViews names each entry's server by its current label, so a rename
+// also renames the entries recorded before it.
+func (a *app) activityViews(snapshot store.Snapshot) []ActivityView {
+	now := a.Now()
+	raw := a.Registry.RecentActivity()
+	views := make([]ActivityView, len(raw))
+	for i, act := range raw {
+		name := act.Server
+		if server, ok := snapshot.Server(act.Slug); ok {
+			name = registry.DisplayName(kindName(server.Kind), server.Label)
+		}
+		views[i] = ActivityView{TimeAgo: since(act.Time, now), Slug: act.Slug, Server: name, Kind: act.Kind, Message: act.Message}
+	}
+	return views
 }
 
 func formatInterval(raw string, defaultInterval time.Duration) string {
