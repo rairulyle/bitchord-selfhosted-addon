@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"net/http"
@@ -52,7 +53,7 @@ func (s *server) art(w http.ResponseWriter, r *http.Request, src source) {
 		return
 	}
 
-	cacheKey := src.Slug + ":" + track.ArtRef
+	cacheKey := src.Slug + "\x00" + src.URL() + "\x00" + track.ArtRef
 	if s.artCache != nil {
 		if item, ok := s.artCache.Get(cacheKey); ok {
 			serveCachedArt(w, r, item)
@@ -101,8 +102,16 @@ func (s *server) art(w http.ResponseWriter, r *http.Request, src source) {
 		}
 	}
 
+	content := io.Reader(bytes.NewReader(body))
+	length := strconv.Itoa(len(body))
+	if int64(len(body)) > maxCachedItemSize {
+		content = io.MultiReader(content, upstream.Body)
+		length = upstream.Header.Get("Content-Length")
+	}
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	if length != "" {
+		w.Header().Set("Content-Length", length)
+	}
 	if etag != "" {
 		w.Header().Set("ETag", etag)
 	}
@@ -112,7 +121,7 @@ func (s *server) art(w http.ResponseWriter, r *http.Request, src source) {
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	w.WriteHeader(http.StatusOK)
 	if r.Method != http.MethodHead {
-		w.Write(body)
+		io.Copy(w, content)
 	}
 }
 

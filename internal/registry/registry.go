@@ -42,9 +42,14 @@ type Entry struct {
 	Log     *slog.Logger
 	mu      sync.RWMutex
 	config  store.Server
+	url     string
 	cancel  context.CancelFunc
 	done    chan struct{}
 }
+
+// URL is the server's address. A changed address starts a new entry, so it
+// never changes for the life of one.
+func (e *Entry) URL() string { return e.url }
 
 // DisplayName is what BitChord shows: "Plex - Home", or "Plex" with no label.
 func (e *Entry) DisplayName() string {
@@ -428,7 +433,7 @@ func (r *Registry) start(server store.Server) (*Entry, error) {
 	entry := &Entry{
 		Slug: server.Slug, Kind: server.Kind, Label: server.Label, Backend: backend,
 		Library: library.NewLibrary(backend, server.Library, r.serverInterval(server), log),
-		Log:     log, config: server, cancel: cancel, done: make(chan struct{}),
+		Log:     log, config: server, url: server.URL, cancel: cancel, done: make(chan struct{}),
 	}
 	entry.Library.SetOnActivity(func(kind, message string) {
 		r.RecordActivity(slug, name, kind, message)
