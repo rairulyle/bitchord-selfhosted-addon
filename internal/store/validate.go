@@ -3,8 +3,10 @@ package store
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"regexp"
+	"strings"
 	"time"
 	"unicode/utf8"
 )
@@ -57,9 +59,24 @@ func ValidatePublicURL(raw string) error {
 func ValidateServerURL(raw string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return errors.New("server URL must be an http or https URL such as http://plex:32400")
+		return errors.New("server URL must be an http or https URL.")
+	}
+	host := parsed.Hostname()
+	if isCloudMetadata(host) {
+		return errors.New("server URL cannot target cloud instance metadata addresses")
 	}
 	return nil
+}
+
+func isCloudMetadata(host string) bool {
+	if strings.EqualFold(host, "instance-data") || strings.EqualFold(host, "metadata.google.internal") {
+		return true
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	if ip == nil {
+		return false
+	}
+	return ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
 }
 
 func ValidateServer(server Server) error {

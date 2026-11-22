@@ -422,3 +422,31 @@ func TestRestoreRejectsAnInvalidBackupWithAClearError(t *testing.T) {
 		t.Fatalf("store changed: %+v", after)
 	}
 }
+
+func TestValidateServerURLRejectsCloudMetadata(t *testing.T) {
+	blocked := []string{
+		"http://169.254.169.254",
+		"http://169.254.169.254/latest/meta-data",
+		"http://169.254.1.1:8080",
+		"http://[fe80::1]:32400",
+		"http://instance-data",
+		"http://metadata.google.internal",
+	}
+	for _, raw := range blocked {
+		if err := ValidateServerURL(raw); err == nil || !strings.Contains(err.Error(), "cloud instance metadata") {
+			t.Errorf("ValidateServerURL(%q) = %v, want cloud instance metadata error", raw, err)
+		}
+	}
+	allowed := []string{
+		"http://192.168.1.50:32400",
+		"http://10.0.0.5:8096",
+		"http://127.0.0.1:4533",
+		"http://localhost:4533",
+		"https://plex.example.com",
+	}
+	for _, raw := range allowed {
+		if err := ValidateServerURL(raw); err != nil {
+			t.Errorf("ValidateServerURL(%q) unexpected error: %v", raw, err)
+		}
+	}
+}
