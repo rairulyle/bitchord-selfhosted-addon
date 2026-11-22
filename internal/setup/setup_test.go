@@ -191,6 +191,11 @@ func TestWithoutAnAdminOnlyTheCreateFormExists(t *testing.T) {
 	if first.Code != http.StatusOK || !strings.Contains(first.Body.String(), "Create a password") {
 		t.Fatalf("first visit: %d %s", first.Code, first.Body.String())
 	}
+	if first.Header().Get("X-Content-Type-Options") != "nosniff" ||
+		first.Header().Get("X-Frame-Options") != "DENY" ||
+		first.Header().Get("Referrer-Policy") != "same-origin" {
+		t.Fatalf("security headers missing: %+v", first.Header())
+	}
 	for _, path := range []string{"/setup/servers/new", "/setup/login", "/setup/password"} {
 		if rec := a.get(path); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/setup" {
 			t.Errorf("GET %s: %d -> %q", path, rec.Code, rec.Header().Get("Location"))
