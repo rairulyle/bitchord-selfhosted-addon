@@ -377,6 +377,17 @@ func TestServerLifecycleThroughTheForms(t *testing.T) {
 	if actRec := a.get("/setup/activity"); actRec.Code != http.StatusOK || !strings.Contains(actRec.Body.String(), `"ok":true`) || !strings.Contains(actRec.Body.String(), "Synced 5 tracks") {
 		t.Fatalf("get activity endpoint failed: %d %s", actRec.Code, actRec.Body.String())
 	}
+	if searchRec := a.get("/setup/servers/plex-1/test-search?q=First+Song"); searchRec.Code != http.StatusOK || !strings.Contains(searchRec.Body.String(), `"ok":true`) {
+		t.Fatalf("test-search failed: %d %s", searchRec.Code, searchRec.Body.String())
+	}
+	// Searching an album name ("As You Found Me") returns both the album and its tracks.
+	albumSearchRec := a.get("/setup/servers/plex-1/test-search?q=As+You+Found+Me")
+	if albumSearchRec.Code != http.StatusOK || !strings.Contains(albumSearchRec.Body.String(), `"name":"As You Found Me"`) || !strings.Contains(albumSearchRec.Body.String(), `"title":"Closer"`) {
+		t.Fatalf("test-search album query failed: %d %s", albumSearchRec.Code, albumSearchRec.Body.String())
+	}
+	if searchRec := a.get("/setup/servers/plex-9/test-search?q=First+Song"); searchRec.Code != http.StatusNotFound {
+		t.Fatalf("test-search unknown server: %d", searchRec.Code)
+	}
 	if rec := a.form("/setup/servers/plex-1/refresh", url.Values{}); rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "Syncing") {
 		t.Fatalf("refresh: %d %s", rec.Code, rec.Header().Get("Location"))
 	}

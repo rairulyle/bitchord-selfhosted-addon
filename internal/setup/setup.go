@@ -39,6 +39,7 @@ type Runtime interface {
 	Apply(snapshot store.Snapshot)
 	Status(slug string) (registry.Status, bool)
 	Refresh(ctx context.Context, slug string) error
+	Search(slug, query string, limit int) (registry.SearchResult, bool)
 	DefaultInterval() time.Duration
 	RecentActivity() []registry.Activity
 	ClearActivity(filter string)
@@ -168,6 +169,7 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /setup/servers/{slug}/enabled", a.setServerEnabled)
 	mux.HandleFunc("POST /setup/servers/{slug}/refresh", a.refreshServer)
 	mux.HandleFunc("POST /setup/sync-all", a.refreshAllServers)
+	mux.HandleFunc("GET /setup/servers/{slug}/test-search", a.testSearch)
 	mux.HandleFunc("GET /setup/activity", a.recentActivity)
 	mux.HandleFunc("POST /setup/activity/clear", a.clearActivity)
 	mux.HandleFunc("POST /setup/plex/pin", a.plexPIN)

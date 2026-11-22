@@ -459,6 +459,106 @@ func (a *app) syncInBackground(servers []store.Server) {
 	}
 }
 
+func (a *app) testSearch(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	query := r.URL.Query().Get("q")
+	res, ok := a.Registry.Search(slug, query, 50)
+	if !ok {
+		jsonError(w, http.StatusNotFound, "server is not running or ready")
+		return
+	}
+	type matchTrack struct {
+		ID          string `json:"id"`
+		Title       string `json:"title"`
+		Artist      string `json:"artist"`
+		Album       string `json:"album"`
+		DurationSec int    `json:"duration"`
+		Codec       string `json:"codec"`
+		BitDepth    int    `json:"bitDepth,omitempty"`
+		SampleRate  int    `json:"sampleRate,omitempty"`
+		Lossless    bool   `json:"lossless"`
+		ArtworkURL  string `json:"artworkURL,omitempty"`
+	}
+	type matchAlbum struct {
+		Name       string `json:"name"`
+		Artist     string `json:"artist"`
+		ArtworkURL string `json:"artworkURL,omitempty"`
+		TrackCount int    `json:"trackCount"`
+		Year       int    `json:"year,omitempty"`
+	}
+	type matchArtist struct {
+		Name       string `json:"name"`
+		ArtworkURL string `json:"artworkURL,omitempty"`
+		TrackCount int    `json:"trackCount"`
+	}
+
+	snapshot := a.Store.Snapshot()
+	base := ""
+	if snapshot.PublicURL != "" && snapshot.Secret != "" {
+		base = snapshot.PublicURL + "/" + slug + "/" + snapshot.Secret
+	}
+
+	matches := make([]matchTrack, len(res.Tracks))
+	for i, t := range res.Tracks {
+		art := ""
+		if t.ArtRef != "" && base != "" {
+			art = base + "/art/" + t.ID
+		}
+		matches[i] = matchTrack{
+			ID:          t.ID,
+			Title:       t.Title,
+			Artist:      t.Artist,
+			Album:       t.Album,
+			DurationSec: t.DurationSec,
+			Codec:       t.Codec,
+			BitDepth:    t.BitDepth,
+			SampleRate:  t.SampleRate,
+			Lossless:    media.Lossless(t.Codec),
+			ArtworkURL:  art,
+		}
+	}
+
+	albums := make([]matchAlbum, len(res.Albums))
+	for i, alb := range res.Albums {
+		art := ""
+		if alb.ArtRef != "" && alb.SampleID != "" && base != "" {
+			art = base + "/art/" + alb.SampleID
+		}
+		albums[i] = matchAlbum{
+			Name:       alb.Name,
+			Artist:     alb.Artist,
+			ArtworkURL: art,
+			TrackCount: alb.TrackCount,
+			Year:       alb.Year,
+		}
+	}
+
+	artists := make([]matchArtist, len(res.Artists))
+	for i, art := range res.Artists {
+		artURL := ""
+		if art.ArtRef != "" && art.SampleID != "" && base != "" {
+			artURL = base + "/art/" + art.SampleID
+		}
+		artists[i] = matchArtist{
+			Name:       art.Name,
+			ArtworkURL: artURL,
+			TrackCount: art.TrackCount,
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":       true,
+		"query":    query,
+		"tokens":   res.Tokens,
+		"strict":   res.Strict,
+		"fallback": res.Fallback,
+		"total":    res.Strict + res.Fallback,
+		"tracks":   matches,
+		"albums":   albums,
+		"artists":  artists,
+	})
+}
+
 func (a *app) recentActivity(w http.ResponseWriter, r *http.Request) {
 	filter := r.URL.Query().Get("filter")
 	items := slices.DeleteFunc(a.activityViews(a.Store.Snapshot()), func(item ActivityView) bool {
