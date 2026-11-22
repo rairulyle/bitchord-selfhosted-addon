@@ -320,7 +320,7 @@ func (a *Auth) Verify(token, proof string) Result {
 		proofMsg := fmt.Sprintf("%s\n%s\n%s\n%s", ProofContext, host, matches[1], ath)
 		digest := sha256.Sum256([]byte(proofMsg))
 		if ecdsa.Verify(devicePubKey, digest[:], rInt, sInt) {
-			if !a.seen.remember(ath+"."+proof, now, proofAt.Add(a.maxProofAge)) {
+			if !a.seen.remember(replayKey(ath, matches[1], rInt, sInt), now, proofAt.Add(a.maxProofAge)) {
 				return fail(http.StatusUnauthorized, "replayed_proof", "Proof was already used")
 			}
 			return Result{
@@ -527,8 +527,18 @@ func (r Result) WriteRejection(w http.ResponseWriter) {
 	})
 }
 
+// replayKey names a proof by its signature values rather than its text,
+// with s folded to the low half because ECDSA accepts both s and n-s.
+func replayKey(ath, ts string, r, s *big.Int) string {
+	n := elliptic.P256().Params().N
+	if s.Cmp(new(big.Int).Rsh(n, 1)) > 0 {
+		s = new(big.Int).Sub(n, s)
+	}
+	return fmt.Sprintf("%s|%s|%x|%x", ath, ts, r, s)
+}
+
 func b64urlDecode(s string) ([]byte, error) {
-	return base64.RawURLEncoding.DecodeString(strings.TrimRight(s, "="))
+	return base64.RawURLEncoding.Strict().DecodeString(strings.TrimRight(s, "="))
 }
 
 func audienceContains(raw json.RawMessage, target string) bool {

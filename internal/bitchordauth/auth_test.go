@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -323,6 +324,35 @@ func TestAReplayedProofIsRefused(t *testing.T) {
 	}
 	if res := auth.Verify(token, f.proof(token)); !res.OK {
 		t.Fatalf("a fresh proof for the same token: %+v", res)
+	}
+}
+
+func TestAReencodedProofIsNotANewProof(t *testing.T) {
+	f := newFixture(t)
+	auth := f.auth("enforce")
+	token := f.token(f.claims())
+	proof := f.proof(token)
+	if res := auth.Verify(token, proof); !res.OK {
+		t.Fatalf("first use: %+v", res)
+	}
+	prefix, sig := proof[:strings.LastIndex(proof, ".")+1], proof[strings.LastIndex(proof, ".")+1:]
+
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	last := strings.IndexByte(alphabet, sig[len(sig)-1])
+	spareBits := prefix + sig[:len(sig)-1] + string(alphabet[last^1])
+	if res := auth.Verify(token, spareBits); res.OK {
+		t.Fatalf("a signature with its spare bits set: %+v", res)
+	}
+
+	raw, err := base64.RawURLEncoding.DecodeString(sig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := new(big.Int).SetBytes(raw[32:])
+	flipped := new(big.Int).Sub(elliptic.P256().Params().N, s)
+	mirrored := prefix + base64.RawURLEncoding.EncodeToString(append(raw[:32:32], flipped.FillBytes(make([]byte, 32))...))
+	if res := auth.Verify(token, mirrored); res.OK || res.Error != "replayed_proof" {
+		t.Fatalf("the same signature with s mirrored: %+v", res)
 	}
 }
 
