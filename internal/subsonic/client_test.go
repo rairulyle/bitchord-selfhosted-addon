@@ -3,6 +3,7 @@ package subsonic
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -372,5 +373,50 @@ func TestTransportErrorsCarryNoCredentials(t *testing.T) {
 				t.Errorf("%s error %q contains %q", name, err, leak)
 			}
 		}
+	}
+}
+
+func TestFailedEnvelopesOnMediaEndpointsAreErrors(t *testing.T) {
+	fake := fakes.NewNavidrome(t)
+	good := newClient(fake)
+	wrong := New(Options{BaseURL: fake.URL, Username: fakes.NavidromeUser, Password: "wrong-password"})
+	song := media.Track{ID: "s-1", FileRef: StreamPath("s-1"), ArtRef: ArtPath("al-1")}
+	missing := media.Track{ID: "gone", FileRef: StreamPath("gone"), ArtRef: ArtPath("gone")}
+	cases := map[string]struct {
+		open func() (*http.Response, error)
+		want error
+	}{
+		"file, wrong password": {func() (*http.Response, error) { return wrong.OpenFile(context.Background(), song, http.MethodGet, nil) }, media.ErrUnauthorized},
+		"file, missing song": {func() (*http.Response, error) {
+			return good.OpenFile(context.Background(), missing, http.MethodGet, nil)
+		}, media.ErrNotFound},
+		"art, wrong password": {func() (*http.Response, error) { return wrong.OpenArt(context.Background(), song) }, media.ErrUnauthorized},
+		"art, missing cover":  {func() (*http.Response, error) { return good.OpenArt(context.Background(), missing) }, media.ErrNotFound},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			res, err := tc.open()
+			if res != nil {
+				res.Body.Close()
+			}
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("err = %v, want %v", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestFailedXMLEnvelopeIsAnError(t *testing.T) {
+	fake := fakes.NewNavidrome(t)
+	fake.Extra["/rest/getCoverArt.view"] = func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/xml; charset=utf-8")
+		w.Write([]byte(`<subsonic-response status="failed" version="1.16.1"><error code="70" message="Artwork not found"/></subsonic-response>`))
+	}
+	res, err := newClient(fake).OpenArt(context.Background(), media.Track{ID: "s-1", ArtRef: ArtPath("al-1")})
+	if res != nil {
+		res.Body.Close()
+	}
+	if !errors.Is(err, media.ErrNotFound) {
+		t.Fatalf("err = %v, want not found", err)
 	}
 }

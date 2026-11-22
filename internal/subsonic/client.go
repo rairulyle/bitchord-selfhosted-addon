@@ -6,10 +6,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -401,9 +403,9 @@ func isNotFound(err error) bool     { return errors.Is(err, media.ErrNotFound) }
 func isUnauthorized(err error) bool { return errors.Is(err, media.ErrUnauthorized) }
 
 func (c *Client) OpenFile(ctx context.Context, track media.Track, method string, header http.Header) (*http.Response, error) {
-	res, err := c.http.Open(ctx, method, c.authedPath(track.FileRef), header)
+	res, err := c.open(ctx, method, track.FileRef, header)
 	if err != nil {
-		return nil, redact(err)
+		return nil, err
 	}
 	if method == http.MethodGet && res.StatusCode >= 200 && res.StatusCode < 300 {
 		rng := ""
@@ -567,11 +569,55 @@ func (c *Client) Scrobble(ctx context.Context, id string, submission bool) error
 }
 
 func (c *Client) OpenArt(ctx context.Context, track media.Track) (*http.Response, error) {
-	res, err := c.http.Open(ctx, http.MethodGet, c.authedPath(track.ArtRef), nil)
+	return c.open(ctx, http.MethodGet, track.ArtRef, nil)
+}
+
+// open fetches a media endpoint. Subsonic servers answer a failed stream or
+// cover art request with HTTP 200 and an error envelope, which must not be
+// passed on as audio or cached as artwork.
+func (c *Client) open(ctx context.Context, method, ref string, header http.Header) (*http.Response, error) {
+	res, err := c.http.Open(ctx, method, c.authedPath(ref), header)
 	if err != nil {
 		return nil, redact(err)
 	}
-	return res, nil
+	mediaType, _, _ := mime.ParseMediaType(res.Header.Get("Content-Type"))
+	switch mediaType {
+	case "application/json", "text/xml", "application/xml":
+	default:
+		return res, nil
+	}
+	defer res.Body.Close()
+	return nil, envelopeError(io.LimitReader(res.Body, maxEnvelopeBytes), mediaType)
+}
+
+const maxEnvelopeBytes = 64 << 10
+
+func envelopeError(body io.Reader, mediaType string) error {
+	var header statusHeader
+	if mediaType == "application/json" {
+		var env subsonicResponse
+		if json.NewDecoder(body).Decode(&env) == nil {
+			_ = json.Unmarshal(env.Response, &header)
+		}
+	} else {
+		var env struct {
+			Status string `xml:"status,attr"`
+			Error  *struct {
+				Code    int    `xml:"code,attr"`
+				Message string `xml:"message,attr"`
+			} `xml:"error"`
+		}
+		if xml.NewDecoder(body).Decode(&env) == nil {
+			header.Status = env.Status
+			if env.Error != nil {
+				header.Error = &apiError{Code: env.Error.Code, Message: env.Error.Message}
+			}
+		}
+	}
+	if header.Error != nil {
+		return navidromeError(header.Error)
+	}
+	return fmt.Errorf("navidrome: answered %s instead of media", mediaType)
 }
 
 // redact drops the query from a transport error's URL: it carries the

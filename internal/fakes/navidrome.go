@@ -52,22 +52,23 @@ func (f *Navidrome) serve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	q := r.URL.Query()
-	if r.URL.Path == "/rest/stream.view" {
-		if !f.authorized(q) {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
+	// Like Navidrome, a failed stream or cover art request answers HTTP 200
+	// with an error envelope instead of an error status.
+	if r.URL.Path == "/rest/stream.view" || r.URL.Path == "/rest/getCoverArt.view" {
+		switch {
+		case !f.authorized(q):
+			writeSub(w, map[string]any{"status": "failed", "error": map[string]any{"code": 40, "message": "Wrong username or password."}})
+		case r.URL.Path == "/rest/stream.view" && !navidromeSongExists(q.Get("id")):
+			writeSub(w, map[string]any{"status": "failed", "error": map[string]any{"code": 70, "message": "Song not found"}})
+		case r.URL.Path == "/rest/stream.view":
+			w.Header().Set("Content-Type", "audio/flac")
+			w.Write([]byte("FAKEAUDIOBYTES"))
+		case q.Get("id") != "al-1":
+			writeSub(w, map[string]any{"status": "failed", "error": map[string]any{"code": 70, "message": "Artwork not found"}})
+		default:
+			w.Header().Set("Content-Type", "image/jpeg")
+			w.Write([]byte("FAKEIMAGEBYTES"))
 		}
-		w.Header().Set("Content-Type", "audio/flac")
-		w.Write([]byte("FAKEAUDIOBYTES"))
-		return
-	}
-	if r.URL.Path == "/rest/getCoverArt.view" {
-		if !f.authorized(q) {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		w.Header().Set("Content-Type", "image/jpeg")
-		w.Write([]byte("FAKEIMAGEBYTES"))
 		return
 	}
 	if !strings.HasPrefix(r.URL.Path, "/rest/") {
@@ -267,4 +268,13 @@ func navidromeAllSongs() []map[string]any {
 			"bitDepth":     16,
 		},
 	}
+}
+
+func navidromeSongExists(id string) bool {
+	for _, song := range navidromeAllSongs() {
+		if song["id"] == id {
+			return true
+		}
+	}
+	return false
 }
