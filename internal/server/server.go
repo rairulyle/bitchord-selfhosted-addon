@@ -206,7 +206,7 @@ func (s *server) logged(next http.Handler) http.Handler {
 	})
 }
 
-var slugPattern = regexp.MustCompile(`^(plex|jellyfin)-[1-9][0-9]*$`)
+var slugPattern = regexp.MustCompile(`^(plex|jellyfin|navidrome)-[1-9][0-9]*$`)
 
 // redact keeps a slug and masks the segment after it. A first segment that
 // is not a slug is masked too, since a client on a 0.4 URL sends the secret

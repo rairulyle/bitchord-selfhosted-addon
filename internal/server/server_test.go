@@ -371,6 +371,7 @@ func TestRedact(t *testing.T) {
 		"/health": "/health", "/": "/", "/abc": "/***", "/abc/search": "/***/search", "/abc/file/12": "/***/file/12",
 		"//x/y": "/***", "/./x/y": "/***", "/x/../y": "/***", "/x/": "/***",
 		"/plex-1/abc/search": "/plex-1/***/search", "/jellyfin-2/abc/file/12": "/jellyfin-2/***/file/12",
+		"/navidrome-1/abc/search": "/navidrome-1/***/search", "/navidrome-1/abc": "/navidrome-1/***",
 		"/plex-1/abc": "/plex-1/***", "/plex-1": "/***", "/setup/login": "/***/login",
 	}
 	for in, want := range cases {

@@ -73,6 +73,10 @@ func jellyfinServer(fake *fakes.Jellyfin) store.Server {
 	return store.Server{Kind: store.Jellyfin, URL: fake.URL, Token: fakes.JellyfinToken, Auth: store.AuthToken, Enabled: true}
 }
 
+func navidromeServer(fake *fakes.Navidrome) store.Server {
+	return store.Server{Kind: store.Navidrome, URL: fake.URL, Token: fakes.NavidromeToken, Auth: store.AuthNavidromeSignIn, Enabled: true}
+}
+
 // start runs serve in the background and returns the base URL once it listens.
 func start(ctx context.Context, t *testing.T, cfg config.Config, st *store.Store, log *slog.Logger) (string, <-chan error) {
 	t.Helper()
@@ -198,14 +202,14 @@ func TestAnEmptyStoreServesTheSetupPageAndIsHealthy(t *testing.T) {
 }
 
 func TestServeAnswersEveryServerAndShutsDownOnCancel(t *testing.T) {
-	plexFake, jellyfinFake := fakes.NewPlex(t), fakes.NewJellyfin(t)
-	st := newStore(t, plexServer(plexFake), jellyfinServer(jellyfinFake))
+	plexFake, jellyfinFake, navidromeFake := fakes.NewPlex(t), fakes.NewJellyfin(t), fakes.NewNavidrome(t)
+	st := newStore(t, plexServer(plexFake), jellyfinServer(jellyfinFake), navidromeServer(navidromeFake))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	logs := &syncBuffer{}
 	base, done := start(ctx, t, testConfig(), st, newLogger("text", slog.LevelInfo, logs))
 	waitHealthy(t, base)
-	cases := map[string]string{"plex-1": `"id":"101"`, "jellyfin-1": `"id":"f101"`}
+	cases := map[string]string{"plex-1": `"id":"101"`, "jellyfin-1": `"id":"f101"`, "navidrome-1": `"id":"s-1"`}
 	for slug, wantID := range cases {
 		if status, body := get(t, base+"/"+slug+"/"+testSecret+"/search?q=new+religion"); status != http.StatusOK || !strings.Contains(body, wantID) {
 			t.Fatalf("%s search: %d %s", slug, status, body)
@@ -229,12 +233,12 @@ func TestServeAnswersEveryServerAndShutsDownOnCancel(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("serve did not return after cancel")
 	}
-	for _, want := range []string{"msg=listening", "msg=\"library indexed\"", "server=plex-1", "server=jellyfin-1", "servers=2"} {
+	for _, want := range []string{"msg=listening", "msg=\"library indexed\"", "server=plex-1", "server=jellyfin-1", "server=navidrome-1", "servers=3"} {
 		if !strings.Contains(logs.String(), want) {
 			t.Errorf("logs lack %s:\n%s", want, logs.String())
 		}
 	}
-	if strings.Contains(logs.String(), fakes.PlexToken) || strings.Contains(logs.String(), testSecret) {
+	if strings.Contains(logs.String(), fakes.PlexToken) || strings.Contains(logs.String(), testSecret) || strings.Contains(logs.String(), fakes.NavidromePassword) {
 		t.Error("a credential reached the logs")
 	}
 }
