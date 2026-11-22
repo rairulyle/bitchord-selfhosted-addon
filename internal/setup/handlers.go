@@ -224,14 +224,13 @@ func (a *app) exportBackup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) restoreBackup(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var raw []byte
 	var passphrase string
 
 	contentType := r.Header.Get("Content-Type")
 	if strings.HasPrefix(contentType, "multipart/form-data") {
 		if r.MultipartForm == nil {
-			if err := r.ParseMultipartForm(1 << 20); err != nil {
+			if err := r.ParseMultipartForm(maxBackupBytes); err != nil {
 				redirectError(w, r, "Restore failed: invalid upload format or file too large.")
 				return
 			}

@@ -5,6 +5,7 @@ package setup
 import (
 	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -29,6 +30,7 @@ var staticFiles embed.FS
 const (
 	cookieName      = "addon_setup"
 	maxFormBytes    = 64 << 10
+	maxBackupBytes  = 1 << 20
 	loginAttempts   = 5
 	lockoutWindow   = time.Minute
 	tokenRefTTL     = 10 * time.Minute
@@ -199,7 +201,7 @@ type session struct {
 // session must carry the CSRF token and come from this origin.
 func (a *app) gate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
+		r.Body = http.MaxBytesReader(w, r.Body, bodyLimit(r))
 		if r.Method == http.MethodPost && crossSite(r) {
 			http.Error(w, "cross-site request refused", http.StatusForbidden)
 			return
@@ -229,9 +231,11 @@ func (a *app) gate(next http.Handler) http.Handler {
 			}
 			return
 		}
-		if r.Method == http.MethodPost && !a.csrfOK(r, key, cookie.Value) {
-			http.Error(w, "invalid or missing CSRF token", http.StatusForbidden)
-			return
+		if r.Method == http.MethodPost {
+			if err := checkCSRF(r, key, cookie.Value); err != nil {
+				refuseUnchecked(w, r, err)
+				return
+			}
 		}
 		ctx := context.WithValue(r.Context(), sessionKeyType{}, session{key: key, cookie: cookie.Value})
 		next.ServeHTTP(w, r.WithContext(ctx))
@@ -253,19 +257,45 @@ func crossSite(r *http.Request) bool {
 	return err != nil || !strings.EqualFold(parsed.Host, r.Host)
 }
 
-func (a *app) csrfOK(r *http.Request, key []byte, cookie string) bool {
+func bodyLimit(r *http.Request) int64 {
+	if r.Method == http.MethodPost && r.URL.Path == "/setup/restore" {
+		return maxBackupBytes
+	}
+	return maxFormBytes
+}
+
+var errBadCSRF = errors.New("invalid or missing CSRF token")
+
+func checkCSRF(r *http.Request, key []byte, cookie string) error {
 	token := r.Header.Get("X-CSRF-Token")
 	if token == "" {
+		var err error
 		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
-			if err := r.ParseMultipartForm(1 << 20); err != nil {
-				return false
-			}
-		} else if err := r.ParseForm(); err != nil {
-			return false
+			err = r.ParseMultipartForm(maxBackupBytes)
+		} else {
+			err = r.ParseForm()
+		}
+		if err != nil {
+			return err
 		}
 		token = r.PostFormValue("csrf")
 	}
-	return csrfValid(key, cookie, token)
+	if !csrfValid(key, cookie, token) {
+		return errBadCSRF
+	}
+	return nil
+}
+
+func refuseUnchecked(w http.ResponseWriter, r *http.Request, err error) {
+	var tooLarge *http.MaxBytesError
+	switch {
+	case !errors.As(err, &tooLarge):
+		http.Error(w, errBadCSRF.Error(), http.StatusForbidden)
+	case r.URL.Path == "/setup/restore":
+		redirectError(w, r, fmt.Sprintf("Restore failed: the backup file is larger than %d MB.", maxBackupBytes>>20))
+	default:
+		http.Error(w, "request too large", http.StatusRequestEntityTooLarge)
+	}
 }
 
 func currentSession(r *http.Request) session {

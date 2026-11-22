@@ -1618,3 +1618,48 @@ func TestEncryptedBackupExportAndRestore(t *testing.T) {
 		t.Errorf("restored Servers = %+v, want 1 server", snap.Servers)
 	}
 }
+
+func TestRestoreAcceptsABackupLargerThanAForm(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	snap := a.store.Snapshot()
+	snap.Admin = nil
+	snap.Servers = []store.Server{{Slug: "plex-1", Kind: store.Plex, URL: "http://plex:32400", Token: strings.Repeat("t", 200<<10), Auth: store.AuthToken, Library: "1"}}
+	raw, err := store.EncryptSnapshot(snap, "backup-pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) <= maxFormBytes {
+		t.Fatalf("backup is %d bytes, want more than %d", len(raw), maxFormBytes)
+	}
+
+	rec := a.multipartFormWithFields("/setup/restore", "backup_file", "backup.json", raw, map[string]string{"passphrase": "backup-pass"})
+	if loc := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || !strings.Contains(loc, "notice=") {
+		t.Fatalf("restore: %d %q %s", rec.Code, loc, rec.Body.String())
+	}
+	if servers := a.store.Snapshot().Servers; len(servers) != 1 || len(servers[0].Token) != 200<<10 {
+		t.Fatalf("servers after restore = %d", len(servers))
+	}
+}
+
+func TestRestoreRefusesABackupOverTheCap(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	rec := a.multipartForm("/setup/restore", "backup_file", "backup.json", bytes.Repeat([]byte(" "), maxBackupBytes+1))
+	if loc := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || !strings.Contains(loc, "error=") || !strings.Contains(loc, "larger") {
+		t.Fatalf("restore: %d %q", rec.Code, loc)
+	}
+}
+
+func TestOtherFormsKeepTheSmallBodyCap(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	rec := a.form("/setup/public-url", url.Values{"public_url": {strings.Repeat("a", maxFormBytes)}})
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized public URL form = %d, want 413", rec.Code)
+	}
+	rec = a.multipartFormWithFields("/setup/public-url", "unused", "unused.txt", bytes.Repeat([]byte("a"), maxFormBytes), map[string]string{"public_url": ""})
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized multipart form = %d, want 413", rec.Code)
+	}
+}
