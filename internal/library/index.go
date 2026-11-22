@@ -141,7 +141,6 @@ func NewIndex(tracks []media.Track) *Index {
 			ix.postings[token] = append(ix.postings[token], i)
 		}
 
-		// Track album groupings
 		if t.Album != "" {
 			albumArtist := t.AlbumArtist
 			if albumArtist == "" {
@@ -168,7 +167,6 @@ func NewIndex(tracks []media.Track) *Index {
 			}
 		}
 
-		// Track artist groupings
 		seenTrackArtists := make(map[string]struct{})
 		for _, raw := range []string{t.Artist, t.AlbumArtist} {
 			for _, artName := range SplitArtists(raw) {
@@ -782,9 +780,8 @@ func (h *postingHeap) Pop() any {
 	return last
 }
 
-// union merges sorted posting lists into one sorted list without repeats.
-// With a single list it returns that list itself, which callers must not
-// modify.
+// union merges sorted posting lists without repeats. A single list comes back
+// as is, shared with the index, so callers must not modify the result.
 func union(lists [][]int) []int {
 	h := make(postingHeap, 0, len(lists))
 	total := 0
@@ -863,10 +860,8 @@ func unique(tokens []string) []string {
 
 var artistSeparators = strings.NewReplacer("; ", "\x00", " • ", "\x00", " | ", "\x00", " / ", "\x00")
 
-// SplitArtists splits a multi-artist string for grouping and search. It
-// splits only on separators followed or surrounded by spaces, so names such
-// as AC/DC or Mötley|Crüe stay whole, as do "&" and "," in "Tyler, The
-// Creator".
+// SplitArtists splits only on spaced separators, so AC/DC, Mötley|Crüe and
+// "Tyler, The Creator" stay whole.
 func SplitArtists(s string) []string {
 	clean := artistSeparators.Replace(s)
 	parts := strings.Split(clean, "\x00")
