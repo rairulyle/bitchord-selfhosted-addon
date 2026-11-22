@@ -7,12 +7,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/library"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/registry"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/store"
@@ -424,80 +425,38 @@ func (a *app) refreshServer(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
-	defer cancel()
 	name := registry.DisplayName(kindName(server.Kind), server.Label)
-	if err := a.Registry.Refresh(ctx, slug); err != nil {
-		redirectNotice(w, r, fmt.Sprintf("Sync failed for %s: %s", name, err.Error()))
+	if _, running := a.Registry.Status(slug); !running {
+		redirectNotice(w, r, "Sync failed for "+name+": it is not running.")
 		return
 	}
-	stats, hasStats := a.Registry.Status(slug)
-	if hasStats && stats.Ready {
-		tookStr := formatDurationMs(stats.Duration)
-		if tookStr != "" {
-			tookStr = " in " + tookStr
-		}
-		redirectNotice(w, r, fmt.Sprintf("%s synced%s (%d tracks · %d artists · %d albums).", name, tookStr, stats.Tracks, stats.Artists, stats.Albums))
-		return
-	}
-	redirectNotice(w, r, name+" synced.")
+	a.syncInBackground([]store.Server{server})
+	redirectNotice(w, r, "Syncing "+name+". Recent activity shows when it finishes.")
 }
 
 func (a *app) refreshAllServers(w http.ResponseWriter, r *http.Request) {
-	snapshot := a.Store.Snapshot()
-	var servers []store.Server
-	for _, s := range snapshot.Servers {
-		if s.Enabled {
-			servers = append(servers, s)
-		}
-	}
+	servers := slices.DeleteFunc(a.Store.Snapshot().Ordered(), func(server store.Server) bool { return !server.Enabled })
 	if len(servers) == 0 {
 		redirectNotice(w, r, "No enabled servers to sync.")
 		return
 	}
-
 	a.Log.Info("syncing all servers", "count", len(servers))
-	ctx, cancel := context.WithTimeout(r.Context(), a.Registry.DefaultInterval())
-	defer cancel()
+	a.syncInBackground(servers)
+	redirectNotice(w, r, fmt.Sprintf("Syncing %d %s. Recent activity shows when each finishes.", len(servers), map[bool]string{true: "server", false: "servers"}[len(servers) == 1]))
+}
 
-	type result struct {
-		name string
-		err  error
+// syncInBackground refreshes detached from the request, so a browser that
+// leaves or times out does not cancel the sync and mark the server failed.
+func (a *app) syncInBackground(servers []store.Server) {
+	for _, server := range servers {
+		a.goBackground(func() {
+			ctx, cancel := context.WithTimeout(a.ctx, library.ManualTimeout)
+			defer cancel()
+			if err := a.Registry.Refresh(ctx, server.Slug); err != nil {
+				a.Log.Error("manual sync failed", "server", server.Slug, "error", err.Error())
+			}
+		})
 	}
-	resCh := make(chan result, len(servers))
-	var wg sync.WaitGroup
-	for _, s := range servers {
-		wg.Add(1)
-		go func(srv store.Server) {
-			defer wg.Done()
-			name := registry.DisplayName(kindName(srv.Kind), srv.Label)
-			err := a.Registry.Refresh(ctx, srv.Slug)
-			resCh <- result{name: name, err: err}
-		}(s)
-	}
-	wg.Wait()
-	close(resCh)
-
-	var errs []string
-	synced := 0
-	for res := range resCh {
-		if res.err != nil {
-			a.Log.Error("sync failed during sync-all", "server", res.name, "error", res.err.Error())
-			errs = append(errs, fmt.Sprintf("%s: %s", res.name, res.err.Error()))
-		} else {
-			synced++
-		}
-	}
-
-	if len(errs) > 0 {
-		redirectNotice(w, r, fmt.Sprintf("Synced %d of %d servers (errors: %s)", synced, len(servers), strings.Join(errs, "; ")))
-		return
-	}
-	serverWord := "server"
-	if synced != 1 {
-		serverWord = "servers"
-	}
-	redirectNotice(w, r, fmt.Sprintf("All %d %s synced successfully.", synced, serverWord))
 }
 
 func (a *app) recentActivity(w http.ResponseWriter, r *http.Request) {

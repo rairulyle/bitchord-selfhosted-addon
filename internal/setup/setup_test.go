@@ -377,7 +377,7 @@ func TestServerLifecycleThroughTheForms(t *testing.T) {
 	if actRec := a.get("/setup/activity"); actRec.Code != http.StatusOK || !strings.Contains(actRec.Body.String(), `"ok":true`) || !strings.Contains(actRec.Body.String(), "Synced 5 tracks") {
 		t.Fatalf("get activity endpoint failed: %d %s", actRec.Code, actRec.Body.String())
 	}
-	if rec := a.form("/setup/servers/plex-1/refresh", url.Values{}); rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "synced") {
+	if rec := a.form("/setup/servers/plex-1/refresh", url.Values{}); rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "Syncing") {
 		t.Fatalf("refresh: %d %s", rec.Code, rec.Header().Get("Location"))
 	}
 
@@ -1279,18 +1279,45 @@ func TestRefreshAllServers(t *testing.T) {
 		t.Fatalf("sync-all empty: %d, location: %s", recEmpty.Code, recEmpty.Header().Get("Location"))
 	}
 
-	fake1 := fakes.NewPlex(t)
-	a.addPlex(fake1, "Server 1")
-	fake2 := fakes.NewPlex(t)
-	a.addPlex(fake2, "Server 2")
+	a.waitReady(a.addPlex(fakes.NewPlex(t), "Server 1"))
+	a.waitReady(a.addPlex(fakes.NewPlex(t), "Server 2"))
 
 	rec := a.form("/setup/sync-all", url.Values{})
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("POST /setup/sync-all = %d, want 303", rec.Code)
 	}
 	loc := rec.Header().Get("Location")
-	if !strings.Contains(loc, "synced+successfully") {
+	if !strings.Contains(loc, "Syncing+2+servers") {
 		t.Errorf("expected success notice in location %q", loc)
+	}
+	a.setup.app.background.Wait()
+	if synced := len(a.reg.RecentSyncActivity()); synced != 4 {
+		t.Fatalf("sync activities = %d, want the two first loads and the two manual syncs", synced)
+	}
+}
+
+func TestSyncNowOutlivesTheRequest(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	slug := a.addPlex(fakes.NewPlex(t), "Home")
+	a.waitReady(slug)
+	before := len(a.reg.RecentSyncActivity())
+	values := url.Values{"csrf": {a.csrf()}}
+	req := httptest.NewRequest(http.MethodPost, "/setup/servers/"+slug+"/refresh", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.RemoteAddr = "10.0.0.7:4444"
+	req.AddCookie(&http.Cookie{Name: cookieName, Value: a.cookie})
+	ctx, cancel := context.WithCancel(req.Context())
+	cancel()
+	rec := httptest.NewRecorder()
+	a.handler.ServeHTTP(rec, req.WithContext(ctx))
+	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "Syncing") {
+		t.Fatalf("sync now = %d %s", rec.Code, rec.Body.String())
+	}
+	a.setup.app.background.Wait()
+	status, _ := a.reg.Status(slug)
+	if status.LastError != "" || len(a.reg.RecentSyncActivity()) != before+1 {
+		t.Fatalf("status = %+v, activities = %+v", status, a.reg.RecentSyncActivity())
 	}
 }
 
@@ -1347,5 +1374,16 @@ func TestRecentActivityEndpoint(t *testing.T) {
 	}
 	if len(a.reg.RecentActivity()) != 0 {
 		t.Fatalf("expected all activities cleared, got %d", len(a.reg.RecentActivity()))
+	}
+}
+
+func (a *testApp) waitReady(slug string) {
+	a.t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for status, ok := a.reg.Status(slug); !ok || !status.Ready; status, ok = a.reg.Status(slug) {
+		if time.Now().After(deadline) {
+			a.t.Fatalf("%s never indexed", slug)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
