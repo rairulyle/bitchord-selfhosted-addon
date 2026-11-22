@@ -1450,15 +1450,19 @@ func TestBackupExport(t *testing.T) {
 	fake := fakes.NewPlex(t)
 	a.addPlex(fake, "Home Plex")
 
-	// Calling backup without password returns Bad Request
-	recBad := a.get("/setup/backup")
-	if recBad.Code != http.StatusBadRequest {
-		t.Fatalf("GET /setup/backup without password = %d, want 400", recBad.Code)
+	if rec := a.form("/setup/backup", url.Values{}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("POST /setup/backup without password = %d, want 400", rec.Code)
+	}
+	if rec := a.get("/setup/backup?passphrase=backup-test-pass"); rec.Code != http.StatusNotFound {
+		t.Fatalf("GET /setup/backup = %d, want 404", rec.Code)
+	}
+	if rec := a.do(http.MethodPost, "/setup/backup?passphrase=backup-test-pass", strings.NewReader(url.Values{"csrf": {a.csrf()}}.Encode()), "application/x-www-form-urlencoded"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("POST /setup/backup with the password in the query = %d, want 400", rec.Code)
 	}
 
-	rec := a.get("/setup/backup?passphrase=backup-test-pass")
+	rec := a.form("/setup/backup", url.Values{"passphrase": {"backup-test-pass"}})
 	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /setup/backup = %d, want 200", rec.Code)
+		t.Fatalf("POST /setup/backup = %d, want 200", rec.Code)
 	}
 	cd := rec.Header().Get("Content-Disposition")
 	if !strings.Contains(cd, "attachment") || !strings.Contains(cd, "bitchord-addon-backup-encrypted") {

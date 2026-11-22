@@ -202,10 +202,7 @@ func (a *app) regenerateSecret(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) exportBackup(w http.ResponseWriter, r *http.Request) {
-	passphrase := r.FormValue("passphrase")
-	if passphrase == "" && r.Method == http.MethodGet {
-		passphrase = r.URL.Query().Get("passphrase")
-	}
+	passphrase := r.PostFormValue("passphrase")
 	if passphrase == "" {
 		http.Error(w, "password is required to encrypt backup", http.StatusBadRequest)
 		return

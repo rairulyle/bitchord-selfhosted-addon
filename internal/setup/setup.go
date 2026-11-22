@@ -160,7 +160,6 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /setup/logout", a.logout)
 	mux.HandleFunc("POST /setup/public-url", a.setPublicURL)
 	mux.HandleFunc("POST /setup/secret/regenerate", a.regenerateSecret)
-	mux.HandleFunc("GET /setup/backup", a.exportBackup)
 	mux.HandleFunc("POST /setup/backup", a.exportBackup)
 	mux.HandleFunc("POST /setup/restore", a.restoreBackup)
 	mux.HandleFunc("GET /setup/servers/new", a.newServerForm)
