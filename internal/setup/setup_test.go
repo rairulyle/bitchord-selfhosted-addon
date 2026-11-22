@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -115,6 +116,32 @@ func (a *testApp) form(path string, values url.Values) *httptest.ResponseRecorde
 		values.Set("csrf", a.csrf())
 	}
 	return a.do(http.MethodPost, path, strings.NewReader(values.Encode()), "application/x-www-form-urlencoded")
+}
+
+func (a *testApp) multipartForm(path string, fieldName, filename string, content []byte) *httptest.ResponseRecorder {
+	return a.multipartFormWithFields(path, fieldName, filename, content, nil)
+}
+
+func (a *testApp) multipartFormWithFields(path string, fieldName, filename string, content []byte, extraFields map[string]string) *httptest.ResponseRecorder {
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	if a.cookie != "" {
+		_ = mw.WriteField("csrf", a.csrf())
+	}
+	for k, v := range extraFields {
+		_ = mw.WriteField(k, v)
+	}
+	fw, err := mw.CreateFormFile(fieldName, filename)
+	if err != nil {
+		a.t.Fatal(err)
+	}
+	if _, err := fw.Write(content); err != nil {
+		a.t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		a.t.Fatal(err)
+	}
+	return a.do(http.MethodPost, path, &buf, mw.FormDataContentType())
 }
 
 func (a *testApp) json(method, path string, body any) (*httptest.ResponseRecorder, map[string]any) {
@@ -1410,5 +1437,180 @@ func TestActivityShowsTheCurrentServerName(t *testing.T) {
 	body := a.get("/setup/activity").Body.String()
 	if !strings.Contains(body, `"Server":"Plex - Parents"`) || strings.Contains(body, "Plex - Home") {
 		t.Fatalf("activity = %s", body)
+	}
+}
+
+func TestBackupExport(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+
+	if err := a.store.SetPublicURL("https://music.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	fake := fakes.NewPlex(t)
+	a.addPlex(fake, "Home Plex")
+
+	// Calling backup without password returns Bad Request
+	recBad := a.get("/setup/backup")
+	if recBad.Code != http.StatusBadRequest {
+		t.Fatalf("GET /setup/backup without password = %d, want 400", recBad.Code)
+	}
+
+	rec := a.get("/setup/backup?passphrase=backup-test-pass")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /setup/backup = %d, want 200", rec.Code)
+	}
+	cd := rec.Header().Get("Content-Disposition")
+	if !strings.Contains(cd, "attachment") || !strings.Contains(cd, "bitchord-addon-backup-encrypted") {
+		t.Errorf("Content-Disposition = %q, want attachment with filename", cd)
+	}
+
+	snap, err := store.DecryptSnapshot(rec.Body.Bytes(), "backup-test-pass")
+	if err != nil {
+		t.Fatalf("failed to decrypt backup payload: %v", err)
+	}
+	if snap.PublicURL != "https://music.example.com" {
+		t.Errorf("backup PublicURL = %q, want https://music.example.com", snap.PublicURL)
+	}
+	if len(snap.Servers) != 1 || snap.Servers[0].Label != "Home Plex" {
+		t.Errorf("backup Servers = %+v, want 1 server", snap.Servers)
+	}
+	if snap.Admin != nil {
+		t.Error("backup must omit Admin credentials to prevent hash leakage")
+	}
+}
+
+func TestBackupRestore(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+
+	adminBefore := a.store.Snapshot().Admin
+	if adminBefore == nil {
+		t.Fatal("expected admin credentials after signIn")
+	}
+
+	backupData := store.Snapshot{
+		PublicURL: "https://restored-music.example.com",
+		Admin: &store.Admin{
+			PasswordHash: "forged_hash",
+			SessionKey:   "forged_session",
+		},
+		Servers: []store.Server{
+			{
+				Slug:    "plex-1",
+				Kind:    store.Plex,
+				Label:   "Restored Plex",
+				URL:     "http://localhost:32400",
+				Token:   "tok",
+				Library: "1",
+				Auth:    store.AuthToken,
+				Enabled: true,
+			},
+		},
+	}
+	raw, _ := json.Marshal(backupData)
+
+	rec := a.multipartForm("/setup/restore", "backup_file", "backup.json", raw)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("POST /setup/restore = %d, want 303: %s", rec.Code, rec.Body.String())
+	}
+	loc := rec.Header().Get("Location")
+	if !strings.Contains(loc, "notice=") {
+		t.Errorf("redirect location = %q, want notice param", loc)
+	}
+
+	snap := a.store.Snapshot()
+	if snap.PublicURL != "https://restored-music.example.com" {
+		t.Errorf("PublicURL after restore = %q, want https://restored-music.example.com", snap.PublicURL)
+	}
+	if len(snap.Servers) != 1 || snap.Servers[0].Label != "Restored Plex" {
+		t.Errorf("Servers after restore = %+v, want 1 server", snap.Servers)
+	}
+	if snap.Admin == nil || snap.Admin.PasswordHash != adminBefore.PasswordHash {
+		t.Error("Admin credentials must be preserved after restore")
+	}
+
+	// Restore invalid JSON returns notice and leaves store intact
+	badRec := a.multipartForm("/setup/restore", "backup_file", "backup.json", []byte("invalid json"))
+	if badRec.Code != http.StatusSeeOther {
+		t.Fatalf("POST invalid json = %d, want 303", badRec.Code)
+	}
+	if snap := a.store.Snapshot(); snap.PublicURL != "https://restored-music.example.com" {
+		t.Errorf("PublicURL mutated after bad restore: %q", snap.PublicURL)
+	}
+}
+
+func TestEncryptedBackupExportAndRestore(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+
+	if err := a.store.SetPublicURL("https://secure.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	fake := fakes.NewPlex(t)
+	a.addPlex(fake, "Secure Plex")
+
+	// 1. Export with passphrase via POST /setup/backup
+	rec := a.form("/setup/backup", url.Values{"passphrase": {"my-backup-password-123"}})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /setup/backup = %d, want 200", rec.Code)
+	}
+	cd := rec.Header().Get("Content-Disposition")
+	if !strings.Contains(cd, "bitchord-addon-backup-encrypted") {
+		t.Errorf("Content-Disposition = %q, want encrypted filename", cd)
+	}
+	encBody := rec.Body.Bytes()
+	if !store.IsEncryptedBackup(encBody) {
+		t.Fatal("exported body is not marked as encrypted backup")
+	}
+	if strings.Contains(string(encBody), "Secure Plex") {
+		t.Fatal("plaintext server label found in encrypted backup body")
+	}
+
+	// 2. Attempt restore without passphrase -> fails with notice
+	recFailNoPass := a.multipartForm("/setup/restore", "backup_file", "backup.json", encBody)
+	if recFailNoPass.Code != http.StatusSeeOther {
+		t.Fatalf("POST restore without pass = %d, want 303", recFailNoPass.Code)
+	}
+	locNoPass := recFailNoPass.Header().Get("Location")
+	if !strings.Contains(locNoPass, "password") {
+		t.Errorf("expected password required notice, got location: %s", locNoPass)
+	}
+
+	// 3. Attempt restore with wrong passphrase -> fails with notice
+	recFailWrongPass := a.multipartFormWithFields("/setup/restore", "backup_file", "backup.json", encBody, map[string]string{
+		"passphrase": "wrong-password",
+	})
+	if recFailWrongPass.Code != http.StatusSeeOther {
+		t.Fatalf("POST restore with wrong pass = %d, want 303", recFailWrongPass.Code)
+	}
+	locWrong := recFailWrongPass.Header().Get("Location")
+	if !strings.Contains(locWrong, "incorrect") {
+		t.Errorf("expected incorrect password notice, got location: %s", locWrong)
+	}
+
+	// Change existing state so we can verify restoration
+	if err := a.store.SetPublicURL("https://mutated.example.com"); err != nil {
+		t.Fatal(err)
+	}
+
+	// 4. Restore with correct passphrase -> succeeds
+	recSuccess := a.multipartFormWithFields("/setup/restore", "backup_file", "backup.json", encBody, map[string]string{
+		"passphrase": "my-backup-password-123",
+	})
+	if recSuccess.Code != http.StatusSeeOther {
+		t.Fatalf("POST restore with correct pass = %d, want 303", recSuccess.Code)
+	}
+	locSuccess := recSuccess.Header().Get("Location")
+	if !strings.Contains(locSuccess, "restored") {
+		t.Errorf("expected success notice, got location: %s", locSuccess)
+	}
+
+	snap := a.store.Snapshot()
+	if snap.PublicURL != "https://secure.example.com" {
+		t.Errorf("restored PublicURL = %q, want https://secure.example.com", snap.PublicURL)
+	}
+	if len(snap.Servers) != 1 || snap.Servers[0].Label != "Secure Plex" {
+		t.Errorf("restored Servers = %+v, want 1 server", snap.Servers)
 	}
 }

@@ -160,6 +160,9 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /setup/logout", a.logout)
 	mux.HandleFunc("POST /setup/public-url", a.setPublicURL)
 	mux.HandleFunc("POST /setup/secret/regenerate", a.regenerateSecret)
+	mux.HandleFunc("GET /setup/backup", a.exportBackup)
+	mux.HandleFunc("POST /setup/backup", a.exportBackup)
+	mux.HandleFunc("POST /setup/restore", a.restoreBackup)
 	mux.HandleFunc("GET /setup/servers/new", a.newServerForm)
 	mux.HandleFunc("POST /setup/servers", a.createServer)
 	mux.HandleFunc("POST /setup/servers/test", a.testServer)
@@ -254,7 +257,11 @@ func crossSite(r *http.Request) bool {
 func (a *app) csrfOK(r *http.Request, key []byte, cookie string) bool {
 	token := r.Header.Get("X-CSRF-Token")
 	if token == "" {
-		if err := r.ParseForm(); err != nil {
+		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+			if err := r.ParseMultipartForm(1 << 20); err != nil {
+				return false
+			}
+		} else if err := r.ParseForm(); err != nil {
 			return false
 		}
 		token = r.PostFormValue("csrf")
