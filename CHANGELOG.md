@@ -15,6 +15,7 @@ Entries are written **one line per paragraph and bullet** (no hard-wrapping) so 
 - Cover art is cached in memory and revalidated with an `ETag`.
 - Search forgives a typo in words of five letters or more, finishes the last word when nothing matches it exactly, treats ft./feat., pt./part, vol./volume, OST/soundtrack and vs./versus as the same word, and drops words such as "live", "remastered" or a year when the full query finds nothing (thanks @1ofx9, #10).
 - A search tester endpoint per server, `GET /setup/servers/<server id>/test-search?q=<query>`, that shows the words a query becomes, how many tracks matched strictly and loosely, and the matching tracks, albums and artists.
+- Backup and restore on the setup page. A backup holds the public URL, secret and servers, encrypted with a password you choose, and never the setup password. Restoring replaces every server and the secret, signs out Jellyfin sessions it replaces, and keeps your setup password (thanks @1ofx9, #10).
 
 ### Changed
 

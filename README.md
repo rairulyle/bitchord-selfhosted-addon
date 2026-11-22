@@ -143,6 +143,17 @@ These optional environment variables are the only other settings:
 | `LOG_LEVEL`        | `info`  | `debug`, `info`, `warn` or `error`       |
 | `LOG_FORMAT`       | `text`  | `text`, or `json` for log collectors     |
 
+### 💾 Backups
+
+**Backup and restore** on the setup page downloads your public URL, secret and
+servers, tokens included, as one file encrypted with a password you choose
+(AES-256-GCM, key from PBKDF2-HMAC-SHA256). The setup password is never in
+it. Restoring a backup replaces every server and brings back its secret, so
+each BitChord link reverts to the one in the backup, and Jellyfin servers it
+drops or changes are signed out. Your setup password stays as it is. A
+backup file can be at most 1 MB, and an unencrypted copy of `addon.json`
+restores too.
+
 ## 📱 Using it in BitChord
 
 Each server's link looks like this:
