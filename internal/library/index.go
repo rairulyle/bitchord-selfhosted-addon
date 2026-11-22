@@ -1,6 +1,7 @@
 package library
 
 import (
+	"cmp"
 	"container/heap"
 	"slices"
 	"sort"
@@ -17,6 +18,7 @@ type Index struct {
 	titlePosts      map[string][]int
 	sortedKeys      []string
 	sortedTitleKeys []string
+	keysByLength    [][]string
 	titleTokens     [][]string
 	titleForms      [][]string
 	normTitles      []string
@@ -203,6 +205,13 @@ func NewIndex(tracks []media.Track) *Index {
 	}
 	slices.Sort(sortedKeys)
 	ix.sortedKeys = sortedKeys
+	for _, key := range sortedKeys {
+		n := utf8.RuneCountInString(key)
+		for len(ix.keysByLength) <= n {
+			ix.keysByLength = append(ix.keysByLength, nil)
+		}
+		ix.keysByLength[n] = append(ix.keysByLength[n], key)
+	}
 
 	sortedTitleKeys := make([]string, 0, len(ix.titlePosts))
 	for k := range ix.titlePosts {
@@ -445,64 +454,6 @@ func (ix *Index) fallback(q []string, prefix bool) []int {
 	return out
 }
 
-func damerauLevenshtein(as, bs string, maxDist int) int {
-	a, b := []rune(as), []rune(bs)
-	la, lb := len(a), len(b)
-	if la == 0 {
-		return lb
-	}
-	if lb == 0 {
-		return la
-	}
-	diff := la - lb
-	if diff < 0 {
-		diff = -diff
-	}
-	if diff > maxDist {
-		return maxDist + 1
-	}
-
-	r0 := make([]int, lb+1)
-	r1 := make([]int, lb+1)
-	r2 := make([]int, lb+1)
-
-	for j := 0; j <= lb; j++ {
-		r1[j] = j
-	}
-
-	for i := 1; i <= la; i++ {
-		r2[0] = i
-		minInRow := i
-		for j := 1; j <= lb; j++ {
-			cost := 0
-			if a[i-1] != b[j-1] {
-				cost = 1
-			}
-			del := r1[j] + 1
-			ins := r2[j-1] + 1
-			sub := r1[j-1] + cost
-			val := min(del, min(ins, sub))
-
-			if i > 1 && j > 1 && a[i-1] == b[j-2] && a[i-2] == b[j-1] {
-				trans := r0[j-2] + 1
-				if trans < val {
-					val = trans
-				}
-			}
-			r2[j] = val
-			if val < minInRow {
-				minInRow = val
-			}
-		}
-		if minInRow > maxDist {
-			return maxDist + 1
-		}
-		copy(r0, r1)
-		copy(r1, r2)
-	}
-	return r1[lb]
-}
-
 const minSubstring = 3
 
 func substringable(q []string) bool {
@@ -531,28 +482,25 @@ func (ix *Index) fuzzyKeys(token string) []string {
 		key  string
 		dist int
 	}
-	var matches []match
-	for _, key := range ix.sortedKeys {
-		d := damerauLevenshtein(token, key, maxDist)
-		if d <= maxDist {
-			matches = append(matches, match{key: key, dist: d})
+	var (
+		matches []match
+		d       distance
+	)
+	runes := []rune(token)
+	end := min(len(ix.keysByLength), len(runes)+maxDist+1)
+	lengths := ix.keysByLength[min(end, max(0, len(runes)-maxDist)):end]
+	for _, keys := range lengths {
+		for _, key := range keys {
+			if dist := d.between(runes, key, maxDist); dist <= maxDist {
+				matches = append(matches, match{key: key, dist: dist})
+			}
 		}
 	}
-	if len(matches) == 0 {
-		return nil
-	}
-	sort.Slice(matches, func(i, j int) bool {
-		if matches[i].dist != matches[j].dist {
-			return matches[i].dist < matches[j].dist
-		}
-		return len(matches[i].key) < len(matches[j].key)
+	slices.SortStableFunc(matches, func(a, b match) int {
+		return cmp.Or(a.dist-b.dist, len(a.key)-len(b.key))
 	})
-	limit := 10
-	if len(matches) < limit {
-		limit = len(matches)
-	}
-	out := make([]string, limit)
-	for i := 0; i < limit; i++ {
+	out := make([]string, min(len(matches), 10))
+	for i := range out {
 		out[i] = matches[i].key
 	}
 	return out
@@ -597,6 +545,8 @@ func (ix *Index) fuzzy(q []string) []int {
 }
 
 func (ix *Index) rank(candidates []int, cleanQ string, q []string) {
+	var typos distance
+	qRunes := []rune(cleanQ)
 	wanted := make(map[string]struct{}, len(q))
 	for _, token := range q {
 		wanted[token] = struct{}{}
@@ -628,11 +578,11 @@ func (ix *Index) rank(candidates []int, cleanQ string, q []string) {
 		}
 
 		if maxD := maxTypos(cleanQ); titleScores[i] == 0 && maxD > 0 {
-			if d := damerauLevenshtein(cleanQ, normTitle, maxD); d <= maxD {
+			if d := typos.between(qRunes, normTitle, maxD); d <= maxD {
 				titleScores[i] += 150 - (d * 30)
-			} else if d := damerauLevenshtein(cleanQ, normArtist, maxD); d <= maxD {
+			} else if d := typos.between(qRunes, normArtist, maxD); d <= maxD {
 				titleScores[i] += 100 - (d * 20)
-			} else if d := damerauLevenshtein(cleanQ, normAlbum, maxD); d <= maxD {
+			} else if d := typos.between(qRunes, normAlbum, maxD); d <= maxD {
 				titleScores[i] += 50 - (d * 10)
 			}
 		}
@@ -670,6 +620,8 @@ func (ix *Index) rank(candidates []int, cleanQ string, q []string) {
 }
 
 func (ix *Index) findAlbums(cleanQ string, q []string, matchedTracks []int) []AlbumMatch {
+	var typos distance
+	qRunes := []rune(cleanQ)
 	if len(ix.albums) == 0 || len(cleanQ) == 0 {
 		return nil
 	}
@@ -722,7 +674,7 @@ func (ix *Index) findAlbums(cleanQ string, q []string, matchedTracks []int) []Al
 		}
 
 		if maxD := maxTypos(cleanQ); score == 0 && maxD > 0 {
-			if d := damerauLevenshtein(cleanQ, alb.normName, maxD); d <= maxD {
+			if d := typos.between(qRunes, alb.normName, maxD); d <= maxD {
 				score += 300 - (d * 50)
 			}
 		}
@@ -769,6 +721,8 @@ func (ix *Index) findAlbums(cleanQ string, q []string, matchedTracks []int) []Al
 }
 
 func (ix *Index) findArtists(cleanQ string, q []string, matchedTracks []int) []ArtistMatch {
+	var typos distance
+	qRunes := []rune(cleanQ)
 	if len(ix.artists) == 0 || len(cleanQ) == 0 {
 		return nil
 	}
@@ -816,7 +770,7 @@ func (ix *Index) findArtists(cleanQ string, q []string, matchedTracks []int) []A
 		}
 
 		if maxD := maxTypos(cleanQ); score == 0 && maxD > 0 {
-			if d := damerauLevenshtein(cleanQ, art.normName, maxD); d <= maxD {
+			if d := typos.between(qRunes, art.normName, maxD); d <= maxD {
 				score += 300 - (d * 50)
 			}
 		}

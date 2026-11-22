@@ -546,6 +546,9 @@ func TestTyposAreCountedInCharacters(t *testing.T) {
 	if got := damerauLevenshtein("cafe", "café", 2); got != 1 {
 		t.Errorf("damerauLevenshtein(cafe, café) = %d, want 1", got)
 	}
+	if got := ids(ix.Search(strings.Repeat("x", 500), 10)); len(got) != 0 {
+		t.Errorf("Search(500 letters) = %v, want nothing", got)
+	}
 }
 
 func TestShortWordsNeedAnExactMatch(t *testing.T) {
