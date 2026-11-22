@@ -1,6 +1,7 @@
 package bitchordauth
 
 import (
+	"container/list"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -67,11 +68,12 @@ type Config struct {
 }
 
 const (
-	keysMaxAge       = time.Hour
-	unknownKidRetry  = 5 * time.Minute
-	fetchBackoff     = 30 * time.Second
-	maxJWKSBytes     = 64 << 10
-	maxCachedDevices = 10000
+	keysMaxAge          = time.Hour
+	unknownKidRetry     = 5 * time.Minute
+	fetchBackoff        = 30 * time.Second
+	maxJWKSBytes        = 64 << 10
+	maxCachedDevices    = 10000
+	maxRememberedProofs = 4096
 )
 
 type settings struct {
@@ -102,6 +104,8 @@ type Auth struct {
 	fetchErr   error
 	fetching   chan struct{}
 
+	seen *replays
+
 	devMu      sync.Mutex
 	deviceKeys map[string]*ecdsa.PublicKey
 }
@@ -130,6 +134,7 @@ func New(opts Options) *Auth {
 		client:       client,
 		now:          nowFn,
 		deviceKeys:   make(map[string]*ecdsa.PublicKey),
+		seen:         newReplays(maxRememberedProofs),
 	}
 	a.Configure(Config{Mode: opts.Mode, Hosts: opts.Hosts, Issuer: opts.Issuer})
 	return a
@@ -300,8 +305,11 @@ func (a *Auth) Verify(token, proof string) Result {
 	if err != nil {
 		return fail(http.StatusUnauthorized, "invalid_proof", "Malformed proof timestamp")
 	}
-	proofAge := time.Duration(abs(now.UnixMilli()-tsMs)) * time.Millisecond
-	if proofAge > a.maxProofAge {
+	proofAt := time.UnixMilli(tsMs)
+	switch age := now.Sub(proofAt); {
+	case age < -a.clockSkew:
+		return fail(http.StatusUnauthorized, "invalid_proof", "Proof is dated in the future; check the device clock")
+	case age > a.maxProofAge:
 		return fail(http.StatusUnauthorized, "stale_proof", "Proof is too old; check the device clock")
 	}
 
@@ -324,6 +332,9 @@ func (a *Auth) Verify(token, proof string) Result {
 		proofMsg := fmt.Sprintf("%s\n%s\n%s\n%s", ProofContext, host, matches[1], ath)
 		digest := sha256.Sum256([]byte(proofMsg))
 		if ecdsa.Verify(devicePubKey, digest[:], rInt, sInt) {
+			if !a.seen.remember(ath+"."+proof, now, proofAt.Add(a.maxProofAge)) {
+				return fail(http.StatusUnauthorized, "replayed_proof", "Proof was already used")
+			}
 			return Result{
 				OK:     true,
 				Status: http.StatusOK,
@@ -553,9 +564,45 @@ func audienceContains(raw json.RawMessage, target string) bool {
 	return false
 }
 
-func abs(v int64) int64 {
-	if v < 0 {
-		return -v
+// replays remembers proofs until they would be too old to pass anyway, so a
+// captured request cannot be sent again inside that window. It holds at most
+// max entries; when full it forgets the oldest first.
+type replays struct {
+	mu    sync.Mutex
+	max   int
+	order *list.List
+	seen  map[string]*list.Element
+}
+
+type replayEntry struct {
+	key   string
+	until time.Time
+}
+
+func newReplays(max int) *replays {
+	return &replays{max: max, order: list.New(), seen: make(map[string]*list.Element)}
+}
+
+// remember reports false when key is already held and has not expired.
+func (c *replays) remember(key string, now, until time.Time) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for front := c.order.Front(); front != nil && !front.Value.(*replayEntry).until.After(now); front = c.order.Front() {
+		delete(c.seen, front.Value.(*replayEntry).key)
+		c.order.Remove(front)
 	}
-	return v
+	if el, ok := c.seen[key]; ok {
+		if el.Value.(*replayEntry).until.After(now) {
+			return false
+		}
+		c.order.Remove(el)
+		delete(c.seen, key)
+	}
+	for c.order.Len() >= c.max {
+		front := c.order.Front()
+		delete(c.seen, front.Value.(*replayEntry).key)
+		c.order.Remove(front)
+	}
+	c.seen[key] = c.order.PushBack(&replayEntry{key: key, until: until})
+	return true
 }

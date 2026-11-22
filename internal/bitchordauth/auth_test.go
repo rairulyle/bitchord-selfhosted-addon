@@ -281,3 +281,63 @@ func TestAnUnknownKidRefetchesAtMostEveryFewMinutes(t *testing.T) {
 		t.Fatalf("JWKS fetched %d times after the wait, want 3", hits)
 	}
 }
+
+func TestProofTiming(t *testing.T) {
+	f := newFixture(t)
+	auth := f.auth("enforce")
+	cases := map[string]struct {
+		offset time.Duration
+		want   string
+	}{
+		"now":                     {0, ""},
+		"within the skew ahead":   {50 * time.Second, ""},
+		"beyond the skew ahead":   {90 * time.Second, "invalid_proof"},
+		"far in the future":       {time.Hour, "invalid_proof"},
+		"just inside the max age": {-110 * time.Second, ""},
+		"older than the max age":  {-130 * time.Second, "stale_proof"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			token := f.token(f.claims())
+			res := auth.Verify(token, f.proofAt(token, fixtureHost, f.clock().Add(tc.offset)))
+			if tc.want == "" && !res.OK || tc.want != "" && (res.OK || res.Error != tc.want) {
+				t.Fatalf("got %+v, want %q", res, tc.want)
+			}
+		})
+	}
+}
+
+func TestAReplayedProofIsRefused(t *testing.T) {
+	f := newFixture(t)
+	auth := f.auth("enforce")
+	token := f.token(f.claims())
+	proof := f.proof(token)
+	if res := auth.Verify(token, proof); !res.OK {
+		t.Fatalf("first use: %+v", res)
+	}
+	if res := auth.Verify(token, proof); res.OK || res.Error != "replayed_proof" {
+		t.Fatalf("replay: %+v", res)
+	}
+	if res := auth.Verify(token, f.proof(token)); !res.OK {
+		t.Fatalf("a fresh proof for the same token: %+v", res)
+	}
+}
+
+func TestReplaysForgetsExpiredAndOldestEntries(t *testing.T) {
+	c := newReplays(2)
+	now := time.Unix(1000, 0)
+	if !c.remember("a", now, now.Add(time.Minute)) || c.remember("a", now, now.Add(time.Minute)) {
+		t.Fatal("a second sighting inside the window must be refused")
+	}
+	if !c.remember("a", now.Add(2*time.Minute), now.Add(3*time.Minute)) {
+		t.Fatal("an expired entry must be forgotten")
+	}
+	c.remember("b", now.Add(2*time.Minute), now.Add(3*time.Minute))
+	c.remember("c", now.Add(2*time.Minute), now.Add(3*time.Minute))
+	if len(c.seen) != 2 || c.order.Len() != 2 {
+		t.Fatalf("held %d keys and %d entries, want 2", len(c.seen), c.order.Len())
+	}
+	if _, ok := c.seen["a"]; ok {
+		t.Fatal("the oldest entry must go first")
+	}
+}
