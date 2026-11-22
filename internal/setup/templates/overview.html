@@ -32,7 +32,13 @@
   <a class="button" href="/setup/servers/new">Add a server</a>
 </section>
 {{else}}
-<p><a class="button" href="/setup/servers/new">Add a server</a></p>
+<div class="row">
+  <a class="button" href="/setup/servers/new">Add a server</a>
+  <form method="post" action="/setup/sync-all">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button class="secondary">Sync all</button>
+  </form>
+</div>
 {{end}}
 {{end}}
 {{if .Servers}}
@@ -50,11 +56,19 @@
       {{else if .Status.Ready}}{{.Status.Tracks}} tracks, refreshed {{.Checked}}
       {{else}}Building the index{{end}}
     </dd>
+    <dt>Sync interval</dt><dd>{{.SyncInterval}}</dd>
+    {{if .ScrobbleInfo}}<dt>Scrobbling</dt><dd>{{.ScrobbleInfo}}</dd>{{end}}
     <dt>BitChord URL</dt>
     <dd class="row">{{if .URL}}<code class="url">{{.MaskedURL}}</code> <button type="button" class="copy" data-copy="{{.URL}}" aria-label="Copy the BitChord URL for {{.Name}}">Copy</button>{{else}}Set the public URL first{{end}}</dd>
+    {{if .SyncURL}}<dt>Sync webhook</dt>
+    <dd class="row"><code class="url">{{.MaskedSyncURL}}</code> <button type="button" class="copy" data-copy="{{.SyncURL}}" aria-label="Copy the sync webhook URL for {{.Name}}">Copy</button></dd>{{end}}
   </dl>
   <div class="row actions">
     <a class="button secondary" href="/setup/servers/{{.Slug}}/edit">Edit</a>
+    {{if .Enabled}}<form method="post" action="/setup/servers/{{.Slug}}/refresh">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <button class="secondary">Sync now</button>
+    </form>{{end}}
     <form method="post" action="/setup/servers/{{.Slug}}/enabled">
       <input type="hidden" name="csrf" value="{{$.CSRF}}">
       <input type="hidden" name="enabled" value="{{if .Enabled}}false{{else}}true{{end}}">
@@ -67,6 +81,20 @@
   </div>
 </section>
 {{end}}
+<section class="card" id="activity">
+  <h2>Recent activity</h2>
+  {{if .Activities}}
+  <ul>
+    {{range .Activities}}<li>{{.TimeAgo}} · {{.Server}} · {{.Message}}</li>{{end}}
+  </ul>
+  <form method="post" action="/setup/activity/clear">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button class="secondary">Clear</button>
+  </form>
+  {{else}}
+  <p class="hint">No activity yet.</p>
+  {{end}}
+</section>
 {{end}}
 
 <script>

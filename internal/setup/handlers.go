@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -209,30 +210,45 @@ func (a *app) editServerForm(w http.ResponseWriter, r *http.Request) {
 	view := a.formView(r, "Edit "+registry.DisplayName(kindName(server.Kind), server.Label))
 	view.Editing, view.Slug, view.Kind, view.KindName = true, server.Slug, server.Kind, kindName(server.Kind)
 	view.Label, view.URL, view.Library, view.LibraryName, view.Account, view.Auth, view.Enabled = server.Label, server.URL, server.Library, server.LibraryName, server.Account, server.Auth, server.Enabled
+	view.ScrobblePercent = server.ScrobblePercent
+	view.SyncInterval = server.SyncInterval
 	view.Action = "/setup/servers/" + server.Slug
 	a.render(w, r, http.StatusOK, "server", view)
 }
 
 // submitted is what the form posts, before any of it has been checked.
 type submitted struct {
-	kind     store.Kind
-	label    string
-	url      string
-	token    string
-	tokenRef string
-	library  string
-	enabled  bool
+	kind            store.Kind
+	label           string
+	url             string
+	token           string
+	tokenRef        string
+	library         string
+	enabled         bool
+	scrobblePercent int
+	syncInterval    string
 }
 
 func readSubmitted(r *http.Request) submitted {
+	scrobblePercent := -1
+	if r.PostFormValue("scrobble_enabled") != "" {
+		scrobblePercent = 50
+		if raw := r.PostFormValue("scrobble_percent"); raw != "" {
+			if p, err := strconv.Atoi(raw); err == nil && p >= 10 && p <= 90 {
+				scrobblePercent = p
+			}
+		}
+	}
 	return submitted{
-		kind:     store.Kind(r.PostFormValue("kind")),
-		label:    strings.TrimSpace(r.PostFormValue("label")),
-		url:      strings.TrimRight(strings.TrimSpace(r.PostFormValue("url")), "/"),
-		token:    strings.TrimSpace(r.PostFormValue("token")),
-		tokenRef: r.PostFormValue("token_ref"),
-		library:  r.PostFormValue("library"),
-		enabled:  r.PostFormValue("enabled") != "",
+		kind:            store.Kind(r.PostFormValue("kind")),
+		label:           strings.TrimSpace(r.PostFormValue("label")),
+		url:             strings.TrimRight(strings.TrimSpace(r.PostFormValue("url")), "/"),
+		token:           strings.TrimSpace(r.PostFormValue("token")),
+		tokenRef:        r.PostFormValue("token_ref"),
+		library:         r.PostFormValue("library"),
+		enabled:         r.PostFormValue("enabled") != "",
+		scrobblePercent: scrobblePercent,
+		syncInterval:    strings.TrimSpace(r.PostFormValue("sync_interval")),
 	}
 }
 
@@ -303,6 +319,10 @@ func (a *app) resolveServer(ctx context.Context, form submitted, existing store.
 	}()
 	server = existing
 	server.Label, server.URL, server.Enabled = form.label, form.url, form.enabled
+	server.SyncInterval = form.syncInterval
+	if form.kind == store.Navidrome {
+		server.ScrobblePercent = form.scrobblePercent
+	}
 	if err = store.ValidateServerURL(server.URL); err != nil {
 		return server, giveBack, err
 	}
@@ -320,13 +340,15 @@ func (a *app) resolveServer(ctx context.Context, form submitted, existing store.
 			return server, giveBack, fmt.Errorf("the sign-in belongs to %s, not %s; sign in again", kindName(pending.kind), kindName(server.Kind))
 		}
 		server.Token, server.Account, server.DeviceID = pending.token, pending.account, pending.deviceID
-		server.Auth = map[store.Kind]store.Auth{store.Plex: store.AuthPlexSignIn, store.Jellyfin: store.AuthJellyfinSignIn}[server.Kind]
+		server.Auth = map[store.Kind]store.Auth{store.Plex: store.AuthPlexSignIn, store.Jellyfin: store.AuthJellyfinSignIn, store.Navidrome: store.AuthNavidromeSignIn}[server.Kind]
 	case form.token != "":
 		server.Token, server.Account, server.DeviceID, server.Auth = form.token, "", "", store.AuthToken
 	case existing.Token == "":
 		return server, giveBack, errors.New("sign in or paste a token")
 	case existing.Auth == store.AuthJellyfinSignIn && existing.URL != server.URL:
 		return server, giveBack, errors.New("the Jellyfin sign-in belongs to the old address, sign in again")
+	case existing.Auth == store.AuthNavidromeSignIn && existing.URL != server.URL:
+		return server, giveBack, errors.New("the Navidrome sign-in belongs to the old address, sign in again")
 	}
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
@@ -352,6 +374,8 @@ func (a *app) resolveServer(ctx context.Context, form submitted, existing store.
 func (a *app) renderServerError(w http.ResponseWriter, r *http.Request, view serverFormView, form submitted, err error) {
 	view.Error = err.Error()
 	view.Kind, view.KindName, view.Label, view.URL, view.Library, view.Enabled = form.kind, kindName(form.kind), form.label, form.url, form.library, form.enabled
+	view.ScrobblePercent = form.scrobblePercent
+	view.SyncInterval = form.syncInterval
 	a.render(w, r, http.StatusBadRequest, "server", view)
 }
 
@@ -391,6 +415,125 @@ func (a *app) setServerEnabled(w http.ResponseWriter, r *http.Request) {
 	a.apply()
 	a.Log.Info("server enabled changed", "server", slug, "enabled", enabled)
 	redirectNotice(w, r, slug+" "+map[bool]string{true: "enabled", false: "disabled"}[enabled]+".")
+}
+
+func (a *app) refreshServer(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	server, ok := a.Store.Snapshot().Server(slug)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	name := registry.DisplayName(kindName(server.Kind), server.Label)
+	if err := a.Registry.Refresh(ctx, slug); err != nil {
+		redirectNotice(w, r, fmt.Sprintf("Sync failed for %s: %s", name, err.Error()))
+		return
+	}
+	stats, hasStats := a.Registry.Status(slug)
+	if hasStats && stats.Ready {
+		tookStr := formatDurationMs(stats.Duration)
+		if tookStr != "" {
+			tookStr = " in " + tookStr
+		}
+		redirectNotice(w, r, fmt.Sprintf("%s synced%s (%d tracks · %d artists · %d albums).", name, tookStr, stats.Tracks, stats.Artists, stats.Albums))
+		return
+	}
+	redirectNotice(w, r, name+" synced.")
+}
+
+func (a *app) refreshAllServers(w http.ResponseWriter, r *http.Request) {
+	snapshot := a.Store.Snapshot()
+	var servers []store.Server
+	for _, s := range snapshot.Servers {
+		if s.Enabled {
+			servers = append(servers, s)
+		}
+	}
+	if len(servers) == 0 {
+		redirectNotice(w, r, "No enabled servers to sync.")
+		return
+	}
+
+	a.Log.Info("syncing all servers", "count", len(servers))
+	ctx, cancel := context.WithTimeout(r.Context(), a.Registry.DefaultInterval())
+	defer cancel()
+
+	type result struct {
+		name string
+		err  error
+	}
+	resCh := make(chan result, len(servers))
+	var wg sync.WaitGroup
+	for _, s := range servers {
+		wg.Add(1)
+		go func(srv store.Server) {
+			defer wg.Done()
+			name := registry.DisplayName(kindName(srv.Kind), srv.Label)
+			err := a.Registry.Refresh(ctx, srv.Slug)
+			resCh <- result{name: name, err: err}
+		}(s)
+	}
+	wg.Wait()
+	close(resCh)
+
+	var errs []string
+	synced := 0
+	for res := range resCh {
+		if res.err != nil {
+			a.Log.Error("sync failed during sync-all", "server", res.name, "error", res.err.Error())
+			errs = append(errs, fmt.Sprintf("%s: %s", res.name, res.err.Error()))
+		} else {
+			synced++
+		}
+	}
+
+	if len(errs) > 0 {
+		redirectNotice(w, r, fmt.Sprintf("Synced %d of %d servers (errors: %s)", synced, len(servers), strings.Join(errs, "; ")))
+		return
+	}
+	serverWord := "server"
+	if synced != 1 {
+		serverWord = "servers"
+	}
+	redirectNotice(w, r, fmt.Sprintf("All %d %s synced successfully.", synced, serverWord))
+}
+
+func (a *app) recentActivity(w http.ResponseWriter, r *http.Request) {
+	now := a.Now()
+	filter := r.URL.Query().Get("filter")
+	raw := a.Registry.RecentActivity()
+	items := make([]ActivityView, 0, len(raw))
+	for _, act := range raw {
+		if filter == "sync" && act.Kind != "sync" && act.Kind != "sync_error" {
+			continue
+		}
+		if filter == "playback" && act.Kind != "now_playing" && act.Kind != "scrobble" && act.Kind != "playback" {
+			continue
+		}
+		items = append(items, ActivityView{
+			TimeAgo: since(act.Time, now),
+			Slug:    act.Slug,
+			Server:  act.Server,
+			Kind:    act.Kind,
+			Message: act.Message,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":         true,
+		"activities": items,
+	})
+}
+
+func (a *app) clearActivity(w http.ResponseWriter, r *http.Request) {
+	filter := r.FormValue("filter")
+	a.Registry.ClearActivity(filter)
+	if strings.Contains(r.Header.Get("Accept"), "application/json") || r.Header.Get("X-Requested-With") == "XMLHttpRequest" {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+	redirectNotice(w, r, "Activity log cleared.")
 }
 
 // ---- JSON endpoints used by the form's buttons
@@ -543,6 +686,55 @@ func (a *app) jellyfinSignIn(w http.ResponseWriter, r *http.Request) {
 	a.signins.reset(req.URL)
 	ref := a.refs.put(store.Jellyfin, account.Token, account.Username, account.DeviceID)
 	a.Log.Info("jellyfin sign-in completed", "host", hostOf(req.URL), "username", account.Username)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "username": account.Username, "ref": ref})
+}
+
+type navidromeSignInRequest struct {
+	URL      string `json:"url"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// navidromeSignIn verifies a Navidrome username and password against its
+// Subsonic API and remembers the credential for the "Paste a token/sign in"
+// tab. Navidrome offers no separate API token, so the pair is stored as the
+// server's token once the form is saved.
+func (a *app) navidromeSignIn(w http.ResponseWriter, r *http.Request) {
+	var req navidromeSignInRequest
+	if err := readJSON(r, &req); err != nil {
+		jsonError(w, http.StatusBadRequest, "malformed request")
+		return
+	}
+	req.URL = strings.TrimRight(strings.TrimSpace(req.URL), "/")
+	if err := store.ValidateServerURL(req.URL); err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.Username = strings.TrimSpace(req.Username)
+	if req.Username == "" || req.Password == "" {
+		jsonError(w, http.StatusBadRequest, "a username and password are required")
+		return
+	}
+	if !a.signins.attempt(req.URL) {
+		jsonError(w, http.StatusTooManyRequests, "too many failed sign-ins for this server, try again in a minute")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), probeTimeout)
+	defer cancel()
+	account, err := a.Registry.NavidromeSignIn(ctx, req.URL, req.Username, req.Password)
+	switch {
+	case errors.Is(err, media.ErrUnauthorized):
+		a.Log.Warn("navidrome sign-in rejected", "host", hostOf(req.URL), "username", req.Username)
+		jsonError(w, http.StatusUnauthorized, "navidrome rejected the username or password")
+		return
+	case err != nil:
+		a.signins.forgive(req.URL)
+		jsonError(w, http.StatusBadGateway, describe(err).Error())
+		return
+	}
+	a.signins.reset(req.URL)
+	ref := a.refs.put(store.Navidrome, account.Token, account.Username, "")
+	a.Log.Info("navidrome sign-in completed", "host", hostOf(req.URL), "username", account.Username)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "username": account.Username, "ref": ref})
 }
 

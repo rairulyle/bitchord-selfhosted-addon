@@ -38,12 +38,17 @@ const (
 type Runtime interface {
 	Apply(snapshot store.Snapshot)
 	Status(slug string) (registry.Status, bool)
+	Refresh(ctx context.Context, slug string) error
+	DefaultInterval() time.Duration
+	RecentActivity() []registry.Activity
+	ClearActivity(filter string)
 	Probe(ctx context.Context, server store.Server) (registry.Probe, error)
 	PlexPIN(ctx context.Context) (registry.PIN, error)
 	PlexClaim(ctx context.Context, id int) (registry.Account, bool, error)
 	PlexServers(ctx context.Context, token string) ([]registry.PlexServer, error)
 	JellyfinSignIn(ctx context.Context, serverURL, username, password string) (registry.Account, error)
 	JellyfinSignOut(ctx context.Context, serverURL, deviceID, token string) error
+	NavidromeSignIn(ctx context.Context, serverURL, username, password string) (registry.Account, error)
 	TokenInUse(slug, token string) (bool, <-chan struct{})
 }
 
@@ -161,9 +166,14 @@ func (a *app) handler() http.Handler {
 	mux.HandleFunc("POST /setup/servers/{slug}", a.updateServer)
 	mux.HandleFunc("POST /setup/servers/{slug}/delete", a.deleteServer)
 	mux.HandleFunc("POST /setup/servers/{slug}/enabled", a.setServerEnabled)
+	mux.HandleFunc("POST /setup/servers/{slug}/refresh", a.refreshServer)
+	mux.HandleFunc("POST /setup/sync-all", a.refreshAllServers)
+	mux.HandleFunc("GET /setup/activity", a.recentActivity)
+	mux.HandleFunc("POST /setup/activity/clear", a.clearActivity)
 	mux.HandleFunc("POST /setup/plex/pin", a.plexPIN)
 	mux.HandleFunc("GET /setup/plex/pin/{id}", a.plexPoll)
 	mux.HandleFunc("POST /setup/jellyfin/signin", a.jellyfinSignIn)
+	mux.HandleFunc("POST /setup/navidrome/signin", a.navidromeSignIn)
 	mux.HandleFunc("/setup/", func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "not found", http.StatusNotFound) })
 
 	outer := http.NewServeMux()

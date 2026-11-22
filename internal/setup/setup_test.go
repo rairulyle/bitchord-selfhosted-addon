@@ -361,6 +361,25 @@ func TestServerLifecycleThroughTheForms(t *testing.T) {
 	if rec := a.get("/setup"); !strings.Contains(rec.Body.String(), "5 tracks") || !strings.Contains(rec.Body.String(), "<dt>Library</dt><dd>Music</dd>") {
 		t.Fatalf("overview lacks the track count or the library name:\n%s", rec.Body.String())
 	}
+	body := a.get("/setup").Body.String()
+	if !strings.Contains(body, "Sync now") {
+		t.Fatal("overview lacks Sync now button")
+	}
+	if !strings.Contains(body, "••••••••••/sync") {
+		t.Fatal("overview lacks masked sync webhook URL")
+	}
+	if !strings.Contains(body, "Default (1h)") {
+		t.Fatal("overview lacks default sync interval value")
+	}
+	if !strings.Contains(body, "Recent activity") || !strings.Contains(body, "Synced 5 tracks") {
+		t.Fatalf("overview lacks recent activity: %s", body)
+	}
+	if actRec := a.get("/setup/activity"); actRec.Code != http.StatusOK || !strings.Contains(actRec.Body.String(), `"ok":true`) || !strings.Contains(actRec.Body.String(), "Synced 5 tracks") {
+		t.Fatalf("get activity endpoint failed: %d %s", actRec.Code, actRec.Body.String())
+	}
+	if rec := a.form("/setup/servers/plex-1/refresh", url.Values{}); rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "synced") {
+		t.Fatalf("refresh: %d %s", rec.Code, rec.Header().Get("Location"))
+	}
 
 	edit := a.get("/setup/servers/plex-1/edit")
 	if edit.Code != http.StatusOK || !strings.Contains(edit.Body.String(), `value="Home"`) || !strings.Contains(edit.Body.String(), "leave empty to keep") || !strings.Contains(edit.Body.String(), `<option value="3" selected>Music</option>`) {
@@ -373,12 +392,12 @@ func TestServerLifecycleThroughTheForms(t *testing.T) {
 	if !strings.Contains(a.get("/setup").Body.String(), "<dt>Library</dt><dd>3</dd>") || !strings.Contains(a.get("/setup/servers/plex-1/edit").Body.String(), `<option value="3" selected>3</option>`) {
 		t.Fatal("a server saved without a library name does not fall back to its id")
 	}
-	rec := a.form("/setup/servers/plex-1", url.Values{"label": {"Parents"}, "url": {fake.URL}, "library": {""}, "enabled": {"1"}})
+	rec := a.form("/setup/servers/plex-1", url.Values{"label": {"Parents"}, "url": {fake.URL}, "library": {""}, "enabled": {"1"}, "sync_interval": {"30m"}})
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("edit: %d %s", rec.Code, rec.Body.String())
 	}
 	server, _ = a.store.Snapshot().Server(slug)
-	if server.Label != "Parents" || server.Token != fakes.PlexToken || server.Library != "" {
+	if server.Label != "Parents" || server.Token != fakes.PlexToken || server.Library != "" || server.SyncInterval != "30m" {
 		t.Fatalf("after edit = %+v", server)
 	}
 	if entry, _ := a.reg.Lookup(slug); entry.DisplayName() != "Plex - Parents" {
@@ -404,6 +423,12 @@ func TestServerLifecycleThroughTheForms(t *testing.T) {
 	if server, _ := a.store.Snapshot().Server(slug); server.Enabled {
 		t.Fatal("disabled flag not stored")
 	}
+	if strings.Contains(a.get("/setup").Body.String(), `action="/setup/servers/plex-1/refresh"`) {
+		t.Fatal("disabled server still has Sync now button")
+	}
+	if rec := a.form("/setup/servers/plex-1/refresh", url.Values{}); rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "Sync+failed") {
+		t.Fatalf("refresh disabled server: %d %s", rec.Code, rec.Header().Get("Location"))
+	}
 	second := a.addPlex(fakes.NewPlex(t), "")
 	if second != "plex-2" {
 		t.Fatalf("second slug = %q", second)
@@ -419,6 +444,9 @@ func TestServerLifecycleThroughTheForms(t *testing.T) {
 	}
 	if rec := a.form("/setup/servers/plex-9/enabled", url.Values{"enabled": {"false"}}); rec.Code != http.StatusNotFound {
 		t.Fatalf("disable unknown: %d", rec.Code)
+	}
+	if rec := a.form("/setup/servers/plex-9/refresh", url.Values{}); rec.Code != http.StatusNotFound {
+		t.Fatalf("refresh unknown: %d", rec.Code)
 	}
 	if rec := a.get("/setup/servers/plex-9/edit"); rec.Code != http.StatusNotFound {
 		t.Fatalf("edit unknown: %d", rec.Code)
@@ -592,6 +620,43 @@ func TestJellyfinSignInStoresTheTokenAndNeverThePassword(t *testing.T) {
 		t.Fatalf("logs carry a credential:\n%s", logs)
 	}
 	_ = plexURLs
+}
+
+func TestNavidromeSignInStoresTheTokenAndNeverThePassword(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	fake := fakes.NewNavidrome(t)
+	rec, answer := a.json(http.MethodPost, "/setup/navidrome/signin", navidromeSignInRequest{URL: fake.URL, Username: fakes.NavidromeUser, Password: fakes.NavidromePassword})
+	if rec.Code != http.StatusOK || answer["ok"] != true || answer["username"] != fakes.NavidromeUser || answer["ref"] == "" {
+		t.Fatalf("sign-in: %d %v", rec.Code, answer)
+	}
+	if strings.Contains(rec.Body.String(), fakes.NavidromePassword) {
+		t.Fatal("the password reached the browser")
+	}
+	ref := answer["ref"].(string)
+	if rec := a.form("/setup/servers", url.Values{"kind": {"navidrome"}, "label": {"NAS"}, "url": {fake.URL}, "token_ref": {ref}, "library": {"Music"}, "enabled": {"1"}, "scrobble_enabled": {"1"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
+	}
+	server, _ := a.store.Snapshot().Server("navidrome-1")
+	if server.Token != fakes.NavidromeToken || server.Auth != store.AuthNavidromeSignIn || server.Account != fakes.NavidromeUser || server.Library != fakes.NavidromeMusicFolder || server.ScrobblePercent != 50 {
+		t.Fatalf("stored = %+v", server)
+	}
+	if overviewBody := a.get("/setup").Body.String(); !strings.Contains(overviewBody, "<dt>Scrobbling</dt><dd>Enabled (at 50%)</dd>") {
+		t.Fatalf("overview lacks scrobble info: %s", overviewBody)
+	}
+	moved := a.form("/setup/servers/navidrome-1", url.Values{"label": {"NAS"}, "url": {fakes.NewNavidrome(t).URL}, "enabled": {"1"}})
+	if moved.Code != http.StatusBadRequest || !strings.Contains(moved.Body.String(), "sign in again") {
+		t.Fatalf("url change on a signed-in server: %d", moved.Code)
+	}
+	for i := range 5 {
+		rec, _ := a.json(http.MethodPost, "/setup/navidrome/signin", navidromeSignInRequest{URL: fake.URL, Username: fakes.NavidromeUser, Password: "nope"})
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: %d", i, rec.Code)
+		}
+	}
+	if rec, _ := a.json(http.MethodPost, "/setup/navidrome/signin", navidromeSignInRequest{URL: fake.URL, Username: fakes.NavidromeUser, Password: fakes.NavidromePassword}); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("after five failures: %d", rec.Code)
+	}
 }
 
 func TestConcurrentLoginAttemptsAreLimitedAtomically(t *testing.T) {
@@ -1201,5 +1266,86 @@ func TestTheFirstPasswordKeepsAPublicURLAlreadySet(t *testing.T) {
 	a.form("https://music.example.com/setup/password", url.Values{"password": {password}})
 	if got := a.store.Snapshot().PublicURL; got != "https://other.example.com" {
 		t.Fatalf("public url = %q", got)
+	}
+}
+
+func TestRefreshAllServers(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+
+	// Sync all with no servers returns notice
+	recEmpty := a.form("/setup/sync-all", url.Values{})
+	if recEmpty.Code != http.StatusSeeOther || !strings.Contains(recEmpty.Header().Get("Location"), "No+enabled+servers") {
+		t.Fatalf("sync-all empty: %d, location: %s", recEmpty.Code, recEmpty.Header().Get("Location"))
+	}
+
+	fake1 := fakes.NewPlex(t)
+	a.addPlex(fake1, "Server 1")
+	fake2 := fakes.NewPlex(t)
+	a.addPlex(fake2, "Server 2")
+
+	rec := a.form("/setup/sync-all", url.Values{})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("POST /setup/sync-all = %d, want 303", rec.Code)
+	}
+	loc := rec.Header().Get("Location")
+	if !strings.Contains(loc, "synced+successfully") {
+		t.Errorf("expected success notice in location %q", loc)
+	}
+}
+
+func TestRecentActivityEndpoint(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+
+	a.reg.RecordActivity("plex-1", "Plex Server", "sync", "Synced 100 tracks")
+	a.reg.RecordActivity("sub-1", "Navidrome", "now_playing", "Now playing: Track A")
+
+	rec := a.get("/setup/activity")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /setup/activity = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Synced 100 tracks") || !strings.Contains(body, "Now playing: Track A") {
+		t.Fatalf("expected both activities in /setup/activity response: %s", body)
+	}
+
+	recSync := a.get("/setup/activity?filter=sync")
+	if recSync.Code != http.StatusOK {
+		t.Fatalf("GET /setup/activity?filter=sync = %d", recSync.Code)
+	}
+	bodySync := recSync.Body.String()
+	if !strings.Contains(bodySync, "Synced 100 tracks") || strings.Contains(bodySync, "Now playing: Track A") {
+		t.Fatalf("expected only sync in filtered response: %s", bodySync)
+	}
+
+	recPlayback := a.get("/setup/activity?filter=playback")
+	if recPlayback.Code != http.StatusOK {
+		t.Fatalf("GET /setup/activity?filter=playback = %d", recPlayback.Code)
+	}
+	bodyPlayback := recPlayback.Body.String()
+	if strings.Contains(bodyPlayback, "Synced 100 tracks") || !strings.Contains(bodyPlayback, "Now playing: Track A") {
+		t.Fatalf("expected only playback in filtered response: %s", bodyPlayback)
+	}
+
+	// POST /setup/activity/clear with filter=sync
+	clearSyncRec := a.form("/setup/activity/clear", url.Values{"filter": {"sync"}})
+	if clearSyncRec.Code != http.StatusSeeOther {
+		t.Fatalf("POST /setup/activity/clear = %d, want 303", clearSyncRec.Code)
+	}
+	if len(a.reg.RecentSyncActivity()) != 0 {
+		t.Fatalf("expected sync activities cleared, got %d", len(a.reg.RecentSyncActivity()))
+	}
+	if len(a.reg.RecentPlaybackActivity()) != 1 {
+		t.Fatalf("expected playback activities untouched, got %d", len(a.reg.RecentPlaybackActivity()))
+	}
+
+	// POST /setup/activity/clear with filter=all
+	clearAllRec := a.form("/setup/activity/clear", url.Values{"filter": {"all"}})
+	if clearAllRec.Code != http.StatusSeeOther {
+		t.Fatalf("POST /setup/activity/clear = %d, want 303", clearAllRec.Code)
+	}
+	if len(a.reg.RecentActivity()) != 0 {
+		t.Fatalf("expected all activities cleared, got %d", len(a.reg.RecentActivity()))
 	}
 }
