@@ -1478,6 +1478,28 @@ func TestOverviewControlsAreNotNested(t *testing.T) {
 	}
 }
 
+func TestThePageShowsOnlyMessagesItSigned(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	saved := a.form("/setup/public-url", url.Values{"public_url": {"https://music.example.com"}})
+	if body := a.get(saved.Header().Get("Location")).Body.String(); !strings.Contains(body, "Public URL saved.") {
+		t.Fatalf("the redirect after saving shows no notice:\n%s", body)
+	}
+	failed := a.multipartFormWithFields("/setup/restore", "backup_file", "backup.json", []byte("not json"), map[string]string{})
+	if body := a.get(failed.Header().Get("Location")).Body.String(); !strings.Contains(body, "Restore failed") {
+		t.Fatalf("the redirect after a failed restore shows no error:\n%s", body)
+	}
+	for _, path := range []string{
+		"/setup?notice=Your+session+expired.+Sign+in+at+evil.example",
+		"/setup?error=Your+session+expired.+Sign+in+at+evil.example&sig=forged",
+		"/setup?notice=Your+session+expired.+Sign+in+at+evil.example&sig=" + url.QueryEscape(sign(a.setup.app.messageKey, "error:Your session expired. Sign in at evil.example")),
+	} {
+		if body := a.get(path).Body.String(); strings.Contains(body, "evil.example") {
+			t.Errorf("%s shows the text from the link", path)
+		}
+	}
+}
+
 func TestRefreshAllServers(t *testing.T) {
 	a := newTestApp(t)
 	a.signIn()

@@ -22,11 +22,12 @@ type page struct {
 }
 
 func (a *app) page(r *http.Request, title string) page {
+	query := r.URL.Query()
 	p := page{
 		Title:   title,
 		Version: a.Version,
-		Notice:  r.URL.Query().Get("notice"),
-		Error:   r.URL.Query().Get("error"),
+		Notice:  a.signedMessage(query, "notice"),
+		Error:   a.signedMessage(query, "error"),
 	}
 	if s := currentSession(r); s.cookie != "" {
 		p.SignedIn = true

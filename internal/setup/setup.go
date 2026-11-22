@@ -4,6 +4,7 @@ package setup
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"embed"
 	"errors"
@@ -86,6 +87,7 @@ type app struct {
 	signins    *limiter
 	refs       *tokenRefs
 	verifySem  chan struct{}
+	messageKey []byte
 	applyMu    sync.Mutex
 	ctx        context.Context
 	shutdown   context.CancelFunc
@@ -136,13 +138,15 @@ func New(o Options) *Handler {
 		o.SignOutWait = signOutWait
 	}
 	a := &app{
-		Options:   o,
-		pages:     parsePages(),
-		logins:    newLimiter(o.Now, loginAttempts, lockoutWindow),
-		signins:   newLimiter(o.Now, loginAttempts, lockoutWindow),
-		refs:      newTokenRefs(o.Now, tokenRefTTL),
-		verifySem: make(chan struct{}, verifyPasswords),
+		Options:    o,
+		pages:      parsePages(),
+		logins:     newLimiter(o.Now, loginAttempts, lockoutWindow),
+		signins:    newLimiter(o.Now, loginAttempts, lockoutWindow),
+		refs:       newTokenRefs(o.Now, tokenRefTTL),
+		verifySem:  make(chan struct{}, verifyPasswords),
+		messageKey: make([]byte, 32),
 	}
+	rand.Read(a.messageKey)
 	a.ctx, a.shutdown = context.WithCancel(context.Background())
 	return &Handler{Handler: a.handler(), app: a}
 }
@@ -265,7 +269,7 @@ func (a *app) gate(next http.Handler) http.Handler {
 		}
 		if r.Method == http.MethodPost {
 			if err := checkCSRF(r, key, cookie.Value); err != nil {
-				refuseUnchecked(w, r, err)
+				a.refuseUnchecked(w, r, err)
 				return
 			}
 		}
@@ -318,13 +322,13 @@ func checkCSRF(r *http.Request, key []byte, cookie string) error {
 	return nil
 }
 
-func refuseUnchecked(w http.ResponseWriter, r *http.Request, err error) {
+func (a *app) refuseUnchecked(w http.ResponseWriter, r *http.Request, err error) {
 	var tooLarge *http.MaxBytesError
 	switch {
 	case !errors.As(err, &tooLarge):
 		http.Error(w, errBadCSRF.Error(), http.StatusForbidden)
 	case r.URL.Path == "/setup/restore":
-		redirectError(w, r, fmt.Sprintf("Restore failed: the backup file is larger than %d MB.", maxBackupBytes>>20))
+		a.redirectError(w, r, fmt.Sprintf("Restore failed: the backup file is larger than %d MB.", maxBackupBytes>>20))
 	default:
 		http.Error(w, "request too large", http.StatusRequestEntityTooLarge)
 	}

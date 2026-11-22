@@ -2,6 +2,7 @@ package setup
 
 import (
 	"context"
+	"crypto/hmac"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -58,12 +59,27 @@ func (a *app) apply() {
 	a.Registry.Apply(a.Store.Snapshot())
 }
 
-func redirectNotice(w http.ResponseWriter, r *http.Request, notice string) {
-	http.Redirect(w, r, "/setup?notice="+url.QueryEscape(notice), http.StatusSeeOther)
+func (a *app) redirectNotice(w http.ResponseWriter, r *http.Request, notice string) {
+	a.redirectMessage(w, r, "notice", notice)
 }
 
-func redirectError(w http.ResponseWriter, r *http.Request, err string) {
-	http.Redirect(w, r, "/setup?error="+url.QueryEscape(err), http.StatusSeeOther)
+func (a *app) redirectError(w http.ResponseWriter, r *http.Request, err string) {
+	a.redirectMessage(w, r, "error", err)
+}
+
+// redirectMessage signs the message so the page shows only text this app
+// wrote, never text a crafted link puts in the query.
+func (a *app) redirectMessage(w http.ResponseWriter, r *http.Request, kind, message string) {
+	query := url.Values{kind: {message}, "sig": {sign(a.messageKey, kind+":"+message)}}
+	http.Redirect(w, r, "/setup?"+query.Encode(), http.StatusSeeOther)
+}
+
+func (a *app) signedMessage(query url.Values, kind string) string {
+	message := query.Get(kind)
+	if message == "" || !hmac.Equal([]byte(query.Get("sig")), []byte(sign(a.messageKey, kind+":"+message))) {
+		return ""
+	}
+	return message
 }
 
 // ---- password and session
@@ -89,10 +105,10 @@ func (a *app) createPassword(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.Log.Info("public url set", "public_url", origin)
-		redirectNotice(w, r, "Password set. The public URL is "+origin+"; change it below if that is wrong. Now add a server.")
+		a.redirectNotice(w, r, "Password set. The public URL is "+origin+"; change it below if that is wrong. Now add a server.")
 		return
 	}
-	redirectNotice(w, r, "Password set. Add your public URL and a server.")
+	a.redirectNotice(w, r, "Password set. Add your public URL and a server.")
 }
 
 func (a *app) login(w http.ResponseWriter, r *http.Request, admin *store.Admin) {
@@ -159,7 +175,7 @@ func (a *app) changePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	a.Log.Info("admin password changed", "from", clientAddress(r))
 	a.setSessionCookie(w, r, admin)
-	redirectNotice(w, r, "Password changed. Other browsers have been signed out.")
+	a.redirectNotice(w, r, "Password changed. Other browsers have been signed out.")
 }
 
 // ---- overview, public URL, secret
@@ -185,11 +201,11 @@ func (a *app) setPublicURL(w http.ResponseWriter, r *http.Request) {
 	}
 	if value == "" {
 		a.Log.Info("public url cleared")
-		redirectNotice(w, r, "Public URL cleared. Server URLs cannot be shown until it is set again.")
+		a.redirectNotice(w, r, "Public URL cleared. Server URLs cannot be shown until it is set again.")
 		return
 	}
 	a.Log.Info("public url set", "public_url", value)
-	redirectNotice(w, r, "Public URL saved.")
+	a.redirectNotice(w, r, "Public URL saved.")
 }
 
 func (a *app) regenerateSecret(w http.ResponseWriter, r *http.Request) {
@@ -198,7 +214,7 @@ func (a *app) regenerateSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.Log.Warn("secret regenerated, every server URL has changed")
-	redirectNotice(w, r, "Secret regenerated. Every server URL has changed; update your clients.")
+	a.redirectNotice(w, r, "Secret regenerated. Every server URL has changed; update your clients.")
 }
 
 func (a *app) exportBackup(w http.ResponseWriter, r *http.Request) {
@@ -226,19 +242,19 @@ func (a *app) exportBackup(w http.ResponseWriter, r *http.Request) {
 func (a *app) restoreBackup(w http.ResponseWriter, r *http.Request) {
 	raw, err := uploadedBackup(r)
 	if err != nil {
-		redirectError(w, r, "Restore failed: "+err.Error())
+		a.redirectError(w, r, "Restore failed: "+err.Error())
 		return
 	}
 
 	snap, err := store.DecryptSnapshot(raw, r.PostFormValue("passphrase"))
 	if err != nil {
-		redirectError(w, r, fmt.Sprintf("Restore failed: %s", err.Error()))
+		a.redirectError(w, r, fmt.Sprintf("Restore failed: %s", err.Error()))
 		return
 	}
 
 	before := a.Store.Snapshot()
 	if err := a.Store.Restore(snap); err != nil {
-		redirectError(w, r, fmt.Sprintf("Restore failed: %s", err.Error()))
+		a.redirectError(w, r, fmt.Sprintf("Restore failed: %s", err.Error()))
 		return
 	}
 
@@ -249,7 +265,7 @@ func (a *app) restoreBackup(w http.ResponseWriter, r *http.Request) {
 	if count != 1 {
 		serverWord = "servers"
 	}
-	redirectNotice(w, r, fmt.Sprintf("Configuration restored successfully (%d %s configured).", count, serverWord))
+	a.redirectNotice(w, r, fmt.Sprintf("Configuration restored successfully (%d %s configured).", count, serverWord))
 }
 
 func uploadedBackup(r *http.Request) ([]byte, error) {
@@ -350,7 +366,7 @@ func (a *app) createServer(w http.ResponseWriter, r *http.Request) {
 	}
 	a.apply()
 	a.Log.Info("server added", "server", added.Slug, "source", string(added.Kind), "host", hostOf(added.URL), "auth", string(added.Auth))
-	redirectNotice(w, r, registry.DisplayName(kindName(added.Kind), added.Label)+" added. Copy its URL into BitChord.")
+	a.redirectNotice(w, r, registry.DisplayName(kindName(added.Kind), added.Label)+" added. Copy its URL into BitChord.")
 }
 
 func (a *app) updateServer(w http.ResponseWriter, r *http.Request) {
@@ -384,7 +400,7 @@ func (a *app) updateServer(w http.ResponseWriter, r *http.Request) {
 	a.apply()
 	a.Log.Info("server updated", "server", slug, "source", string(server.Kind), "host", hostOf(server.URL), "auth", string(server.Auth))
 	a.signOutReplaced(existing, server)
-	redirectNotice(w, r, registry.DisplayName(kindName(server.Kind), server.Label)+" saved.")
+	a.redirectNotice(w, r, registry.DisplayName(kindName(server.Kind), server.Label)+" saved.")
 }
 
 // resolveServer turns a submitted form into a validated server: it settles
@@ -476,7 +492,7 @@ func (a *app) deleteServer(w http.ResponseWriter, r *http.Request) {
 	a.apply()
 	a.Log.Info("server removed", "server", slug)
 	a.signOutReplaced(existing, store.Server{})
-	redirectNotice(w, r, slug+" removed. Its URL no longer answers.")
+	a.redirectNotice(w, r, slug+" removed. Its URL no longer answers.")
 }
 
 func (a *app) setServerEnabled(w http.ResponseWriter, r *http.Request) {
@@ -496,7 +512,7 @@ func (a *app) setServerEnabled(w http.ResponseWriter, r *http.Request) {
 	}
 	a.apply()
 	a.Log.Info("server enabled changed", "server", slug, "enabled", enabled)
-	redirectNotice(w, r, slug+" "+map[bool]string{true: "enabled", false: "disabled"}[enabled]+".")
+	a.redirectNotice(w, r, slug+" "+map[bool]string{true: "enabled", false: "disabled"}[enabled]+".")
 }
 
 func (a *app) refreshServer(w http.ResponseWriter, r *http.Request) {
@@ -508,22 +524,22 @@ func (a *app) refreshServer(w http.ResponseWriter, r *http.Request) {
 	}
 	name := registry.DisplayName(kindName(server.Kind), server.Label)
 	if _, running := a.Registry.Status(slug); !running {
-		redirectNotice(w, r, "Sync failed for "+name+": it is not running.")
+		a.redirectNotice(w, r, "Sync failed for "+name+": it is not running.")
 		return
 	}
 	a.syncInBackground([]store.Server{server})
-	redirectNotice(w, r, "Syncing "+name+". Recent activity shows when it finishes.")
+	a.redirectNotice(w, r, "Syncing "+name+". Recent activity shows when it finishes.")
 }
 
 func (a *app) refreshAllServers(w http.ResponseWriter, r *http.Request) {
 	servers := slices.DeleteFunc(a.Store.Snapshot().Ordered(), func(server store.Server) bool { return !server.Enabled })
 	if len(servers) == 0 {
-		redirectNotice(w, r, "No enabled servers to sync.")
+		a.redirectNotice(w, r, "No enabled servers to sync.")
 		return
 	}
 	a.Log.Info("syncing all servers", "count", len(servers))
 	a.syncInBackground(servers)
-	redirectNotice(w, r, fmt.Sprintf("Syncing %d %s. Recent activity shows when each finishes.", len(servers), map[bool]string{true: "server", false: "servers"}[len(servers) == 1]))
+	a.redirectNotice(w, r, fmt.Sprintf("Syncing %d %s. Recent activity shows when each finishes.", len(servers), map[bool]string{true: "server", false: "servers"}[len(servers) == 1]))
 }
 
 // syncInBackground refreshes detached from the request, so a browser that
@@ -662,7 +678,7 @@ func (a *app) clearActivity(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
-	redirectNotice(w, r, "Activity log cleared.")
+	a.redirectNotice(w, r, "Activity log cleared.")
 }
 
 // ---- JSON endpoints used by the form's buttons

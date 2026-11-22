@@ -73,6 +73,7 @@
       var url = new URL(location.href);
       url.searchParams.delete('notice');
       url.searchParams.delete('error');
+      url.searchParams.delete('sig');
       history.replaceState(null, '', url);
     }
     function dismiss() {
