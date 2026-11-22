@@ -221,14 +221,18 @@ type session struct {
 	cookie string
 }
 
+func securityHeaders(w http.ResponseWriter) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Referrer-Policy", "same-origin")
+}
+
 // gate decides who may reach the mux: with no admin only the create-password
 // form exists; with no valid session only the login form; a POST with a
 // session must carry the CSRF token and come from this origin.
 func (a *app) gate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Referrer-Policy", "same-origin")
+		securityHeaders(w)
 		r.Body = http.MaxBytesReader(w, r.Body, bodyLimit(r))
 		if r.Method == http.MethodPost && crossSite(r) {
 			http.Error(w, "cross-site request refused", http.StatusForbidden)

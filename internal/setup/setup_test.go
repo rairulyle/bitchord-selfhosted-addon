@@ -1387,6 +1387,72 @@ func TestStaticAssetsCachingAndCompression(t *testing.T) {
 	}
 }
 
+func TestStaticAssetsKeepEachEncodingApart(t *testing.T) {
+	a := newTestApp(t)
+	fetch := func(encoding, ifNoneMatch string) *httptest.ResponseRecorder {
+		a.headers.Set("Accept-Encoding", encoding)
+		a.headers.Set("If-None-Match", ifNoneMatch)
+		defer a.headers.Del("Accept-Encoding")
+		defer a.headers.Del("If-None-Match")
+		return a.get("/setup/static/style.css")
+	}
+	plain, zipped := fetch("", ""), fetch("gzip", "")
+	if plain.Header().Get("Content-Encoding") != "" || zipped.Header().Get("Content-Encoding") != "gzip" {
+		t.Fatalf("encodings = %q, %q", plain.Header().Get("Content-Encoding"), zipped.Header().Get("Content-Encoding"))
+	}
+	if plain.Header().Get("ETag") == zipped.Header().Get("ETag") {
+		t.Fatalf("both encodings share the ETag %s", plain.Header().Get("ETag"))
+	}
+	for _, rec := range []*httptest.ResponseRecorder{plain, zipped} {
+		if rec.Header().Get("Vary") != "Accept-Encoding" {
+			t.Errorf("Vary = %q", rec.Header().Get("Vary"))
+		}
+	}
+	if rec := fetch("gzip", plain.Header().Get("ETag")); rec.Code != http.StatusOK || rec.Header().Get("Content-Encoding") != "gzip" {
+		t.Errorf("gzip request revalidating the plain ETag: %d %q", rec.Code, rec.Header().Get("Content-Encoding"))
+	}
+	if rec := fetch("gzip", "W/"+zipped.Header().Get("ETag")); rec.Code != http.StatusNotModified {
+		t.Errorf("gzip request revalidating the gzip ETag: %d", rec.Code)
+	}
+	for _, encoding := range []string{"gzip;q=0", "br, gzip; q=0", "identity", "*;q=0", "deflate"} {
+		if rec := fetch(encoding, ""); rec.Header().Get("Content-Encoding") != "" || rec.Header().Get("ETag") != plain.Header().Get("ETag") {
+			t.Errorf("Accept-Encoding %q got %q", encoding, rec.Header().Get("Content-Encoding"))
+		}
+	}
+	for _, encoding := range []string{"gzip;q=0.5", "deflate, GZIP", "*", "x-gzip"} {
+		if rec := fetch(encoding, ""); rec.Header().Get("Content-Encoding") != "gzip" {
+			t.Errorf("Accept-Encoding %q not served gzip", encoding)
+		}
+	}
+}
+
+func TestStaticAssetsCacheTheVersionedURLForever(t *testing.T) {
+	a := newTestApp(t)
+	page := a.get("/setup").Body.String()
+	href := "/setup/static/style.css?v=" + styleHash
+	if !strings.Contains(page, href) {
+		t.Fatalf("page does not link %s", href)
+	}
+	if cc := a.get(href).Header().Get("Cache-Control"); cc != "public, max-age=31536000, immutable" {
+		t.Errorf("versioned Cache-Control = %q", cc)
+	}
+	for _, path := range []string{"/setup/static/style.css", "/setup/static/style.css?v=stale"} {
+		if cc := a.get(path).Header().Get("Cache-Control"); strings.Contains(cc, "immutable") || !strings.Contains(cc, "no-cache") {
+			t.Errorf("%s Cache-Control = %q", path, cc)
+		}
+	}
+}
+
+func TestStaticAssetsSendTheSecurityHeaders(t *testing.T) {
+	a := newTestApp(t)
+	for _, path := range []string{"/setup/static/style.css", "/setup/static/missing.css"} {
+		rec := a.get(path)
+		if rec.Header().Get("X-Content-Type-Options") != "nosniff" || rec.Header().Get("X-Frame-Options") != "DENY" || rec.Header().Get("Referrer-Policy") != "same-origin" {
+			t.Errorf("%s headers = %v", path, rec.Header())
+		}
+	}
+}
+
 func TestRefreshAllServers(t *testing.T) {
 	a := newTestApp(t)
 	a.signIn()
