@@ -10,6 +10,7 @@ import (
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/registry"
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/store"
+	"github.com/rairulyle/bitchord-selfhosted-addon/internal/subsonic"
 )
 
 type page struct {
@@ -128,10 +129,10 @@ func (a *app) overviewView(r *http.Request, snapshot store.Snapshot) overviewVie
 		}
 		card.SyncInterval = formatInterval(server.SyncInterval, a.Registry.DefaultInterval())
 		if server.Kind == store.Navidrome {
-			if server.ScrobblePercent > 0 {
-				card.ScrobbleInfo = fmt.Sprintf("Enabled (at %d%%)", server.ScrobblePercent)
-			} else {
+			if server.ScrobblePercent < 0 {
 				card.ScrobbleInfo = "Disabled"
+			} else {
+				card.ScrobbleInfo = fmt.Sprintf("Enabled (at %d%%)", cmp.Or(server.ScrobblePercent, subsonic.DefaultScrobblePercent))
 			}
 		}
 		if status, ok := a.Registry.Status(server.Slug); ok {
@@ -221,6 +222,16 @@ type serverFormView struct {
 	Libraries       []media.Library
 	Kinds           []kindOption
 	Action          string
+}
+
+// OtherInterval is a stored sync interval the select has no option for, so
+// the form keeps it instead of saving the first option over it.
+func (v serverFormView) OtherInterval() string {
+	switch v.SyncInterval {
+	case "", "manual", "0", v.DefaultInterval, "5m", "15m", "30m", "1h", "6h", "24h":
+		return ""
+	}
+	return v.SyncInterval
 }
 
 func (a *app) formView(r *http.Request, title string) serverFormView {

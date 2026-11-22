@@ -29,6 +29,10 @@ const (
 	pageSize   = 500
 )
 
+// DefaultScrobblePercent is the share of a track played before a scrobble
+// when a server stores no percent of its own.
+const DefaultScrobblePercent = 50
+
 // Options configures the client. Username and Password come from the stored
 // "user:password" credential; Navidrome's Subsonic API has no static API key.
 type Options struct {
@@ -71,7 +75,7 @@ func New(o Options) *Client {
 	}
 	percent := o.ScrobblePercent
 	if percent == 0 {
-		percent = 50
+		percent = DefaultScrobblePercent
 	}
 	c := &Client{
 		http: media.NewClient(media.ClientOptions{

@@ -1500,6 +1500,64 @@ func TestThePageShowsOnlyMessagesItSigned(t *testing.T) {
 	}
 }
 
+func TestTheFormAndOverviewAgreeOnScrobbling(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	fake := fakes.NewNavidrome(t)
+	_, answer := a.json(http.MethodPost, "/setup/navidrome/signin", navidromeSignInRequest{URL: fake.URL, Username: fakes.NavidromeUser, Password: fakes.NavidromePassword})
+	if rec := a.form("/setup/servers", url.Values{"kind": {"navidrome"}, "url": {fake.URL}, "token_ref": {answer["ref"].(string)}, "enabled": {"1"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, tc := range []struct {
+		percent  int
+		overview string
+		enabled  bool
+	}{
+		{-1, "Disabled", false},
+		{0, "Enabled (at 50%)", true},
+		{70, "Enabled (at 70%)", true},
+	} {
+		a.store.UpdateServer("navidrome-1", func(server *store.Server) error {
+			server.ScrobblePercent = tc.percent
+			return nil
+		})
+		if body := a.get("/setup").Body.String(); !strings.Contains(body, "<dt>Scrobbling</dt><dd>"+tc.overview+"</dd>") {
+			t.Errorf("percent %d: overview lacks %q", tc.percent, tc.overview)
+		}
+		form := a.get("/setup/servers/navidrome-1/edit").Body.String()
+		group := form[strings.Index(form, `<div id="scrobble-percent-group"`):]
+		group = group[:strings.Index(group, ">")]
+		if checked := strings.Contains(form, `id="scrobble_enabled" value="1" checked`); checked != tc.enabled {
+			t.Errorf("percent %d: checkbox checked = %v", tc.percent, checked)
+		}
+		if hidden := strings.Contains(group, "hidden"); hidden == tc.enabled {
+			t.Errorf("percent %d: threshold hidden = %v", tc.percent, hidden)
+		}
+		if strings.Count(group, "style=") != 1 {
+			t.Errorf("percent %d: threshold group tag %s", tc.percent, group)
+		}
+	}
+}
+
+func TestTheFormKeepsAnIntervalItHasNoOptionFor(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	slug := a.addPlex(fakes.NewPlex(t), "Home")
+	for interval, want := range map[string]string{
+		"2h":  `<option value="2h" selected>Every 2h</option>`,
+		"30m": `<option value="30m" selected>Every 30 minutes</option>`,
+	} {
+		a.store.UpdateServer(slug, func(server *store.Server) error {
+			server.SyncInterval = interval
+			return nil
+		})
+		form := a.get("/setup/servers/" + slug + "/edit").Body.String()
+		if !strings.Contains(form, want) || strings.Count(form, " selected>") != 2 {
+			t.Errorf("interval %s: the form lacks %s or selects more than one interval:\n%s", interval, want, form)
+		}
+	}
+}
+
 func TestRefreshAllServers(t *testing.T) {
 	a := newTestApp(t)
 	a.signIn()
