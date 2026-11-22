@@ -361,6 +361,9 @@ func TestFormatArtists(t *testing.T) {
 		{"The Weeknd; Anitta", "The Weeknd • Anitta"},
 		{"The Weeknd", "The Weeknd"},
 		{"Tyler, The Creator", "Tyler, The Creator"},
+		{"AC/DC", "AC/DC"},
+		{"Mötley|Crüe", "Mötley|Crüe"},
+		{"Simon / Garfunkel | Paul Simon", "Simon • Garfunkel • Paul Simon"},
 		{"", ""},
 	}
 

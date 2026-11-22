@@ -512,16 +512,11 @@ document.querySelectorAll('.accordion.search-box').forEach(function (box) {
   var songIconSvg = '<svg class="search-fallback-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>';
   var albumIconSvg = '<svg class="search-fallback-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>';
 
-  function formatArtists(str) {
-    if (!str) return '';
-    return str.replace(/\s*[;•|]\s*|\s+\/\s+/g, ' • ').trim();
-  }
-
   function renderTrackItem(t) {
     var qual = t.lossless ? 'LOSSLESS' : (t.codec || '');
     var dur = formatDuration(t.duration);
     var metaParts = [];
-    if (t.artist) metaParts.push(escapeHTML(formatArtists(t.artist)));
+    if (t.artist) metaParts.push(escapeHTML(t.artist));
     if (t.album) metaParts.push('<em>' + escapeHTML(t.album) + '</em>');
     var metaStr = metaParts.length > 0 ? metaParts.join(' · ') : '';
 
@@ -551,7 +546,7 @@ document.querySelectorAll('.accordion.search-box').forEach(function (box) {
       : '<div class="search-fallback-wrap album-fallback">' + albumIconSvg + '</div>';
 
     var subParts = [];
-    if (alb.artist) subParts.push(formatArtists(alb.artist));
+    if (alb.artist) subParts.push(alb.artist);
     if (alb.trackCount) subParts.push(alb.trackCount + (alb.trackCount === 1 ? ' track' : ' tracks'));
 
     return '<div class="search-album-card">' +
