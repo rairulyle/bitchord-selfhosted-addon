@@ -38,7 +38,8 @@ in your library, your own copy plays.
 - **Original quality.** Your files are streamed as they are, with seeking.
 - **Sync webhooks.** Trigger instant library scans via webhooks from Plex, Jellyfin, Navidrome, or automation scripts.
 - **Private.** Your Plex, Jellyfin and Subsonic tokens never leave the addon,
-  and every link contains a secret.
+  and every link contains a secret. Optional app authentication can also
+  require that requests come from the BitChord app.
 
 <p align="center">
   <img src="docs/screenshots/setup.png" alt="The setup page listing three servers" width="49%">
@@ -105,6 +106,47 @@ in your library, your own copy plays.
 
 To update, run `docker compose pull` and then `docker compose up -d`.
 
+### 🔐 App authentication
+
+App authentication is **off by default**. When it is on, the addon checks
+that searches and streams come from the BitChord app, using BitChord Addon
+Auth v1. Set it under **App authentication** on the setup page:
+
+- **Off**: no checks. Anyone with a server's link can search and play.
+- **Log only**: every request is checked, and each one that would be refused
+  is logged as `bitchord-auth would refuse ...`, but all are answered. Use it
+  to see whether your app sends Addon Auth before you enforce.
+- **Enforce**: a search or stream without a valid token gets `401`, and a
+  play link without a valid signature gets `403`. This needs a BitChord
+  version that sends Addon Auth headers; older versions get `401` and cannot
+  use the addon.
+
+BitChord gets a token from the issuer that is bound to a key on the phone,
+and sends it with each request in `X-BitChord-Token`, along with a fresh
+proof signed by that key for the host it calls in `X-BitChord-Proof`. The
+addon fetches the issuer's signing keys from
+`<issuer>/.well-known/jwks.json` and caches them for an hour. It refuses a
+token from another issuer or for another audience, an expired token, a proof
+for a host it does not serve, a proof dated more than a minute ahead or more
+than two minutes old, and a proof it has already accepted. While app
+authentication is on, each stream answer carries a play link signed with a
+key that never leaves the addon, valid for six hours so a long track or a
+paused queue keeps playing.
+
+- **Extra allowed hosts**: the host of your public URL is always allowed.
+  Add any other host name BitChord reaches the addon by, separated by commas
+  or one per line.
+- **Issuer URL**: prefilled with the default,
+  `https://bitchord-auth.kushagrasingh.in`. Change it to use another issuer.
+
+> [!IMPORTANT]
+> The default issuer is a third-party domain that this project has not
+> confirmed as BitChord's official one. That is why app authentication is off
+> by default. Turn it on only if you trust that issuer, or set one you do.
+
+These settings are saved in `/data/addon.json` and included in backups. The
+play link key is not: it is made on this server and replaced on restore.
+
 ### Upgrading from v0.4
 
 Settings moved from `.env` to the setup page and are now saved in `/data`.
@@ -148,8 +190,8 @@ These optional environment variables are the only other settings:
 
 ### 💾 Backups
 
-**Backup and restore** on the setup page downloads your public URL, secret and
-servers, tokens included, as one file encrypted with a password you choose
+**Backup and restore** on the setup page downloads your public URL, secret,
+servers and app authentication settings, tokens included, as one file encrypted with a password you choose
 (AES-256-GCM, key from PBKDF2-HMAC-SHA256). The setup password is never in
 it. Restoring a backup replaces every server and brings back its secret, so
 each BitChord link reverts to the one in the backup, and Jellyfin servers it
@@ -247,6 +289,7 @@ server. Passwords, tokens and the secret are never logged.
 | A server shows as unreachable                | Enter an address the container can reach, such as a Docker service name                           |
 | Search works but playback fails              | Your reverse proxy is buffering or timing out. See the reverse proxy notes                         |
 | A new album doesn't show up                  | Wait for the next refresh, or disable and re-enable the server on the setup page                  |
+| BitChord gets `401` after enforcing app authentication | That BitChord version does not send Addon Auth, or reaches the addon by another host. Set the mode to Log only and read the log, add the host, or turn it off |
 
 ## 🗺️ Roadmap
 
