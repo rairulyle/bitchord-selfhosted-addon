@@ -5,6 +5,7 @@
 package store
 
 import (
+	"cmp"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -246,40 +247,25 @@ func (s *Store) SetAdmin(admin *Admin) error {
 	})
 }
 
-// Restore validates and applies snap as the new configuration. If snap omits
-// secrets, the existing ones are preserved. Admin credentials from the current
-// instance are always preserved so uploaded backups cannot overwrite them.
+// Restore replaces the configuration with snap through the same validation as
+// any save. The current admin is always kept, so a backup can never change the
+// password or sign anyone in; a backup without a secret or client id keeps the
+// current ones.
 func (s *Store) Restore(snap Snapshot) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	curr := s.current.Load()
-	if curr != nil && curr.Admin != nil {
-		admin := *curr.Admin
-		snap.Admin = &admin
-	}
-	if snap.Secret == "" && curr != nil {
-		snap.Secret = curr.Secret
-	}
-	if snap.ClientID == "" && curr != nil {
-		snap.ClientID = curr.ClientID
-	}
-	if snap.ClientID == "" {
-		snap.ClientID = newClientID()
-	}
-	if snap.Secret == "" {
-		snap.Secret = NewSecret()
-	}
-	if snap.Servers == nil {
-		snap.Servers = []Server{}
-	}
-	if err := Validate(snap); err != nil {
-		return err
-	}
-	if err := s.save(snap); err != nil {
-		return err
-	}
-	s.current.Store(&snap)
-	return nil
+	return s.Update(func(data *Snapshot) error {
+		restored := snap.clone()
+		restored.Admin = data.Admin
+		restored.Secret = cmp.Or(restored.Secret, data.Secret)
+		restored.ClientID = cmp.Or(restored.ClientID, data.ClientID)
+		if restored.Servers == nil {
+			restored.Servers = []Server{}
+		}
+		if err := Validate(restored); err != nil {
+			return fmt.Errorf("the backup is not a valid configuration: %w", err)
+		}
+		*data = restored
+		return nil
+	})
 }
 
 var ErrNoServer = errors.New("no such server")

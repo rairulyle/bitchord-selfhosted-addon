@@ -387,3 +387,38 @@ func TestStoreRestore(t *testing.T) {
 		t.Errorf("Store state changed after failed restore: %+v", snap)
 	}
 }
+
+func TestRestoreNeverTakesTheBackupsAdmin(t *testing.T) {
+	forged := &Admin{PasswordHash: "forged_hash", SessionKey: "forged_session"}
+	backup := Snapshot{Admin: forged, Servers: []Server{}}
+
+	s := open(t)
+	if err := s.Restore(backup); err != nil {
+		t.Fatal(err)
+	}
+	if admin := s.Snapshot().Admin; admin != nil {
+		t.Fatalf("a store without an admin took the backup's: %+v", admin)
+	}
+
+	if err := s.SetAdmin(&Admin{PasswordHash: "hashed", SessionKey: "sesskey"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Restore(backup); err != nil {
+		t.Fatal(err)
+	}
+	if admin := s.Snapshot().Admin; admin == nil || admin.PasswordHash != "hashed" || admin.SessionKey != "sesskey" {
+		t.Fatalf("admin = %+v", admin)
+	}
+}
+
+func TestRestoreRejectsAnInvalidBackupWithAClearError(t *testing.T) {
+	s := open(t)
+	before := s.Snapshot()
+	err := s.Restore(Snapshot{PublicURL: "ftp://nope", Servers: []Server{{Slug: "plex-1", Kind: Plex, URL: "plex:32400", Auth: AuthToken}}})
+	if err == nil || !strings.Contains(err.Error(), "the backup is not a valid configuration") || !strings.Contains(err.Error(), "http or https") {
+		t.Fatalf("err = %v", err)
+	}
+	if after := s.Snapshot(); after.PublicURL != before.PublicURL || len(after.Servers) != 0 {
+		t.Fatalf("store changed: %+v", after)
+	}
+}

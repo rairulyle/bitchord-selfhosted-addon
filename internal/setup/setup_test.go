@@ -1730,3 +1730,35 @@ func TestRestoreKeepsASessionTheBackupStillUses(t *testing.T) {
 		t.Fatalf("logouts = %+v", logouts(fake))
 	}
 }
+
+func TestRestoreCannotChangeThePasswordOrSession(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	before := *a.store.Snapshot().Admin
+	backup := a.store.Snapshot()
+	backup.Admin = &store.Admin{PasswordHash: "forged_hash", SessionKey: "forged_session"}
+	if rec := a.restore(backup); rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "notice=") {
+		t.Fatalf("restore: %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	if after := *a.store.Snapshot().Admin; after != before {
+		t.Fatalf("admin changed: %+v", after)
+	}
+	if rec := a.get("/setup"); rec.Code != http.StatusOK {
+		t.Fatalf("the session ended: %d", rec.Code)
+	}
+}
+
+func TestRestoreRejectsAnInvalidBackup(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	before := a.store.Snapshot()
+	backup := store.Snapshot{Servers: []store.Server{{Slug: "plex-1", Kind: store.Plex, URL: "plex:32400", Token: "tok", Auth: store.AuthToken}}}
+	rec := a.restore(backup)
+	loc, _ := url.Parse(rec.Header().Get("Location"))
+	if rec.Code != http.StatusSeeOther || loc == nil || !strings.Contains(loc.Query().Get("error"), "not a valid configuration") {
+		t.Fatalf("restore: %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	if after := a.store.Snapshot(); !reflect.DeepEqual(after, before) {
+		t.Fatalf("store changed: %+v", after)
+	}
+}
