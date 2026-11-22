@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"strconv"
 	"syscall"
 	"time"
@@ -76,6 +77,10 @@ func newLogger(format string, level slog.Level, w io.Writer) *slog.Logger {
 
 func warnRemoved(log *slog.Logger, names []string) {
 	for _, name := range names {
+		if slices.Contains(config.UnreadVariables, name) {
+			log.Warn(name+" is not read; add Navidrome servers on the setup page", "variable", name)
+			continue
+		}
 		log.Warn(name+" is no longer read; servers, the public URL and the secret are set on the setup page", "variable", name)
 	}
 }

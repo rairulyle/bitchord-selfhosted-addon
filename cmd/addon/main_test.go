@@ -142,12 +142,15 @@ func TestRemovedVariablesAreWarnedAboutByName(t *testing.T) {
 	var logs bytes.Buffer
 	log := newLogger("text", slog.LevelInfo, &logs)
 	warnRemoved(log, config.Removed(func(key string) string {
-		return map[string]string{"PLEX_URL": "http://plex:32400", "ADDON_SECRET": "s3cr3t-s3cr3t-s3cr3t"}[key]
+		return map[string]string{"PLEX_URL": "http://plex:32400", "ADDON_SECRET": "s3cr3t-s3cr3t-s3cr3t", "NAVIDROME_PASSWORD": "s3cr3t-s3cr3t-s3cr3t"}[key]
 	}))
-	for _, want := range []string{"level=WARN", "PLEX_URL is no longer read", "ADDON_SECRET is no longer read", "setup page"} {
+	for _, want := range []string{"level=WARN", "PLEX_URL is no longer read", "ADDON_SECRET is no longer read", "setup page", "NAVIDROME_PASSWORD is not read; add Navidrome servers on the setup page"} {
 		if !strings.Contains(logs.String(), want) {
 			t.Errorf("logs lack %s:\n%s", want, logs.String())
 		}
+	}
+	if strings.Contains(logs.String(), "NAVIDROME_PASSWORD is no longer read") {
+		t.Error("a Navidrome variable was called removed, but it was never read")
 	}
 	if strings.Contains(logs.String(), "s3cr3t") {
 		t.Error("a removed variable's value was logged")

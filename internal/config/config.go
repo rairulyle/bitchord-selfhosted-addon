@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -25,15 +26,18 @@ var logLevels = map[string]slog.Level{
 	"error": slog.LevelError,
 }
 
-// RemovedVariables were read by 0.4 and earlier (or removed in favor of the
-// setup page). They are ignored now, and Removed names the ones still set so
-// main can say where they went.
-var RemovedVariables = []string{
-	"ADDON_SECRET", "PUBLIC_URL", "ADDON_NAME",
-	"PLEX_URL", "PLEX_TOKEN", "PLEX_SECTION",
-	"JELLYFIN_URL", "JELLYFIN_API_KEY", "JELLYFIN_LIBRARY",
-	"NAVIDROME_URL", "NAVIDROME_USERNAME", "NAVIDROME_PASSWORD",
-}
+// RemovedVariables were read by 0.4 and earlier. UnreadVariables never
+// were: Navidrome arrived after configuration moved to the setup page, but
+// its names look like ones a user might guess. Both are ignored, and Removed
+// names the ones still set so main can say where to configure them instead.
+var (
+	RemovedVariables = []string{
+		"ADDON_SECRET", "PUBLIC_URL", "ADDON_NAME",
+		"PLEX_URL", "PLEX_TOKEN", "PLEX_SECTION",
+		"JELLYFIN_URL", "JELLYFIN_API_KEY", "JELLYFIN_LIBRARY",
+	}
+	UnreadVariables = []string{"NAVIDROME_URL", "NAVIDROME_USERNAME", "NAVIDROME_PASSWORD"}
+)
 
 func Load(getenv func(string) string) (Config, error) {
 	var problems []error
@@ -76,7 +80,7 @@ func Load(getenv func(string) string) (Config, error) {
 
 func Removed(getenv func(string) string) []string {
 	var out []string
-	for _, name := range RemovedVariables {
+	for _, name := range slices.Concat(RemovedVariables, UnreadVariables) {
 		if strings.TrimSpace(getenv(name)) != "" {
 			out = append(out, name)
 		}
