@@ -87,6 +87,14 @@ func (l *Library) Find(query string, limit int) Result {
 	return ix.Find(query, limit)
 }
 
+func (l *Library) Explore(query string, limit int) Result {
+	ix := l.index.Load()
+	if ix == nil {
+		return Result{}
+	}
+	return ix.Explore(query, limit)
+}
+
 func (l *Library) Get(id string) (media.Track, bool) {
 	ix := l.index.Load()
 	if ix == nil {

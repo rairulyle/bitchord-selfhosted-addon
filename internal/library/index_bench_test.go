@@ -125,6 +125,12 @@ func BenchmarkSearch(b *testing.B) {
 				ix.Find(query, 50)
 			}
 		})
+		b.Run("explore "+name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				ix.Explore(query, 50)
+			}
+		})
 	}
 }
 

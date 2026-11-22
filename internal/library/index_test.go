@@ -225,7 +225,7 @@ func TestVideoSearchBehaviors(t *testing.T) {
 	})
 
 	// 1. Partial/substring "wee" matches Sweet, Sweet Life, SWEET..., and In Between Dreams
-	resWee := ix.Find("wee", 10)
+	resWee := ix.Explore("wee", 10)
 	weeIDs := ids(resWee.Tracks)
 	if len(weeIDs) < 4 {
 		t.Fatalf("expected at least 4 tracks for 'wee', got %v", weeIDs)
@@ -247,7 +247,7 @@ func TestVideoSearchBehaviors(t *testing.T) {
 	}
 
 	// 2. Multi-word prefix "frank oce" matches Frank Ocean tracks & artist
-	resFrank := ix.Find("frank oce", 10)
+	resFrank := ix.Explore("frank oce", 10)
 	frankIDs := ids(resFrank.Tracks)
 	if len(frankIDs) < 2 {
 		t.Fatalf("expected Frank Ocean tracks, got %v", frankIDs)
@@ -264,7 +264,7 @@ func TestVideoSearchBehaviors(t *testing.T) {
 	}
 
 	// 3. Partial word "amsh" matches Amsham
-	resAmsh := ix.Find("amsh", 10)
+	resAmsh := ix.Explore("amsh", 10)
 	amshIDs := ids(resAmsh.Tracks)
 	if len(amshIDs) == 0 || amshIDs[0] != "t6" {
 		t.Fatalf("expected 'Amsham' (t6) on top for 'amsh', got %v", amshIDs)
@@ -279,7 +279,7 @@ func TestLoseAndLoserPrefixAndEntityIsolation(t *testing.T) {
 
 	// 1. An exact word wins over completions: "lose" finds "Lose My Mind" only,
 	// while the unfinished "los" completes to both "lose" and "loser".
-	resLose := ix.Find("lose", 10)
+	resLose := ix.Explore("lose", 10)
 	if loseIDs := ids(resLose.Tracks); !reflect.DeepEqual(loseIDs, []string{"t2"}) {
 		t.Fatalf("expected only t2 for 'lose', got %v", loseIDs)
 	}
@@ -301,7 +301,7 @@ func TestLoseAndLoserPrefixAndEntityIsolation(t *testing.T) {
 	}
 
 	// Searching "loser" matches "Loser", but not "Deadbeat" album or "Tame Impala" artist
-	resLoser := ix.Find("loser", 10)
+	resLoser := ix.Explore("loser", 10)
 	if len(resLoser.Tracks) != 1 || resLoser.Tracks[0].ID != "t1" {
 		t.Fatalf("expected 'Loser' (t1) for 'loser', got %v", ids(resLoser.Tracks))
 	}
@@ -313,13 +313,13 @@ func TestLoseAndLoserPrefixAndEntityIsolation(t *testing.T) {
 	}
 
 	// Searching "deadbeat" matches album "Deadbeat"
-	resDeadbeat := ix.Find("deadbeat", 10)
+	resDeadbeat := ix.Explore("deadbeat", 10)
 	if len(resDeadbeat.Albums) != 1 || resDeadbeat.Albums[0].Name != "Deadbeat" {
 		t.Errorf("expected album 'Deadbeat' for query 'deadbeat', got %v", resDeadbeat.Albums)
 	}
 
 	// Searching "tame" matches artist "Tame Impala"
-	resTame := ix.Find("tame", 10)
+	resTame := ix.Explore("tame", 10)
 	if len(resTame.Artists) != 1 || resTame.Artists[0].Name != "Tame Impala" {
 		t.Errorf("expected artist 'Tame Impala' for query 'tame', got %v", resTame.Artists)
 	}
@@ -361,7 +361,7 @@ func TestMultiArtistGroupingInIndex(t *testing.T) {
 	ix := NewIndex(tracks)
 
 	// Verify multi-artist tracks consolidate into a single artist entry.
-	res := ix.Find("weeknd", 10)
+	res := ix.Explore("weeknd", 10)
 	if len(res.Artists) == 0 {
 		t.Fatalf("expected to find artist for 'weeknd'")
 	}
@@ -387,13 +387,13 @@ func TestMultiArtistGroupingInIndex(t *testing.T) {
 	}
 
 	// Searching "anitta" should find "Anitta"
-	resAnitta := ix.Find("anitta", 10)
+	resAnitta := ix.Explore("anitta", 10)
 	if len(resAnitta.Artists) != 1 || resAnitta.Artists[0].Name != "Anitta" {
 		t.Errorf("expected 'Anitta' for query 'anitta', got %+v", resAnitta.Artists)
 	}
 
 	// Searching "gesaffelstein" should find "Gesaffelstein"
-	resGes := ix.Find("gesaffelstein", 10)
+	resGes := ix.Explore("gesaffelstein", 10)
 	if len(resGes.Artists) != 1 || resGes.Artists[0].Name != "Gesaffelstein" {
 		t.Errorf("expected 'Gesaffelstein' for query 'gesaffelstein', got %+v", resGes.Artists)
 	}
@@ -487,7 +487,7 @@ func TestFuzzyTypoSearch(t *testing.T) {
 	})
 
 	// 1. Single token typo: "coldpay" -> finds "Coldplay" track & artist
-	res1 := ix.Find("coldpay", 10)
+	res1 := ix.Explore("coldpay", 10)
 	if len(res1.Tracks) == 0 || res1.Tracks[0].ID != "1" {
 		t.Fatalf("search 'coldpay' want track ID 1, got %v", ids(res1.Tracks))
 	}
@@ -496,25 +496,25 @@ func TestFuzzyTypoSearch(t *testing.T) {
 	}
 
 	// 2. Multi-word typo: "radiohed creep" -> finds "Radiohead - Creep"
-	res2 := ix.Find("radiohed creep", 10)
+	res2 := ix.Explore("radiohed creep", 10)
 	if len(res2.Tracks) == 0 || res2.Tracks[0].ID != "2" {
 		t.Fatalf("search 'radiohed creep' want track ID 2, got %v", ids(res2.Tracks))
 	}
 
 	// 3. Adjacent transposition: "bohemain" -> finds "Bohemian Rhapsody"
-	res3 := ix.Find("bohemain", 10)
+	res3 := ix.Explore("bohemain", 10)
 	if len(res3.Tracks) == 0 || res3.Tracks[0].ID != "3" {
 		t.Fatalf("search 'bohemain' want track ID 3, got %v", ids(res3.Tracks))
 	}
 
 	// 4. Typo in artist name: "kendrik lamar" -> finds "HUMBLE."
-	res4 := ix.Find("kendrik lamar", 10)
+	res4 := ix.Explore("kendrik lamar", 10)
 	if len(res4.Tracks) == 0 || res4.Tracks[0].ID != "4" {
 		t.Fatalf("search 'kendrik lamar' want track ID 4, got %v", ids(res4.Tracks))
 	}
 
 	// 5. Typo in album search: "parachuts" -> finds "Parachutes" album
-	res5 := ix.Find("parachuts", 10)
+	res5 := ix.Explore("parachuts", 10)
 	foundAlb := false
 	for _, alb := range res5.Albums {
 		if alb.Name == "Parachutes" {
@@ -527,7 +527,7 @@ func TestFuzzyTypoSearch(t *testing.T) {
 	}
 
 	// 6. Very short non-matching word does not trigger false positive
-	res6 := ix.Find("zzz", 10)
+	res6 := ix.Explore("zzz", 10)
 	if len(res6.Tracks) != 0 {
 		t.Fatalf("search 'zzz' should return 0 tracks, got %v", ids(res6.Tracks))
 	}
@@ -651,5 +651,19 @@ func TestUnion(t *testing.T) {
 				t.Fatalf("union = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestFindLeavesAlbumsAndArtistsToExplore(t *testing.T) {
+	ix := fixtureIndex()
+	if got := ix.Find("anberlin", 10); got.Albums != nil || got.Artists != nil {
+		t.Fatalf("Find listed albums %v and artists %v", got.Albums, got.Artists)
+	}
+	got := ix.Explore("anberlin", 10)
+	if len(got.Artists) != 1 || got.Artists[0].Name != "Anberlin" || got.Artists[0].TrackCount != 2 {
+		t.Fatalf("Explore artists = %+v", got.Artists)
+	}
+	if !reflect.DeepEqual(ids(got.Tracks), ids(ix.Find("anberlin", 10).Tracks)) {
+		t.Fatalf("Explore tracks %v differ from Find", ids(got.Tracks))
 	}
 }

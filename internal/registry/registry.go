@@ -304,7 +304,7 @@ func (r *Registry) Search(slug, query string, limit int) (SearchResult, bool) {
 		return SearchResult{}, false
 	}
 	tokens := library.Tokens(query)
-	res := entry.Library.Find(query, limit)
+	res := entry.Library.Explore(query, limit)
 	return SearchResult{
 		Strict:   res.Strict,
 		Fallback: res.Fallback,

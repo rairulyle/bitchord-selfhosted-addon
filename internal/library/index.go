@@ -332,9 +332,24 @@ func (ix *Index) lookupPostings(token string, prefix bool) []int {
 func (ix *Index) Search(query string, limit int) []media.Track { return ix.Find(query, limit).Tracks }
 
 func (ix *Index) Find(query string, limit int) Result {
+	result, _ := ix.find(query, limit)
+	return result
+}
+
+// Explore is Find plus the albums and artists that match. Only the setup
+// page's search tester shows those, so BitChord's searches skip the cost.
+func (ix *Index) Explore(query string, limit int) Result {
+	result, ordered := ix.find(query, limit)
+	cleanQ := CleanString(query)
+	result.Albums = ix.findAlbums(cleanQ, result.Tokens, ordered)
+	result.Artists = ix.findArtists(cleanQ, result.Tokens, ordered)
+	return result
+}
+
+func (ix *Index) find(query string, limit int) (Result, []int) {
 	q := unique(Tokens(query))
 	if len(q) == 0 || limit <= 0 {
-		return Result{Tokens: q}
+		return Result{Tokens: q}, nil
 	}
 	cleanQ := CleanString(query)
 	first, second, exact := ix.match(q)
@@ -353,9 +368,7 @@ func (ix *Index) Find(query string, limit int) Result {
 		out[n] = ix.tracks[i]
 	}
 	result.Tracks = out
-	result.Albums = ix.findAlbums(cleanQ, q, ordered)
-	result.Artists = ix.findArtists(cleanQ, q, ordered)
-	return result
+	return result, ordered
 }
 
 // match stops at the first tier that finds anything. Only the first tier
