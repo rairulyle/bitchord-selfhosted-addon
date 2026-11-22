@@ -1715,6 +1715,9 @@ func TestBackupExport(t *testing.T) {
 	}
 	fake := fakes.NewPlex(t)
 	a.addPlex(fake, "Home Plex")
+	if err := a.store.SetAppAuth(store.AppAuth{Mode: store.AppAuthLog, Hosts: []string{"alt.example.com"}}); err != nil {
+		t.Fatal(err)
+	}
 
 	if rec := a.form("/setup/backup", url.Values{}); rec.Code != http.StatusBadRequest {
 		t.Fatalf("POST /setup/backup without password = %d, want 400", rec.Code)
@@ -1747,6 +1750,12 @@ func TestBackupExport(t *testing.T) {
 	}
 	if snap.Admin != nil {
 		t.Error("backup must omit Admin credentials to prevent hash leakage")
+	}
+	if snap.LinkKey != "" {
+		t.Error("backup must omit the link key")
+	}
+	if snap.AppAuth.Mode != store.AppAuthLog || len(snap.AppAuth.Hosts) != 1 {
+		t.Errorf("backup app auth = %+v", snap.AppAuth)
 	}
 }
 

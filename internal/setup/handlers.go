@@ -225,7 +225,7 @@ func (a *app) exportBackup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	snap := a.Store.Snapshot()
-	snap.Admin = nil
+	snap.Admin, snap.LinkKey = nil, ""
 	raw, err := store.EncryptSnapshot(snap, passphrase)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
