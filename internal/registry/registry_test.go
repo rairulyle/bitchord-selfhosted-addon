@@ -623,3 +623,15 @@ func TestRegistryActivity(t *testing.T) {
 		t.Fatalf("expected all activities cleared, got %d", len(r.RecentActivity()))
 	}
 }
+
+func TestAScrobblePercentChangeRestartsTheServer(t *testing.T) {
+	fake := fakes.NewNavidrome(t)
+	server := store.Server{Slug: "navidrome-1", Kind: store.Navidrome, URL: fake.URL, Token: fakes.NavidromeToken, Auth: store.AuthNavidromeSignIn, ScrobblePercent: 50, Enabled: true}
+	r := newRegistry(t, snapshot(server))
+	waitHealthy(t, r)
+	before, _ := r.Lookup("navidrome-1")
+	server.ScrobblePercent = -1
+	r.Apply(snapshot(server))
+	waitReplaced(t, r, "navidrome-1", before)
+	stopped(t, before, "the old navidrome entry")
+}

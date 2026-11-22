@@ -395,7 +395,8 @@ func (e *Entry) setLabel(label string) {
 }
 
 func sameConnection(a, b store.Server) bool {
-	return a.Kind == b.Kind && a.URL == b.URL && a.Token == b.Token && a.DeviceID == b.DeviceID && a.Library == b.Library && a.SyncInterval == b.SyncInterval
+	return a.Kind == b.Kind && a.URL == b.URL && a.Token == b.Token && a.DeviceID == b.DeviceID && a.Library == b.Library &&
+		a.SyncInterval == b.SyncInterval && a.ScrobblePercent == b.ScrobblePercent
 }
 
 func (r *Registry) serverInterval(server store.Server) time.Duration {
