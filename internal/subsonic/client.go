@@ -46,6 +46,7 @@ type Client struct {
 	username        string
 	password        string
 	scrobblePercent int
+	pageSize        int
 	plays           *plays
 	log             *slog.Logger
 	onActivity      func(kind, message string)
@@ -82,6 +83,7 @@ func New(o Options) *Client {
 		username:        o.Username,
 		password:        o.Password,
 		scrobblePercent: percent,
+		pageSize:        pageSize,
 		log:             o.Log,
 		onActivity:      o.OnActivity,
 	}
@@ -215,17 +217,14 @@ func (c *Client) AllTracks(ctx context.Context, folderFilter string) ([]media.Tr
 	return c.allTracksViaAlbums(ctx, folderFilter)
 }
 
-// allTracksSearch3 retrieves tracks in pages of 500 using the OpenSubsonic
+// allTracksSearch3 retrieves tracks in pages using the OpenSubsonic
 // empty-query search3 extension.
 func (c *Client) allTracksSearch3(ctx context.Context, folderFilter string) ([]media.Track, error) {
 	folderID := c.resolveFolderID(ctx, folderFilter)
-	var out []media.Track
-	seen := make(map[string]bool)
-	offset := 0
-	for {
+	songs, err := media.AllPages(c.pageSize, func(song Child) string { return song.ID }, func(offset int) ([]Child, error) {
 		params := url.Values{
 			"query":       {""},
-			"songCount":   {strconv.Itoa(pageSize)},
+			"songCount":   {strconv.Itoa(c.pageSize)},
 			"songOffset":  {strconv.Itoa(offset)},
 			"artistCount": {"0"},
 			"albumCount":  {"0"},
@@ -241,22 +240,12 @@ func (c *Client) allTracksSearch3(ctx context.Context, folderFilter string) ([]m
 		if err := c.call(ctx, "search3", params, &answer); err != nil {
 			return nil, err
 		}
-		page := answer.SearchResult3.Song
-		if len(page) == 0 {
-			break
-		}
-		for _, child := range page {
-			if !seen[child.ID] {
-				seen[child.ID] = true
-				out = append(out, child.convert())
-			}
-		}
-		if len(page) < pageSize {
-			break
-		}
-		offset += len(page)
+		return answer.SearchResult3.Song, nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	return out, nil
+	return convertUnique(songs), nil
 }
 
 // allTracksViaAlbums walks getAlbumList2 alphabetically, then fetches each
@@ -324,14 +313,24 @@ func (c *Client) allTracksViaAlbums(ctx context.Context, folderFilter string) ([
 	return out, nil
 }
 
+func convertUnique(songs []Child) []media.Track {
+	out := make([]media.Track, 0, len(songs))
+	seen := make(map[string]bool, len(songs))
+	for _, song := range songs {
+		if !seen[song.ID] {
+			seen[song.ID] = true
+			out = append(out, song.convert())
+		}
+	}
+	return out
+}
+
 func (c *Client) allAlbums(ctx context.Context, folderFilter string) ([]AlbumID3, error) {
 	folderID := c.resolveFolderID(ctx, folderFilter)
-	var out []AlbumID3
-	offset := 0
-	for {
+	return media.AllPages(c.pageSize, func(album AlbumID3) string { return album.ID }, func(offset int) ([]AlbumID3, error) {
 		params := url.Values{
 			"type":   {"alphabeticalByArtist"},
-			"size":   {strconv.Itoa(pageSize)},
+			"size":   {strconv.Itoa(c.pageSize)},
 			"offset": {strconv.Itoa(offset)},
 		}
 		if folderID != "" {
@@ -345,14 +344,8 @@ func (c *Client) allAlbums(ctx context.Context, folderFilter string) ([]AlbumID3
 		if err := c.call(ctx, "getAlbumList2", params, &answer); err != nil {
 			return nil, err
 		}
-		page := answer.AlbumList2.Album
-		out = append(out, page...)
-		if len(page) < pageSize {
-			break
-		}
-		offset += pageSize
-	}
-	return out, nil
+		return answer.AlbumList2.Album, nil
+	})
 }
 
 func (c *Client) albumSongs(ctx context.Context, albumID string) ([]Child, error) {

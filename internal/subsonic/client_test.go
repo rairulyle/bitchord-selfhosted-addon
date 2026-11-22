@@ -498,3 +498,23 @@ func TestFailedXMLEnvelopeIsAnError(t *testing.T) {
 		t.Fatalf("err = %v, want not found", err)
 	}
 }
+
+func TestPagingStopsWhenTheServerIgnoresOffsets(t *testing.T) {
+	for name, disableSearch3 := range map[string]bool{"search3": false, "album walk": true} {
+		t.Run(name, func(t *testing.T) {
+			fake := fakes.NewNavidrome(t)
+			fake.IgnoreOffset, fake.DisableSearch3 = true, disableSearch3
+			c := newClient(fake)
+			c.pageSize = 2
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			tracks, err := c.AllTracks(ctx, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(tracks) == 0 {
+				t.Fatal("no tracks")
+			}
+		})
+	}
+}

@@ -22,8 +22,11 @@ type Navidrome struct {
 	recorder
 	URL            string
 	DisableSearch3 bool
-	Extra          map[string]http.HandlerFunc
-	server         *httptest.Server
+	// IgnoreOffset answers every page request with the first page, like a
+	// server that does not support paging.
+	IgnoreOffset bool
+	Extra        map[string]http.HandlerFunc
+	server       *httptest.Server
 }
 
 func NewNavidrome(t testing.TB) *Navidrome {
@@ -103,6 +106,9 @@ func (f *Navidrome) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		offset := atoi(q.Get("songOffset"))
+		if f.IgnoreOffset {
+			offset = 0
+		}
 		count := atoi(q.Get("songCount"))
 		if count <= 0 {
 			count = 20
@@ -128,7 +134,7 @@ func (f *Navidrome) serve(w http.ResponseWriter, r *http.Request) {
 			{"id": "al-1", "name": "Tell Me I’m Alive", "artist": "All Time Low"},
 			{"id": "al-2", "name": "Endless Slaughter", "artist": "Limp Bizkit"},
 		}
-		if offset > 0 {
+		if offset > 0 && !f.IgnoreOffset {
 			albums = nil
 		}
 		writeSub(w, map[string]any{"status": "ok", "albumList2": map[string]any{"album": albums}})
