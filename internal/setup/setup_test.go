@@ -1663,3 +1663,19 @@ func TestOtherFormsKeepTheSmallBodyCap(t *testing.T) {
 		t.Fatalf("oversized multipart form = %d, want 413", rec.Code)
 	}
 }
+
+func TestRestoreNeedsAnUploadedFile(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	before := a.store.Snapshot()
+	raw, _ := json.Marshal(store.Snapshot{PublicURL: "https://elsewhere.example.com", Servers: []store.Server{}})
+	a.headers.Set("X-CSRF-Token", a.csrf())
+	rec := a.do(http.MethodPost, "/setup/restore", bytes.NewReader(raw), "application/json")
+	a.headers.Del("X-CSRF-Token")
+	if loc := rec.Header().Get("Location"); rec.Code != http.StatusSeeOther || !strings.Contains(loc, "no+backup+file") {
+		t.Fatalf("raw body restore: %d %q", rec.Code, loc)
+	}
+	if after := a.store.Snapshot(); after.PublicURL != before.PublicURL {
+		t.Fatalf("public URL changed to %q", after.PublicURL)
+	}
+}

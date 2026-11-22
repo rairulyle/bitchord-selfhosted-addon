@@ -224,41 +224,13 @@ func (a *app) exportBackup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) restoreBackup(w http.ResponseWriter, r *http.Request) {
-	var raw []byte
-	var passphrase string
-
-	contentType := r.Header.Get("Content-Type")
-	if strings.HasPrefix(contentType, "multipart/form-data") {
-		if r.MultipartForm == nil {
-			if err := r.ParseMultipartForm(maxBackupBytes); err != nil {
-				redirectError(w, r, "Restore failed: invalid upload format or file too large.")
-				return
-			}
-		}
-		passphrase = r.FormValue("passphrase")
-		file, _, err := r.FormFile("backup_file")
-		if err != nil {
-			redirectError(w, r, "Restore failed: no backup file provided.")
-			return
-		}
-		defer file.Close()
-		buf, err := io.ReadAll(file)
-		if err != nil {
-			redirectError(w, r, "Restore failed: unable to read uploaded file.")
-			return
-		}
-		raw = buf
-	} else {
-		passphrase = r.FormValue("passphrase")
-		buf, err := io.ReadAll(r.Body)
-		if err != nil {
-			redirectError(w, r, "Restore failed: unable to read request body.")
-			return
-		}
-		raw = buf
+	raw, err := uploadedBackup(r)
+	if err != nil {
+		redirectError(w, r, "Restore failed: "+err.Error())
+		return
 	}
 
-	snap, err := store.DecryptSnapshot(raw, passphrase)
+	snap, err := store.DecryptSnapshot(raw, r.PostFormValue("passphrase"))
 	if err != nil {
 		redirectError(w, r, fmt.Sprintf("Restore failed: %s", err.Error()))
 		return
@@ -276,6 +248,19 @@ func (a *app) restoreBackup(w http.ResponseWriter, r *http.Request) {
 		serverWord = "servers"
 	}
 	redirectNotice(w, r, fmt.Sprintf("Configuration restored successfully (%d %s configured).", count, serverWord))
+}
+
+func uploadedBackup(r *http.Request) ([]byte, error) {
+	file, _, err := r.FormFile("backup_file")
+	if err != nil {
+		return nil, errors.New("no backup file provided")
+	}
+	defer file.Close()
+	raw, err := io.ReadAll(file)
+	if err != nil {
+		return nil, errors.New("unable to read uploaded file")
+	}
+	return raw, nil
 }
 
 // ---- server forms
