@@ -129,7 +129,7 @@ func serve(ctx context.Context, cfg config.Config, st *store.Store, log *slog.Lo
 	mux.Handle("/", server.New(server.Options{
 		Site: func() server.Site {
 			current := st.Snapshot()
-			return server.Site{PublicURL: current.PublicURL, Secret: current.Secret, AppAuth: current.AppAuth}
+			return server.Site{PublicURL: current.PublicURL, Secret: current.Secret, LinkKey: current.LinkKey, AppAuth: current.AppAuth}
 		},
 		Registry: reg, Version: version, Log: log,
 	}))

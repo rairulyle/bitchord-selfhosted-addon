@@ -3,9 +3,10 @@ package server
 import (
 	"crypto/hmac"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -72,29 +73,47 @@ func toTrackJSON(base string, track media.Track) trackJSON {
 	return out
 }
 
-func signMedia(secret, trackID string, exp int64) string {
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(fmt.Sprintf("%s.%d", trackID, exp)))
+// fileLinkLifetime bounds how long a signed file link plays. BitChord asks
+// for a stream once per track and then seeks within the same link, so the
+// link has to outlive a multi-hour mix or audiobook chapter left paused in
+// the queue; six hours covers that and still caps a leaked link.
+const fileLinkLifetime = 6 * time.Hour
+
+func signFileLink(key, slug, id string, exp int64) string {
+	mac := hmac.New(sha256.New, []byte(key))
+	fmt.Fprintf(mac, "bitchord-file-link/v1\n%s\n%s\n%d", slug, id, exp)
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
-func verifyMediaSig(secret, trackID, sigStr string, exp int64) bool {
-	if exp < time.Now().Unix()-60 {
-		return false
+func checkFileLink(key, slug, id, rawExp, sig string, now time.Time) error {
+	exp, err := strconv.ParseInt(rawExp, 10, 64)
+	switch {
+	case key == "":
+		return errors.New("no link key")
+	case err != nil:
+		return errors.New("malformed expiry")
+	case exp < now.Unix():
+		return errors.New("expired")
+	case exp > now.Add(fileLinkLifetime).Unix():
+		return errors.New("expiry beyond the link lifetime")
+	case !hmac.Equal([]byte(sig), []byte(signFileLink(key, slug, id, exp))):
+		return errors.New("bad signature")
 	}
-	want := signMedia(secret, trackID, exp)
-	return subtle.ConstantTimeCompare([]byte(sigStr), []byte(want)) == 1
+	return nil
+}
+
+func fileLink(base, key, slug, id string, now time.Time) string {
+	link := base + "/file/" + id
+	if key == "" {
+		return link
+	}
+	exp := now.Add(fileLinkLifetime).Unix()
+	return link + "?" + url.Values{"exp": {strconv.FormatInt(exp, 10)}, "sig": {signFileLink(key, slug, id, exp)}}.Encode()
 }
 
 // Bitrate is sent in bits per second: BitChord reads any value above 3000 as
 // bits per second, and a hi-res FLAC in kbps would cross that line.
-func toStreamJSON(base, secret string, track media.Track) streamJSON {
-	fileURL := base + "/file/" + track.ID
-	if secret != "" {
-		exp := time.Now().Add(30 * time.Minute).Unix()
-		sig := signMedia(secret, track.ID, exp)
-		fileURL = fmt.Sprintf("%s?exp=%d&sig=%s", fileURL, exp, sig)
-	}
+func toStreamJSON(fileURL string, track media.Track) streamJSON {
 	return streamJSON{
 		URL:        fileURL,
 		Format:     track.Codec,

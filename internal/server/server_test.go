@@ -25,6 +25,7 @@ import (
 
 const (
 	testSecret   = "s3cr3t-s3cr3t-s3cr3t"
+	testLinkKey  = "l1nk-k3y-l1nk-k3y-l1nk-k3y-l1nk-k3y"
 	testPublic   = "https://music.example.com"
 	testBase     = testPublic + "/plex-1/" + testSecret
 	jellyfinBase = testPublic + "/jellyfin-1/" + testSecret
@@ -498,7 +499,7 @@ func TestBitChordAddonAuthEnforce(t *testing.T) {
 	stub := &stubRegistry{entries: map[string]*registry.Entry{"plex-1": entry}}
 	srv := newServer(Options{
 		Site: func() Site {
-			return Site{PublicURL: "https://addon.example.com", Secret: testSecret, AppAuth: store.AppAuth{Mode: store.AppAuthEnforce}}
+			return Site{PublicURL: "https://addon.example.com", Secret: testSecret, LinkKey: testLinkKey, AppAuth: store.AppAuth{Mode: store.AppAuthEnforce}}
 		},
 		Registry: stub, Version: "1.2.3", Log: log,
 	})
@@ -538,7 +539,7 @@ func TestBitChordAddonAuthEnforce(t *testing.T) {
 
 	// Signed media request succeeds
 	exp := time.Now().Add(10 * time.Minute).Unix()
-	sig := signMedia(testSecret, "101", exp)
+	sig := signFileLink(testLinkKey, "plex-1", "101", exp)
 	fileReqSigned := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/plex-1/%s/file/101?exp=%d&sig=%s", testSecret, exp, sig), nil)
 	fileRecSigned := httptest.NewRecorder()
 	handler.ServeHTTP(fileRecSigned, fileReqSigned)

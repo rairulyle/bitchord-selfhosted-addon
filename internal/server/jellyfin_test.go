@@ -96,17 +96,8 @@ func TestJellyfinStreamDescriptors(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			rec := h.get("/jellyfin-1/" + testSecret + "/stream/" + tc.id)
-			if rec.Code != http.StatusOK {
-				t.Fatalf("status = %d", rec.Code)
-			}
-			got := decode[map[string]any](t, rec)
-			url, _ := got["url"].(string)
-			if !strings.HasPrefix(url, tc.want["url"].(string)+"?exp=") || !strings.Contains(url, "&sig=") {
-				t.Fatalf("url %q does not match expected signed format prefix %q", url, tc.want["url"])
-			}
-			got["url"] = tc.want["url"]
-			if !reflect.DeepEqual(got, tc.want) {
-				t.Fatalf("descriptor = %v", got)
+			if got := decode[map[string]any](t, rec); rec.Code != http.StatusOK || !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("status %d, descriptor = %v", rec.Code, got)
 			}
 		})
 	}

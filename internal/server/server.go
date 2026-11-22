@@ -33,6 +33,7 @@ type Registry interface {
 type Site struct {
 	PublicURL string
 	Secret    string
+	LinkKey   string
 	AppAuth   store.AppAuth
 }
 

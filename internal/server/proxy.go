@@ -19,30 +19,14 @@ var (
 )
 
 func (s *server) file(w http.ResponseWriter, r *http.Request, src source) {
+	if !s.fileLinkAllowed(r, src) {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
 	track, status := s.resolve(r, src)
 	if status != http.StatusOK {
 		w.WriteHeader(status)
 		return
-	}
-	if mode := s.authMode(src.site); mode != store.AppAuthDisabled && src.site.Secret != "" {
-		expStr := r.URL.Query().Get("exp")
-		sigStr := r.URL.Query().Get("sig")
-		exp, err := strconv.ParseInt(expStr, 10, 64)
-		if err != nil || !verifyMediaSig(src.site.Secret, track.ID, sigStr, exp) {
-			if mode == store.AppAuthLog {
-				src.Log.Warn("bitchord-auth: media signature invalid or missing in log mode", "id", track.ID)
-			} else {
-				http.Error(w, "Forbidden", http.StatusForbidden)
-				return
-			}
-		}
-	} else if expStr := r.URL.Query().Get("exp"); expStr != "" {
-		sigStr := r.URL.Query().Get("sig")
-		exp, err := strconv.ParseInt(expStr, 10, 64)
-		if err != nil || !verifyMediaSig(src.site.Secret, track.ID, sigStr, exp) {
-			http.Error(w, "Forbidden", http.StatusForbidden)
-			return
-		}
 	}
 	header := http.Header{}
 	for _, name := range forwardedRequestHeaders {
@@ -62,6 +46,33 @@ func (s *server) file(w http.ResponseWriter, r *http.Request, src source) {
 		src.Log.Info("play", "id", track.ID, "track", label(track), "range", r.Header.Get("Range"),
 			"status", sent.status, "bytes", sent.bytes, "ended", sent.ended, "took", time.Since(started).String())
 	}
+}
+
+var errUnsigned = errors.New("the link is not signed")
+
+// fileLinkAllowed runs before resolve, so a forged link costs no upstream
+// lookup. With auth off nothing is checked; in log mode a bad or missing
+// signature is only logged, so links handed out before auth was turned on
+// keep playing.
+func (s *server) fileLinkAllowed(r *http.Request, src source) bool {
+	mode := s.authMode(src.site)
+	if mode == store.AppAuthDisabled {
+		return true
+	}
+	query := r.URL.Query()
+	err := errUnsigned
+	if query.Has("exp") || query.Has("sig") {
+		err = checkFileLink(src.site.LinkKey, src.Slug, r.PathValue("id"), query.Get("exp"), query.Get("sig"), time.Now())
+	}
+	switch {
+	case err == nil:
+		return true
+	case mode == store.AppAuthLog:
+		src.Log.Warn("bitchord-auth would refuse file link", "id", r.PathValue("id"), "reason", err.Error())
+		return true
+	}
+	src.Log.Debug("file link refused", "id", r.PathValue("id"), "reason", err.Error())
+	return false
 }
 
 func (s *server) art(w http.ResponseWriter, r *http.Request, src source) {
