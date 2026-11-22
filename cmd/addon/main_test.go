@@ -80,6 +80,7 @@ func navidromeServer(fake *fakes.Navidrome) store.Server {
 // start runs serve in the background and returns the base URL once it listens.
 func start(ctx context.Context, t *testing.T, cfg config.Config, st *store.Store, log *slog.Logger) (string, <-chan error) {
 	t.Helper()
+	t.Setenv("BITCHORD_AUTH_MODE", "disabled")
 	addrs := make(chan net.Addr, 1)
 	done := make(chan error, 1)
 	go func() { done <- serve(ctx, cfg, st, log, nil, func(addr net.Addr) { addrs <- addr }) }()
@@ -363,4 +364,40 @@ func TestNewLoggerFormats(t *testing.T) {
 	if strings.Contains(text.String(), "quiet") {
 		t.Error("level not applied")
 	}
+}
+
+func TestServeBitChordAuthEnforcesByDefault(t *testing.T) {
+	fake := fakes.NewPlex(t)
+	st := newStore(t, plexServer(fake))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	logs := &syncBuffer{}
+	addrs := make(chan net.Addr, 1)
+	done := make(chan error, 1)
+	// Default auth mode must be enforce.
+	go func() {
+		done <- serve(ctx, testConfig(), st, newLogger("text", slog.LevelInfo, logs), nil, func(addr net.Addr) { addrs <- addr })
+	}()
+	var base string
+	select {
+	case addr := <-addrs:
+		base = "http://127.0.0.1:" + strconv.Itoa(addr.(*net.TCPAddr).Port)
+	case err := <-done:
+		t.Fatalf("serve error: %v", err)
+	}
+	waitHealthy(t, base)
+
+	// Manifest is public
+	status, body := get(t, base+"/plex-1/"+testSecret+"/manifest.json")
+	if status != http.StatusOK || !strings.Contains(body, `"bitchordAuth":true`) {
+		t.Fatalf("manifest should be public with bitchordAuth:true, got status %d body %s", status, body)
+	}
+
+	// Unauthenticated search is rejected with 401
+	status, body = get(t, base+"/plex-1/"+testSecret+"/search?q=test")
+	if status != http.StatusUnauthorized || !strings.Contains(body, `"error":"bitchord_auth"`) {
+		t.Fatalf("expected 401 Unauthorized for unauthenticated search, got %d %s", status, body)
+	}
+	cancel()
+	<-done
 }

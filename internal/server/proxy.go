@@ -23,6 +23,26 @@ func (s *server) file(w http.ResponseWriter, r *http.Request, src source) {
 		w.WriteHeader(status)
 		return
 	}
+	if s.auth != nil && s.auth.Mode() != "disabled" && s.Site().Secret != "" {
+		expStr := r.URL.Query().Get("exp")
+		sigStr := r.URL.Query().Get("sig")
+		exp, err := strconv.ParseInt(expStr, 10, 64)
+		if err != nil || !verifyMediaSig(s.Site().Secret, track.ID, sigStr, exp) {
+			if s.auth.Mode() == "log" {
+				src.Log.Warn("bitchord-auth: media signature invalid or missing in log mode", "id", track.ID)
+			} else {
+				http.Error(w, "Forbidden", http.StatusForbidden)
+				return
+			}
+		}
+	} else if expStr := r.URL.Query().Get("exp"); expStr != "" {
+		sigStr := r.URL.Query().Get("sig")
+		exp, err := strconv.ParseInt(expStr, 10, 64)
+		if err != nil || !verifyMediaSig(s.Site().Secret, track.ID, sigStr, exp) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+	}
 	header := http.Header{}
 	for _, name := range forwardedRequestHeaders {
 		if value := r.Header.Get(name); value != "" {

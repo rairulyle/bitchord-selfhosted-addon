@@ -1,20 +1,26 @@
 package server
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/rairulyle/bitchord-selfhosted-addon/internal/media"
 )
 
 type manifestJSON struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Version     string   `json:"version"`
-	Description string   `json:"description"`
-	Resources   []string `json:"resources"`
-	Types       []string `json:"types"`
-	ContentType string   `json:"contentType"`
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Version      string   `json:"version"`
+	Description  string   `json:"description"`
+	Resources    []string `json:"resources"`
+	Types        []string `json:"types"`
+	ContentType  string   `json:"contentType"`
+	BitchordAuth bool     `json:"bitchordAuth"`
 }
 
 type searchJSON struct {
@@ -66,11 +72,31 @@ func toTrackJSON(base string, track media.Track) trackJSON {
 	return out
 }
 
+func signMedia(secret, trackID string, exp int64) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(fmt.Sprintf("%s.%d", trackID, exp)))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func verifyMediaSig(secret, trackID, sigStr string, exp int64) bool {
+	if exp < time.Now().Unix()-60 {
+		return false
+	}
+	want := signMedia(secret, trackID, exp)
+	return subtle.ConstantTimeCompare([]byte(sigStr), []byte(want)) == 1
+}
+
 // Bitrate is sent in bits per second: BitChord reads any value above 3000 as
 // bits per second, and a hi-res FLAC in kbps would cross that line.
-func toStreamJSON(base string, track media.Track) streamJSON {
+func toStreamJSON(base, secret string, track media.Track) streamJSON {
+	fileURL := base + "/file/" + track.ID
+	if secret != "" {
+		exp := time.Now().Add(30 * time.Minute).Unix()
+		sig := signMedia(secret, track.ID, exp)
+		fileURL = fmt.Sprintf("%s?exp=%d&sig=%s", fileURL, exp, sig)
+	}
 	return streamJSON{
-		URL:        base + "/file/" + track.ID,
+		URL:        fileURL,
 		Format:     track.Codec,
 		Quality:    quality(track),
 		Codec:      track.Codec,
