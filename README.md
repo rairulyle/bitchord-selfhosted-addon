@@ -28,8 +28,10 @@ in your library, your own copy plays.
   servers, and copy each one's link into BitChord.
 - **Any number of servers.** Each Plex, Jellyfin or Navidrome server gets its
   own link and shows up in BitChord as its own source.
-- **Fast search.** The addon keeps a list of your tracks in memory, about
-  30–50 MB for 100,000 tracks.
+- **Fast, forgiving search.** The addon keeps a list of your tracks in
+  memory, about 60–80 MB for 100,000 tracks. Search finishes the last word
+  you typed, forgives a small typo in longer words, and knows abbreviations
+  such as ft., pt., vol. and OST.
 - **Original quality.** Your files are streamed as they are, with seeking.
 - **Sync webhooks.** Trigger instant library scans via webhooks from Plex, Jellyfin, Navidrome, or automation scripts.
 - **Private.** Your Plex, Jellyfin and Subsonic tokens never leave the addon,

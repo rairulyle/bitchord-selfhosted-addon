@@ -13,10 +13,13 @@ Entries are written **one line per paragraph and bullet** (no hard-wrapping) so 
 - A sync webhook per server, `POST https://<public url>/<server id>/<secret>/sync`, shown on its card. A call while a sync is already running answers `202` and starts nothing.
 - A recent activity log on the setup page with syncs, sync errors, now playing and scrobbles.
 - Cover art is cached in memory and revalidated with an `ETag`.
+- Search forgives a typo in words of five letters or more, finishes the last word when nothing matches it exactly, treats ft./feat., pt./part, vol./volume, OST/soundtrack and vs./versus as the same word, and drops words such as "live", "remastered" or a year when the full query finds nothing (thanks @1ofx9, #10).
+- A search tester endpoint per server, `GET /setup/servers/<server id>/test-search?q=<query>`, that shows the words a query becomes, how many tracks matched strictly and loosely, and the matching tracks, albums and artists.
 
 ### Changed
 
 - WavPack, APE and DSD tracks count as lossless on every server.
+- Search ranks a track whose title matches the whole query above one whose title only starts with it, and both above artist and album matches. The in-memory index for 100,000 tracks grows from about 26 MB to about 40 MB.
 
 ## [1.1.0] - 2026-09-27
 
