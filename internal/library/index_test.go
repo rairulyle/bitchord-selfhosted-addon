@@ -234,16 +234,12 @@ func TestVideoSearchBehaviors(t *testing.T) {
 	if weeIDs[0] != "t3" && weeIDs[0] != "t2" && weeIDs[0] != "t1" {
 		t.Errorf("expected a Sweet song on top, got %s", weeIDs[0])
 	}
-	// Album match check: "In Between Dreams" should be in Albums
-	foundAlbum := false
+	// Albums match from the start of a word, so "wee" inside "Between" does
+	// not list "In Between Dreams" even though its track matched.
 	for _, alb := range resWee.Albums {
 		if alb.Name == "In Between Dreams" {
-			foundAlbum = true
-			break
+			t.Errorf("'In Between Dreams' in Albums for query 'wee'")
 		}
-	}
-	if !foundAlbum {
-		t.Errorf("expected 'In Between Dreams' in Albums for query 'wee'")
 	}
 
 	// 2. Multi-word prefix "frank oce" matches Frank Ocean tracks & artist
@@ -665,5 +661,30 @@ func TestFindLeavesAlbumsAndArtistsToExplore(t *testing.T) {
 	}
 	if !reflect.DeepEqual(ids(got.Tracks), ids(ix.Find("anberlin", 10).Tracks)) {
 		t.Fatalf("Explore tracks %v differ from Find", ids(got.Tracks))
+	}
+}
+
+func TestAlbumsAndArtistsMatchFromAWordStart(t *testing.T) {
+	ix := NewIndex([]media.Track{
+		{ID: "1", Title: "Through Glass", Artist: "Stone Sour", Album: "Come What(ever) May"},
+		{ID: "2", Title: "Money", Artist: "Pink Floyd", Album: "Money"},
+		{ID: "3", Title: "Honest", Artist: "The Chainsmokers", Album: "Honest"},
+		{ID: "4", Title: "One Love", Artist: "Bob Marley & The Wailers", Album: "One Love"},
+		{ID: "5", Title: "The One", Artist: "Kodaline", Album: "The One"},
+		{ID: "6", Title: "Story of My Life", Artist: "One Direction", Album: "Midnight Memories"},
+	})
+	got := ix.Explore("one", 10)
+	var albums, artists []string
+	for _, alb := range got.Albums {
+		albums = append(albums, alb.Name)
+	}
+	for _, art := range got.Artists {
+		artists = append(artists, art.Name)
+	}
+	if want := []string{"One Love", "The One", "Midnight Memories"}; !reflect.DeepEqual(albums, want) {
+		t.Errorf("albums for 'one' = %v, want %v", albums, want)
+	}
+	if want := []string{"One Direction"}; !reflect.DeepEqual(artists, want) {
+		t.Errorf("artists for 'one' = %v, want %v", artists, want)
 	}
 }

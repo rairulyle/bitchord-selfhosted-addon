@@ -39,6 +39,7 @@ type albumRecord struct {
 	sampleID   string
 	normName   string
 	normArtist string
+	haystack   string
 }
 
 type artistRecord struct {
@@ -162,6 +163,7 @@ func NewIndex(tracks []media.Track) *Index {
 					normName:   cleanAlbum,
 					normArtist: CleanString(albumArtist),
 				}
+				rec.haystack = rec.normName + " " + rec.normArtist
 				albumMap[key] = rec
 			}
 			rec.trackCount++
@@ -632,95 +634,102 @@ func (ix *Index) rank(candidates []int, cleanQ string, q []string) {
 	})
 }
 
+type needle struct{ word, spaced string }
+
+func newNeedle(s string) needle { return needle{word: s, spaced: " " + s} }
+
+// startsWordIn holds only where a word of s begins, so "one" finds "One
+// Love" and "The One" but not "Stone Sour", "Money" or "Honest".
+func (n needle) startsWordIn(s string) bool {
+	return strings.HasPrefix(s, n.word) || strings.Contains(s, n.spaced)
+}
+
+type entityQuery struct {
+	clean    needle
+	words    [][]needle
+	runes    []rune
+	maxTypos int
+	typos    distance
+}
+
+func newEntityQuery(cleanQ string, q []string) *entityQuery {
+	e := &entityQuery{clean: newNeedle(cleanQ), runes: []rune(cleanQ), maxTypos: maxTypos(cleanQ)}
+	for _, token := range q {
+		forms := []needle{newNeedle(token)}
+		for _, syn := range tokenSynonyms[token] {
+			forms = append(forms, newNeedle(syn))
+		}
+		e.words = append(e.words, forms)
+	}
+	return e
+}
+
+func (e *entityQuery) field(norm string, exact, prefix, word int) int {
+	switch {
+	case norm == e.clean.word:
+		return exact
+	case strings.HasPrefix(norm, e.clean.word):
+		return prefix
+	case strings.Contains(norm, e.clean.spaced):
+		return word
+	}
+	return 0
+}
+
+func (e *entityQuery) everyWordIn(haystack string) bool {
+	return len(e.words) > 0 && !slices.ContainsFunc(e.words, func(forms []needle) bool {
+		return !slices.ContainsFunc(forms, func(form needle) bool { return form.startsWordIn(haystack) })
+	})
+}
+
+func (e *entityQuery) typo(norm string, best int) int {
+	if e.maxTypos == 0 {
+		return 0
+	}
+	if d := e.typos.between(e.runes, norm, e.maxTypos); d <= e.maxTypos {
+		return best - 50*d
+	}
+	return 0
+}
+
+type scored struct{ index, score int }
+
+const maxEntities = 10
+
 func (ix *Index) findAlbums(cleanQ string, q []string, matchedTracks []int) []AlbumMatch {
-	var typos distance
-	qRunes := []rune(cleanQ)
-	if len(ix.albums) == 0 || len(cleanQ) == 0 {
+	if len(ix.albums) == 0 || cleanQ == "" {
 		return nil
 	}
-	albumScore := make(map[int]int)
 	matchedAlbumNames := make(map[string]struct{})
 	for _, trackIdx := range matchedTracks {
-		alb := ix.tracks[trackIdx].Album
-		if alb != "" {
+		if alb := ix.tracks[trackIdx].Album; alb != "" {
 			matchedAlbumNames[strings.ToLower(alb)] = struct{}{}
 		}
 	}
-
+	e := newEntityQuery(cleanQ, q)
+	var found []scored
 	for i, alb := range ix.albums {
-		score := 0
-		if alb.normName == cleanQ {
-			score += 1000
-		} else if strings.HasPrefix(alb.normName, cleanQ) {
-			score += 600
-		} else if strings.Contains(alb.normName, cleanQ) {
-			score += 400
-		}
-		if alb.normArtist == cleanQ {
-			score += 500
-		} else if strings.HasPrefix(alb.normArtist, cleanQ) {
-			score += 300
-		} else if strings.Contains(alb.normArtist, cleanQ) {
-			score += 200
-		}
-
-		allTokensMatch := true
-		for _, tk := range q {
-			matched := strings.Contains(alb.normName+" "+alb.normArtist, tk)
-			if !matched {
-				if syns, ok := tokenSynonyms[tk]; ok {
-					for _, syn := range syns {
-						if strings.Contains(alb.normName+" "+alb.normArtist, syn) {
-							matched = true
-							break
-						}
-					}
-				}
-			}
-			if !matched {
-				allTokensMatch = false
-				break
-			}
-		}
-		if allTokensMatch && len(q) > 0 {
+		score := e.field(alb.normName, 1000, 600, 400) + e.field(alb.normArtist, 500, 300, 200)
+		if e.everyWordIn(alb.haystack) {
 			score += 250
 		}
-
-		if maxD := maxTypos(cleanQ); score == 0 && maxD > 0 {
-			if d := typos.between(qRunes, alb.normName, maxD); d <= maxD {
-				score += 300 - (d * 50)
-			}
+		if score == 0 {
+			score = e.typo(alb.normName, 300)
 		}
-
-		// Match against album name or artist.
 		if score > 0 {
 			if _, ok := matchedAlbumNames[strings.ToLower(alb.name)]; ok {
 				score += 100
 			}
-			albumScore[i] = score
+			found = append(found, scored{i, score})
 		}
 	}
-
-	var candidates []int
-	for idx := range albumScore {
-		candidates = append(candidates, idx)
-	}
-	sort.Slice(candidates, func(a, b int) bool {
-		ia, ib := candidates[a], candidates[b]
-		sa, sb := albumScore[ia], albumScore[ib]
-		if sa != sb {
-			return sa > sb
-		}
-		return ix.albums[ia].name < ix.albums[ib].name
+	slices.SortFunc(found, func(a, b scored) int {
+		x, y := ix.albums[a.index], ix.albums[b.index]
+		return cmp.Or(b.score-a.score, strings.Compare(x.name, y.name), strings.Compare(x.artist, y.artist))
 	})
-
-	limit := 10
-	if len(candidates) < limit {
-		limit = len(candidates)
-	}
-	out := make([]AlbumMatch, limit)
-	for i := 0; i < limit; i++ {
-		alb := ix.albums[candidates[i]]
+	out := make([]AlbumMatch, min(len(found), maxEntities))
+	for i := range out {
+		alb := ix.albums[found[i].index]
 		out[i] = AlbumMatch{
 			Name:       alb.name,
 			Artist:     alb.artist,
@@ -734,92 +743,41 @@ func (ix *Index) findAlbums(cleanQ string, q []string, matchedTracks []int) []Al
 }
 
 func (ix *Index) findArtists(cleanQ string, q []string, matchedTracks []int) []ArtistMatch {
-	var typos distance
-	qRunes := []rune(cleanQ)
-	if len(ix.artists) == 0 || len(cleanQ) == 0 {
+	if len(ix.artists) == 0 || cleanQ == "" {
 		return nil
 	}
-	artistScore := make(map[int]int)
 	matchedArtistNames := make(map[string]struct{})
 	for _, trackIdx := range matchedTracks {
-		for _, name := range SplitArtists(ix.tracks[trackIdx].Artist) {
-			matchedArtistNames[strings.ToLower(name)] = struct{}{}
-		}
-		for _, name := range SplitArtists(ix.tracks[trackIdx].AlbumArtist) {
-			matchedArtistNames[strings.ToLower(name)] = struct{}{}
+		for _, raw := range []string{ix.tracks[trackIdx].Artist, ix.tracks[trackIdx].AlbumArtist} {
+			for _, name := range SplitArtists(raw) {
+				matchedArtistNames[strings.ToLower(name)] = struct{}{}
+			}
 		}
 	}
-
+	e := newEntityQuery(cleanQ, q)
+	var found []scored
 	for i, art := range ix.artists {
-		score := 0
-		if art.normName == cleanQ {
-			score += 1000
-		} else if strings.HasPrefix(art.normName, cleanQ) {
-			score += 600
-		} else if strings.Contains(art.normName, cleanQ) {
-			score += 400
-		}
-
-		allTokensMatch := true
-		for _, tk := range q {
-			matched := strings.Contains(art.normName, tk)
-			if !matched {
-				if syns, ok := tokenSynonyms[tk]; ok {
-					for _, syn := range syns {
-						if strings.Contains(art.normName, syn) {
-							matched = true
-							break
-						}
-					}
-				}
-			}
-			if !matched {
-				allTokensMatch = false
-				break
-			}
-		}
-		if allTokensMatch && len(q) > 0 {
+		score := e.field(art.normName, 1000, 600, 400)
+		if e.everyWordIn(art.normName) {
 			score += 250
 		}
-
-		if maxD := maxTypos(cleanQ); score == 0 && maxD > 0 {
-			if d := typos.between(qRunes, art.normName, maxD); d <= maxD {
-				score += 300 - (d * 50)
-			}
+		if score == 0 {
+			score = e.typo(art.normName, 300)
 		}
-
-		// Match against artist name.
 		if score > 0 {
 			if _, ok := matchedArtistNames[strings.ToLower(art.name)]; ok {
 				score += 100
 			}
-			artistScore[i] = score
+			found = append(found, scored{i, score})
 		}
 	}
-
-	var candidates []int
-	for idx := range artistScore {
-		candidates = append(candidates, idx)
-	}
-	sort.Slice(candidates, func(a, b int) bool {
-		ia, ib := candidates[a], candidates[b]
-		sa, sb := artistScore[ia], artistScore[ib]
-		if sa != sb {
-			return sa > sb
-		}
-		if ix.artists[ia].trackCount != ix.artists[ib].trackCount {
-			return ix.artists[ia].trackCount > ix.artists[ib].trackCount
-		}
-		return ix.artists[ia].name < ix.artists[ib].name
+	slices.SortFunc(found, func(a, b scored) int {
+		x, y := ix.artists[a.index], ix.artists[b.index]
+		return cmp.Or(b.score-a.score, y.trackCount-x.trackCount, strings.Compare(x.name, y.name))
 	})
-
-	limit := 10
-	if len(candidates) < limit {
-		limit = len(candidates)
-	}
-	out := make([]ArtistMatch, limit)
-	for i := 0; i < limit; i++ {
-		art := ix.artists[candidates[i]]
+	out := make([]ArtistMatch, min(len(found), maxEntities))
+	for i := range out {
+		art := ix.artists[found[i].index]
 		out[i] = ArtistMatch{
 			Name:       art.name,
 			ArtRef:     art.artRef,
