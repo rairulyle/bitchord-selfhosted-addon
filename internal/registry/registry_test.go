@@ -635,3 +635,21 @@ func TestAScrobblePercentChangeRestartsTheServer(t *testing.T) {
 	waitReplaced(t, r, "navidrome-1", before)
 	stopped(t, before, "the old navidrome entry")
 }
+
+func TestRegistrySearch(t *testing.T) {
+	fake := fakes.NewPlex(t)
+	r := newRegistry(t, snapshot(plexServer(fake, "plex-1")))
+	waitHealthy(t, r)
+
+	res, ok := r.Search("plex-1", "first song", 10)
+	if !ok {
+		t.Fatal("search returned not ok for running server")
+	}
+	if len(res.Tokens) == 0 {
+		t.Errorf("expected tokens, got none")
+	}
+
+	if _, ok := r.Search("nonexistent", "song", 10); ok {
+		t.Fatal("search returned ok for nonexistent server")
+	}
+}

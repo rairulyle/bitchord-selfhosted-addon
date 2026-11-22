@@ -288,6 +288,33 @@ func (r *Registry) Refresh(ctx context.Context, slug string) error {
 	return entry.Library.Refresh(ctx)
 }
 
+type SearchResult struct {
+	Strict   int                   `json:"strict"`
+	Fallback int                   `json:"fallback"`
+	Tokens   []string              `json:"tokens"`
+	Tracks   []media.Track         `json:"tracks"`
+	Albums   []library.AlbumMatch  `json:"albums"`
+	Artists  []library.ArtistMatch `json:"artists"`
+}
+
+// Search queries a server's in-memory index directly for testing and diagnostics.
+func (r *Registry) Search(slug, query string, limit int) (SearchResult, bool) {
+	entry, ok := r.Lookup(slug)
+	if !ok {
+		return SearchResult{}, false
+	}
+	tokens := library.Tokens(query)
+	res := entry.Library.Find(query, limit)
+	return SearchResult{
+		Strict:   res.Strict,
+		Fallback: res.Fallback,
+		Tokens:   tokens,
+		Tracks:   res.Tracks,
+		Albums:   res.Albums,
+		Artists:  res.Artists,
+	}, true
+}
+
 // DefaultInterval reports the registry's configured default sync interval.
 func (r *Registry) DefaultInterval() time.Duration {
 	return r.opts.Interval
