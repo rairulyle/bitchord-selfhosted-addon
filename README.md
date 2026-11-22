@@ -32,6 +32,9 @@ in your library, your own copy plays.
   memory, about 60–80 MB for 100,000 tracks. Search finishes the last word
   you typed, forgives a small typo in longer words, and knows abbreviations
   such as ft., pt., vol. and OST.
+- **Search tester.** Try a query against a server's index on the setup page
+  to see the words it becomes and the songs and albums it matches. Press `/`
+  to jump to it and Escape to clear and close it.
 - **Original quality.** Your files are streamed as they are, with seeking.
 - **Sync webhooks.** Trigger instant library scans via webhooks from Plex, Jellyfin, Navidrome, or automation scripts.
 - **Private.** Your Plex, Jellyfin and Subsonic tokens never leave the addon,

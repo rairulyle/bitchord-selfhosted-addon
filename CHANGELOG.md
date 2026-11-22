@@ -16,11 +16,19 @@ Entries are written **one line per paragraph and bullet** (no hard-wrapping) so 
 - Search forgives a typo in words of five letters or more, finishes the last word when nothing matches it exactly, treats ft./feat., pt./part, vol./volume, OST/soundtrack and vs./versus as the same word, and drops words such as "live", "remastered" or a year when the full query finds nothing (thanks @1ofx9, #10).
 - A search tester endpoint per server, `GET /setup/servers/<server id>/test-search?q=<query>`, that shows the words a query becomes, how many tracks matched strictly and loosely, and the matching tracks, albums and artists.
 - Backup and restore on the setup page. A backup holds the public URL, secret and servers, encrypted with a password you choose, and never the setup password. Restoring replaces every server and the secret, signs out Jellyfin sessions it replaces, and keeps your setup password (thanks @1ofx9, #10).
+- A redesigned setup page with light and dark themes and a System, Dark or Light switcher, server cards with an Online or Unreachable badge and the last connection error, a search tester with All, Songs and Albums tabs and cover thumbnails, activity filters for syncs and playback, and a backup panel that asks for the password when the chosen file is encrypted. Press `/` to jump to the search tester and Escape to clear and close it (thanks @1ofx9, #10).
+- `/` redirects to `/setup`, and the addon serves a favicon.
 
 ### Changed
 
 - WavPack, APE and DSD tracks count as lossless on every server.
 - Search ranks a track whose title matches the whole query above one whose title only starts with it, and both above artist and album matches. The in-memory index for 100,000 tracks grows from about 26 MB to about 40 MB.
+- The setup stylesheet is served gzip-compressed with an `ETag`, and its versioned URL is cached for a year.
+- Setup pages and their stylesheet send `X-Content-Type-Options`, `X-Frame-Options` and `Referrer-Policy` headers.
+
+### Fixed
+
+- The setup page shows a notice or error only when the addon wrote it, never text taken from a crafted link.
 
 ## [1.1.0] - 2026-09-27
 
