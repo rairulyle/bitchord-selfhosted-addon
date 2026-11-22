@@ -89,6 +89,11 @@
     setTimeout(dismiss, timeout);
   }
 
+  document.addEventListener('submit', function (e) {
+    var message = e.target.dataset.confirm;
+    if (message && !confirm(message)) e.preventDefault();
+  });
+
   document.querySelectorAll('[role="tablist"]').forEach(function (list) {
     function syncTabIndex() {
       list.querySelectorAll('[role="tab"]').forEach(function (tab) {

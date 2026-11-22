@@ -41,7 +41,7 @@
         <svg class="eye-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
         <svg class="eye-off-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display: none;"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/></svg>
       </button>
-      <form method="post" action="/setup/secret/regenerate" onsubmit="return confirm('Regenerate the secret? Every server URL changes and each client must be updated.')" style="margin: 0; display: inline-flex;">
+      <form method="post" action="/setup/secret/regenerate" data-confirm="Regenerate the secret? Every server URL changes and each client must be updated." style="margin: 0; display: inline-flex;">
         <input type="hidden" name="csrf" value="{{.CSRF}}">
         <button type="submit" class="icon-btn danger" title="Regenerate secret" aria-label="Regenerate secret">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
@@ -94,7 +94,7 @@
         <input type="hidden" name="enabled" value="{{if .Enabled}}false{{else}}true{{end}}">
         <button class="secondary">{{if .Enabled}}Disable{{else}}Enable{{end}}</button>
       </form>
-      <form method="post" action="/setup/servers/{{.Slug}}/delete" onsubmit="return confirm('Remove {{.Name}}? Its URL stops answering.')" style="margin: 0; display: inline-flex;">
+      <form method="post" action="/setup/servers/{{.Slug}}/delete" data-confirm="Remove {{.Name}}? Its URL stops answering." style="margin: 0; display: inline-flex;">
         <input type="hidden" name="csrf" value="{{$.CSRF}}">
         <button type="submit" class="icon-btn danger" title="Remove {{.Name}}" aria-label="Remove {{.Name}}">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
@@ -272,7 +272,7 @@
         <div class="backup-col">
           <label>Restore Configuration</label>
           <p class="hint">Upload a backup file. It replaces the public URL, the secret and every server with the ones in the backup.</p>
-          <form method="post" action="/setup/restore" enctype="multipart/form-data" class="restore-form" onsubmit="return confirm('Restore this backup? Its server list replaces every server, Jellyfin servers it drops or changes are signed out, and its secret comes back, so each BitChord URL reverts to the one in the backup.')">
+          <form method="post" action="/setup/restore" enctype="multipart/form-data" class="restore-form" data-confirm="Restore this backup? Its server list replaces every server, Jellyfin servers it drops or changes are signed out, and its secret comes back, so each BitChord URL reverts to the one in the backup.">
             <input type="hidden" name="csrf" value="{{.CSRF}}">
             <div class="backup-field-row">
               <input type="file" name="backup_file" id="backup-file-input" class="restore-file-input" accept=".json,application/json" required>
@@ -403,6 +403,12 @@ document.querySelectorAll('.accordion.search-box').forEach(function (box) {
   var btn = row.querySelector('.search-run');
   var clearBtn = row.querySelector('.search-clear');
   var out = box.querySelector('.search-output');
+  out.addEventListener('error', function (e) {
+    var img = e.target;
+    if (img.tagName !== 'IMG') return;
+    img.style.display = 'none';
+    if (img.nextElementSibling) img.nextElementSibling.style.display = 'flex';
+  }, true);
   var tabs = box.querySelectorAll('.search-tab');
   var activeTab = 'all';
   var lastData = null;
@@ -482,7 +488,7 @@ document.querySelectorAll('.accordion.search-box').forEach(function (box) {
     if (dur) badgeContent += '<span class="badge-duration">' + escapeHTML(dur) + '</span>';
 
     var artHTML = t.artworkURL
-      ? '<img class="search-thumb" src="' + escapeHTML(t.artworkURL) + '" alt="" loading="lazy" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\';"><div class="search-fallback-wrap" style="display:none">' + songIconSvg + '</div>'
+      ? '<img class="search-thumb" src="' + escapeHTML(t.artworkURL) + '" alt="" loading="lazy"><div class="search-fallback-wrap" style="display:none">' + songIconSvg + '</div>'
       : '<div class="search-fallback-wrap">' + songIconSvg + '</div>';
 
     return '<div class="search-track-item">' +
@@ -499,7 +505,7 @@ document.querySelectorAll('.accordion.search-box').forEach(function (box) {
 
   function renderAlbumCard(alb) {
     var artHTML = alb.artworkURL
-      ? '<img class="search-album-art" src="' + escapeHTML(alb.artworkURL) + '" alt="" loading="lazy" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\';"><div class="search-fallback-wrap album-fallback" style="display:none">' + albumIconSvg + '</div>'
+      ? '<img class="search-album-art" src="' + escapeHTML(alb.artworkURL) + '" alt="" loading="lazy"><div class="search-fallback-wrap album-fallback" style="display:none">' + albumIconSvg + '</div>'
       : '<div class="search-fallback-wrap album-fallback">' + albumIconSvg + '</div>';
 
     var subParts = [];

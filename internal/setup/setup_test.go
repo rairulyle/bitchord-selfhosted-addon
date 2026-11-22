@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -1554,6 +1555,20 @@ func TestTheFormKeepsAnIntervalItHasNoOptionFor(t *testing.T) {
 		form := a.get("/setup/servers/" + slug + "/edit").Body.String()
 		if !strings.Contains(form, want) || strings.Count(form, " selected>") != 2 {
 			t.Errorf("interval %s: the form lacks %s or selects more than one interval:\n%s", interval, want, form)
+		}
+	}
+}
+
+func TestThePagesHaveNoInlineEventHandlers(t *testing.T) {
+	a := newTestApp(t)
+	a.signIn()
+	a.form("/setup/public-url", url.Values{"public_url": {"https://music.example.com"}})
+	slug := a.addPlex(fakes.NewPlex(t), "Home")
+	a.waitReady(slug)
+	handler := regexp.MustCompile(`\son[a-z]+=`)
+	for _, path := range []string{"/setup", "/setup/servers/new", "/setup/servers/" + slug + "/edit", "/setup/password"} {
+		if found := handler.FindString(a.get(path).Body.String()); found != "" {
+			t.Errorf("%s has an inline handler: %s", path, found)
 		}
 	}
 }
