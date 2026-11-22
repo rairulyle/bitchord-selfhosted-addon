@@ -324,3 +324,66 @@ func TestSnapshotDoesNotWaitForAnUpdate(t *testing.T) {
 		t.Fatalf("after the update = %+v", snap)
 	}
 }
+
+func TestStoreRestore(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetAdmin(&Admin{PasswordHash: "hashed", SessionKey: "sesskey"}); err != nil {
+		t.Fatal(err)
+	}
+	origSecret := s.Snapshot().Secret
+	origClientID := s.Snapshot().ClientID
+
+	restoreSnap := Snapshot{
+		PublicURL: "https://restored.example.com",
+		Admin: &Admin{
+			PasswordHash: "rogue_hash",
+			SessionKey:   "rogue_session",
+		},
+		Servers: []Server{
+			{
+				Slug:    "plex-1",
+				Kind:    Plex,
+				Label:   "Restored Plex",
+				URL:     "http://localhost:32400",
+				Token:   "tok",
+				Library: "1",
+				Auth:    AuthToken,
+				Enabled: true,
+			},
+		},
+	}
+	if err := s.Restore(restoreSnap); err != nil {
+		t.Fatalf("Restore failed: %v", err)
+	}
+
+	snap := s.Snapshot()
+	if snap.PublicURL != "https://restored.example.com" {
+		t.Errorf("PublicURL = %q, want https://restored.example.com", snap.PublicURL)
+	}
+	if len(snap.Servers) != 1 || snap.Servers[0].Label != "Restored Plex" {
+		t.Errorf("Servers = %+v, want 1 server", snap.Servers)
+	}
+	if snap.Admin == nil || snap.Admin.PasswordHash != "hashed" {
+		t.Errorf("Admin was not preserved or rogue admin was accepted: %+v", snap.Admin)
+	}
+	if snap.Secret != origSecret {
+		t.Errorf("Secret = %q, want %q", snap.Secret, origSecret)
+	}
+	if snap.ClientID != origClientID {
+		t.Errorf("ClientID = %q, want %q", snap.ClientID, origClientID)
+	}
+
+	badSnap := Snapshot{
+		Servers: []Server{{Slug: "invalid"}},
+	}
+	if err := s.Restore(badSnap); err == nil {
+		t.Error("Restore invalid snapshot expected error, got nil")
+	}
+	if snap := s.Snapshot(); snap.PublicURL != "https://restored.example.com" {
+		t.Errorf("Store state changed after failed restore: %+v", snap)
+	}
+}
