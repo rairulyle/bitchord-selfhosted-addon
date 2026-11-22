@@ -345,105 +345,19 @@ func (ix *Index) lookupPostings(token string, prefix bool) []int {
 func (ix *Index) Search(query string, limit int) []media.Track { return ix.Find(query, limit).Tracks }
 
 func (ix *Index) Find(query string, limit int) Result {
-	cleanQ := CleanString(query)
 	q := unique(Tokens(query))
 	if len(q) == 0 || limit <= 0 {
 		return Result{Tokens: q}
 	}
-
-	strict := ix.strict(q, false)
-	seen := make(map[int]struct{}, len(strict))
-	for _, i := range strict {
-		seen[i] = struct{}{}
+	cleanQ := CleanString(query)
+	first, second, exact := ix.match(q)
+	ix.rank(first, cleanQ, q)
+	ix.rank(second, cleanQ, q)
+	result := Result{Fallback: len(first) + len(second), Tokens: q}
+	if exact {
+		result.Strict, result.Fallback = len(first), len(second)
 	}
-
-	hasPrefixTokens := false
-	for _, tk := range q {
-		if utf8.RuneCountInString(tk) >= 2 {
-			hasPrefixTokens = true
-			break
-		}
-	}
-	if hasPrefixTokens {
-		for _, i := range ix.strict(q, true) {
-			if _, dup := seen[i]; !dup {
-				seen[i] = struct{}{}
-				strict = append(strict, i)
-			}
-		}
-	}
-
-	var loose []int
-	for _, i := range ix.fallback(q, false) {
-		if _, dup := seen[i]; !dup {
-			seen[i] = struct{}{}
-			loose = append(loose, i)
-		}
-	}
-	if hasPrefixTokens {
-		for _, i := range ix.fallback(q, true) {
-			if _, dup := seen[i]; !dup {
-				seen[i] = struct{}{}
-				loose = append(loose, i)
-			}
-		}
-	}
-
-	// Fallback without variant tokens (live, remaster, feat, etc.)
-	if len(strict) == 0 && len(loose) == 0 {
-		cleaned := stripNoise(q)
-		if len(cleaned) > 0 && len(cleaned) < len(q) {
-			for _, i := range ix.strict(cleaned, true) {
-				if _, dup := seen[i]; !dup {
-					seen[i] = struct{}{}
-					strict = append(strict, i)
-				}
-			}
-			for _, i := range ix.fallback(cleaned, true) {
-				if _, dup := seen[i]; !dup {
-					seen[i] = struct{}{}
-					loose = append(loose, i)
-				}
-			}
-		}
-	}
-
-	if len(strict) == 0 && len(loose) == 0 && substringable(q) {
-		for i := range ix.tracks {
-			allMatch := true
-			for _, token := range q {
-				if !strings.Contains(ix.normEverything[i], token) {
-					allMatch = false
-					break
-				}
-			}
-			if allMatch {
-				if _, dup := seen[i]; !dup {
-					seen[i] = struct{}{}
-					loose = append(loose, i)
-				}
-			}
-		}
-	}
-
-	// Fuzzy / Typo fallback when all exact, prefix, noise-stripped, and substring searches yielded nothing
-	if len(strict) == 0 && len(loose) == 0 {
-		for _, i := range ix.fuzzy(q) {
-			if _, dup := seen[i]; !dup {
-				seen[i] = struct{}{}
-				loose = append(loose, i)
-			}
-		}
-	}
-
-	ix.rank(strict, cleanQ, q)
-	ix.rank(loose, cleanQ, q)
-	result := Result{
-		Strict:   len(strict),
-		Fallback: len(loose),
-		Tokens:   q,
-	}
-	ordered := append(strict, loose...)
+	ordered := append(first, second...)
 	if len(ordered) > limit {
 		ordered = ordered[:limit]
 	}
@@ -454,14 +368,57 @@ func (ix *Index) Find(query string, limit int) Result {
 	result.Tracks = out
 	result.Albums = ix.findAlbums(cleanQ, q, ordered)
 	result.Artists = ix.findArtists(cleanQ, q, ordered)
-
 	return result
+}
+
+// match stops at the first tier that finds anything. Only the first tier
+// counts as strict: the search log reads strict as every word matched as typed.
+func (ix *Index) match(q []string) (first, second []int, exact bool) {
+	if first, second = ix.tier(q, false); len(first)+len(second) > 0 {
+		return first, second, true
+	}
+	if first, second = ix.tier(q, true); len(first)+len(second) > 0 {
+		return first, second, false
+	}
+	if cleaned := stripNoise(q); len(cleaned) > 0 && len(cleaned) < len(q) {
+		for _, prefix := range []bool{false, true} {
+			if first, second = ix.tier(cleaned, prefix); len(first)+len(second) > 0 {
+				return first, second, false
+			}
+		}
+	}
+	if substringable(q) {
+		if found := ix.substring(q); len(found) > 0 {
+			return nil, found, false
+		}
+	}
+	return nil, ix.fuzzy(q), false
+}
+
+func (ix *Index) tier(q []string, prefix bool) (strict, loose []int) {
+	strict = ix.strict(q, prefix)
+	for _, i := range ix.fallback(q, prefix) {
+		if _, found := slices.BinarySearch(strict, i); !found {
+			loose = append(loose, i)
+		}
+	}
+	return strict, loose
+}
+
+func (ix *Index) substring(q []string) []int {
+	var out []int
+	for i, haystack := range ix.normEverything {
+		if !slices.ContainsFunc(q, func(token string) bool { return !strings.Contains(haystack, token) }) {
+			out = append(out, i)
+		}
+	}
+	return out
 }
 
 func (ix *Index) strict(q []string, prefix bool) []int {
 	lists := make([][]int, len(q))
 	for n, token := range q {
-		lists[n] = ix.lookupPostings(token, prefix)
+		lists[n] = ix.lookupPostings(token, prefix && n == len(q)-1)
 		if len(lists[n]) == 0 {
 			return nil
 		}
@@ -488,8 +445,8 @@ func (ix *Index) titleKeys(token string, prefix bool) []string {
 func (ix *Index) fallback(q []string, prefix bool) []int {
 	covered := map[string]struct{}{}
 	candidates := map[int]struct{}{}
-	for _, token := range q {
-		for _, key := range ix.titleKeys(token, prefix) {
+	for n, token := range q {
+		for _, key := range ix.titleKeys(token, prefix && n == len(q)-1) {
 			covered[key] = struct{}{}
 			for _, i := range ix.titlePosts[key] {
 				candidates[i] = struct{}{}
@@ -632,7 +589,7 @@ func (ix *Index) fuzzy(q []string) []int {
 			lists[n] = exact
 			continue
 		}
-		if utf8.RuneCountInString(token) >= 2 {
+		if n == len(q)-1 {
 			if pfx := ix.lookupPostings(token, true); len(pfx) > 0 {
 				lists[n] = pfx
 				continue

@@ -277,11 +277,14 @@ func TestLoseAndLoserPrefixAndEntityIsolation(t *testing.T) {
 		{ID: "t2", Title: "Lose My Mind (feat. Doja Cat)", Artist: "Don Toliver", Album: "Lose My Mind"},
 	})
 
-	// 1. Searching "lose" should match BOTH "Lose My Mind" AND "Loser" (prefix of loser)
+	// 1. An exact word wins over completions: "lose" finds "Lose My Mind" only,
+	// while the unfinished "los" completes to both "lose" and "loser".
 	resLose := ix.Find("lose", 10)
-	loseIDs := ids(resLose.Tracks)
-	if len(loseIDs) != 2 {
-		t.Fatalf("expected both tracks for 'lose', got %v", loseIDs)
+	if loseIDs := ids(resLose.Tracks); !reflect.DeepEqual(loseIDs, []string{"t2"}) {
+		t.Fatalf("expected only t2 for 'lose', got %v", loseIDs)
+	}
+	if losIDs := ids(ix.Search("los", 10)); len(losIDs) != 2 {
+		t.Fatalf("expected both tracks for 'los', got %v", losIDs)
 	}
 
 	// For "lose", album "Lose My Mind" should match, but album "Deadbeat" must NOT match
@@ -580,5 +583,33 @@ func TestFallbackNeedsEveryTitleWord(t *testing.T) {
 	}
 	if got := ids(ix.Search("pt of me brendon urie", 10)); !reflect.DeepEqual(got, []string{"1"}) {
 		t.Errorf("Search(pt of me brendon urie) = %v, want [1]", got)
+	}
+}
+
+func TestCompletionsAreOnlyForTheLastWordAndOnlyOnAMiss(t *testing.T) {
+	ix := NewIndex([]media.Track{
+		{ID: "1", Title: "Closer", Artist: "Anberlin", Album: "As You Found Me"},
+		{ID: "2", Title: "Closest Thing", Artist: "Anberlin", Album: "Cities"},
+		{ID: "3", Title: "Close Enough", Artist: "Anberlin", Album: "Cities"},
+	})
+	cases := map[string]struct {
+		query            string
+		want             []string
+		strict, fallback int
+	}{
+		"exact word, no completions": {"close anberlin", []string{"3"}, 1, 0},
+		"last word completes":        {"anberlin cl", []string{"1", "3", "2"}, 0, 3},
+		"earlier word does not":      {"cl anberlin", []string{}, 0, 0},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := ix.Find(tc.query, 10)
+			if g := ids(got.Tracks); !(len(g) == 0 && len(tc.want) == 0) && !reflect.DeepEqual(g, tc.want) {
+				t.Fatalf("Find(%q) = %v, want %v", tc.query, g, tc.want)
+			}
+			if got.Strict != tc.strict || got.Fallback != tc.fallback {
+				t.Fatalf("Find(%q) strict %d fallback %d, want %d %d", tc.query, got.Strict, got.Fallback, tc.strict, tc.fallback)
+			}
+		})
 	}
 }
