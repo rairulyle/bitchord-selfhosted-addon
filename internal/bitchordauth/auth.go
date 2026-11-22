@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -132,17 +133,19 @@ func cleanHosts(hosts []string) []string {
 	return out
 }
 
+// NormalizeHost reduces a host, host:port or URL to the bare lower-case
+// host name a proof is signed for, so "[::1]:8080" becomes "::1".
 func NormalizeHost(h string) string {
 	h = strings.TrimSpace(strings.ToLower(h))
 	h = strings.TrimPrefix(h, "http://")
 	h = strings.TrimPrefix(h, "https://")
-	if idx := strings.Index(h, "/"); idx != -1 {
+	if idx := strings.IndexAny(h, "/?#"); idx != -1 {
 		h = h[:idx]
+	}
+	if host, _, err := net.SplitHostPort(h); err == nil {
+		h = host
 	}
 	h = strings.Trim(h, "[]")
-	if idx := strings.LastIndex(h, ":"); idx != -1 {
-		h = h[:idx]
-	}
 	return strings.TrimSuffix(h, ".")
 }
 

@@ -142,6 +142,28 @@ func TestAuthEndToEnd(t *testing.T) {
 	}
 }
 
+func TestNormalizeHost(t *testing.T) {
+	cases := map[string]string{
+		"addon.example.com":               "addon.example.com",
+		"Addon.Example.com.":              "addon.example.com",
+		"addon.example.com:8443":          "addon.example.com",
+		"https://addon.example.com/x?y=1": "addon.example.com",
+		"https://addon.example.com:443":   "addon.example.com",
+		"[::1]:8080":                      "::1",
+		"[::1]":                           "::1",
+		"::1":                             "::1",
+		"http://[2001:db8::7]:8080/path":  "2001:db8::7",
+		"2001:db8::7":                     "2001:db8::7",
+		"192.168.1.5:8080":                "192.168.1.5",
+		" ":                               "",
+	}
+	for in, want := range cases {
+		if got := NormalizeHost(in); got != want {
+			t.Errorf("NormalizeHost(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func stringsContains(s, sub string) bool {
 	return len(s) >= len(sub) && (s == sub || (len(s) > 0 && len(sub) > 0 && indexOf(s, sub) != -1))
 }
