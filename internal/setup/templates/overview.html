@@ -503,7 +503,7 @@ document.querySelectorAll('.accordion.search-box').forEach(function (box) {
       : '<div class="search-fallback-wrap album-fallback">' + albumIconSvg + '</div>';
 
     var subParts = [];
-    if (alb.artist) subParts.push(escapeHTML(formatArtists(alb.artist)));
+    if (alb.artist) subParts.push(formatArtists(alb.artist));
     if (alb.trackCount) subParts.push(alb.trackCount + (alb.trackCount === 1 ? ' track' : ' tracks'));
 
     return '<div class="search-album-card">' +
@@ -838,7 +838,7 @@ if (activityDetails) {
 }
 
 function escapeHTML(str) {
-  return (str || '').replace(/[&<>'"]/g, function (tag) {
+  return String(str == null ? '' : str).replace(/[&<>'"]/g, function (tag) {
     return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[tag] || tag;
   });
 }
