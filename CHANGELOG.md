@@ -6,6 +6,18 @@ Entries are written **one line per paragraph and bullet** (no hard-wrapping) so 
 
 ## [Unreleased]
 
+### Added
+
+- Navidrome and other Subsonic-compatible servers, signed in with a username and password. Their password is stored in `/data/addon.json` because Subsonic token auth needs it, so use a non-admin account. Plays report "now playing" to Navidrome and scrobble once a set share of the track has played (thanks @1ofx9, #10).
+- A sync interval per server, including manual only, and a **Sync now** button on each server card plus **Sync all**.
+- A sync webhook per server, `POST https://<public url>/<server id>/<secret>/sync`, shown on its card. A call while a sync is already running answers `202` and starts nothing.
+- A recent activity log on the setup page with syncs, sync errors, now playing and scrobbles.
+- Cover art is cached in memory and revalidated with an `ETag`.
+
+### Changed
+
+- WavPack, APE and DSD tracks count as lossless on every server.
+
 ## [1.1.0] - 2026-09-27
 
 ### Changed

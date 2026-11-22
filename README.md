@@ -126,6 +126,12 @@ Before pulling the new image:
 Everything is saved in `/data/addon.json`, including your server tokens, so
 keep that folder private.
 
+> [!WARNING]
+> **A Navidrome password is stored as is in `/data/addon.json`.** Subsonic
+> token authentication signs every request with the password itself, so the
+> addon has to keep it. Sign in with a dedicated non-admin Navidrome account,
+> not your admin account.
+
 These optional environment variables are the only other settings:
 
 | Variable           | Default | Meaning                                  |
