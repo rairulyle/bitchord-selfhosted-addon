@@ -177,7 +177,7 @@
       <svg class="chevron" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06z"/></svg>
     </summary>
     <div class="accordion-content">
-      <p class="hint">Preview how BitChord queries match against this server's index:</p>
+      <p class="hint">Preview how BitChord queries match against this server's index. Press <kbd>/</kbd> to jump here and <kbd>Esc</kbd> to clear and close.</p>
       <div class="search-input-row" data-search-slug="{{.Slug}}">
         <div class="search-input-wrap">
           <svg class="search-lens" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
@@ -412,6 +412,16 @@ document.querySelectorAll('.accordion.search-box').forEach(function (box) {
   var activeTab = 'all';
   var lastData = null;
   var debounceTimer = null;
+  var pending = null;
+
+  function cancelSearch() {
+    clearTimeout(debounceTimer);
+    if (pending) {
+      pending.abort();
+      pending = null;
+    }
+    btn.disabled = false;
+  }
 
   function updateClearVisibility() {
     var val = input.value.trim();
@@ -423,6 +433,7 @@ document.querySelectorAll('.accordion.search-box').forEach(function (box) {
   }
 
   function clearSearch() {
+    cancelSearch();
     input.value = '';
     out.innerHTML = '';
     lastData = null;
@@ -576,11 +587,14 @@ document.querySelectorAll('.accordion.search-box').forEach(function (box) {
       lastData = null;
       return;
     }
+    cancelSearch();
+    var request = new AbortController();
+    pending = request;
     btn.disabled = true;
     if (!lastData) {
       out.innerHTML = '<p class="hint" style="margin: 0.5rem 0;">Searching…</p>';
     }
-    fetch('/setup/servers/' + encodeURIComponent(slug) + '/test-search?q=' + encodeURIComponent(query))
+    fetch('/setup/servers/' + encodeURIComponent(slug) + '/test-search?q=' + encodeURIComponent(query), { signal: request.signal })
       .then(function (res) {
         if (!res.ok) {
           return res.text().then(function (txt) {
@@ -590,6 +604,8 @@ document.querySelectorAll('.accordion.search-box').forEach(function (box) {
         return res.json();
       })
       .then(function (data) {
+        if (pending !== request) return;
+        pending = null;
         btn.disabled = false;
         if (!data.ok) {
           out.innerHTML = '<p class="error" style="margin: 0.5rem 0;">' + escapeHTML(data.error || 'Search failed') + '</p>';
@@ -600,6 +616,8 @@ document.querySelectorAll('.accordion.search-box').forEach(function (box) {
         renderResults();
       })
       .catch(function (err) {
+        if (pending !== request) return;
+        pending = null;
         btn.disabled = false;
         out.innerHTML = '<p class="error" style="margin: 0.5rem 0;">Error: ' + escapeHTML(err.message) + '</p>';
         lastData = null;
@@ -613,7 +631,7 @@ document.querySelectorAll('.accordion.search-box').forEach(function (box) {
       clearSearch();
       return;
     }
-    clearTimeout(debounceTimer);
+    cancelSearch();
     debounceTimer = setTimeout(runSearch, 220);
   });
 
@@ -626,20 +644,14 @@ document.querySelectorAll('.accordion.search-box').forEach(function (box) {
     if (e.key === 'Escape') {
       e.preventDefault();
       clearSearch();
-      input.blur();
+      box.open = false;
+      box.querySelector('summary').focus();
     } else if (e.key === 'Enter') {
       e.preventDefault();
       clearTimeout(debounceTimer);
       runSearch();
     }
   });
-
-  out.addEventListener('wheel', function (e) {
-    var scroller = out.querySelector('.search-content-body');
-    if (scroller && scroller.scrollHeight > scroller.clientHeight) {
-      scroller.scrollTop += e.deltaY;
-    }
-  }, { passive: true });
 });
 
 document.addEventListener('keydown', function (e) {
