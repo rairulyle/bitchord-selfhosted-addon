@@ -6,6 +6,8 @@ Entries are written **one line per paragraph and bullet** (no hard-wrapping) so 
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-23
+
 ### Added
 
 - Navidrome and other Subsonic-compatible servers, signed in with a username and password. Their password is stored in `/data/addon.json` because Subsonic token auth needs it, so use a non-admin account. Plays report "now playing" to Navidrome and scrobble once a set share of the track has played. `NAVIDROME_*` environment variables are not read; the log says so when one is set (thanks @1ofx9, #10).
